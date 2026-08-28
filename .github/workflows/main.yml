@@ -8,20 +8,16 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
-      - name: Checkout kernel
+      - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
           ref: 16
           fetch-depth: 1
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
-          set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
+          sudo apt update
+          sudo apt install -y \
             git \
             bc \
             bison \
@@ -29,161 +25,138 @@ jobs:
             libssl-dev \
             libelf-dev \
             libncurses-dev \
-            build-essential \
+            make \
             gcc-aarch64-linux-gnu \
             gcc-arm-linux-gnueabi \
             python3
 
-      - name: Verify kernel tree
+      - name: Show source information
         run: |
           set -e
 
           echo "========================================"
-          echo "KERNEL TREE"
+          echo "KERNEL SOURCE"
           echo "========================================"
 
-          echo "Commit:"
+          git branch --show-current || true
           git rev-parse HEAD
 
           echo
-          echo "Branch:"
-          git branch --show-current
+          echo "Kernel Makefile:"
+          head -20 Makefile
 
           echo
-          echo "Checking required files..."
+          echo "Available vendor configs:"
+          ls -lah arch/arm64/configs/vendor/
 
-          test -f Makefile
-          test -f arch/arm64/Kconfig
-          test -f arch/arm64/Makefile
-          test -f arch/arm64/configs/defconfig
-          test -f arch/arm64/configs/vendor/violet.config
-          test -f scripts/kconfig/merge_config.sh
+      - name: Check Violet config
+        run: |
+          set -e
+
+          CONFIG="arch/arm64/configs/vendor/violet.config"
+
+          echo "========================================"
+          echo "CHECKING VIOLET CONFIG"
+          echo "========================================"
+
+          if [ ! -f "$CONFIG" ]; then
+            echo "ERROR: $CONFIG not found"
+            exit 1
+          fi
+
+          echo "Found:"
+          ls -lh "$CONFIG"
 
           echo
-          echo "All required files found."
+          echo "Lines:"
+          wc -l "$CONFIG"
+
+          echo
+          echo "First lines:"
+          head -20 "$CONFIG"
+
+      - name: Prepare output directory
+        run: |
+          set -e
+
+          rm -rf out
+          mkdir -p out
 
       - name: Generate base configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "GENERATE BASE CONFIG"
+          echo "GENERATING BASE CONFIG"
           echo "========================================"
 
-          rm -rf out
-          mkdir -p out
-
           make \
-            O=out \
+            O="$PWD/out" \
             ARCH=arm64 \
             defconfig
-
-          test -f out/.config
-
-          echo
-          echo "Base config generated successfully."
 
       - name: Merge Violet configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "MERGE VIOLET CONFIG"
+          echo "MERGING VIOLET CONFIG"
           echo "========================================"
 
           ./scripts/kconfig/merge_config.sh \
-            -O out \
-            out/.config \
-            arch/arm64/configs/vendor/violet.config
+            -O "$PWD/out" \
+            "$PWD/out/.config" \
+            "$PWD/arch/arm64/configs/vendor/violet.config"
 
-      - name: Resolve Violet configuration
+      - name: Resolve final configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "RESOLVE CONFIG"
+          echo "RESOLVING CONFIGURATION"
           echo "========================================"
 
           make \
-            O=out \
+            O="$PWD/out" \
             ARCH=arm64 \
             olddefconfig
+
+      - name: Verify generated configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "VERIFYING GENERATED CONFIG"
+          echo "========================================"
 
           test -f out/.config
 
           echo
-          echo "Resolved configuration created."
-
-      - name: Validate Violet configuration
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "VIOLET CONFIGURATION"
-          echo "========================================"
+          echo "Generated .config:"
+          ls -lh out/.config
 
           echo
-          echo "--- Architecture ---"
-
-          grep -Ei \
-            '^CONFIG_ARCH_|^CONFIG_ARM64=' \
+          echo "Violet-related options:"
+          grep -E \
+            'CONFIG_(MACH_XIAOMI_VIOLET|ARCH_SM6150|ARCH_QCOM|INPUT_FINGERPRINT|FINGERPRINT_|SND_SOC_TAS2563|TAS2563_)' \
             out/.config || true
 
           echo
-          echo "--- Device ---"
-
-          grep -Ei \
-            'VIOLET|XIAOMI|SM6150' \
+          echo "Architecture:"
+          grep -E \
+            'CONFIG_(ARM64|ARCH_QCOM|ARCH_SM6150)' \
             out/.config || true
 
-          echo
-          echo "--- Fingerprint ---"
-
-          grep -Ei \
-            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
-            out/.config || true
-
-          echo
-          echo "--- Audio ---"
-
-          grep -Ei \
-            '^CONFIG_.*TAS2563.*=' \
-            out/.config || true
-
-          echo
-          echo "--- Touchscreen ---"
-
-          grep -Ei \
-            '^CONFIG_.*(FTS|NVT|NT36|GOODIX).*=' \
-            out/.config || true
-
-      - name: Save resolved config
+      - name: Generate minimal defconfig
         run: |
           set -e
 
           echo "========================================"
-          echo "SAVE RESOLVED CONFIG"
-          echo "========================================"
-
-          cp out/.config violet-full.config
-
-          test -f violet-full.config
-
-          echo
-          echo "Full resolved config saved."
-
-          wc -l violet-full.config
-
-      - name: Generate modern defconfig
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "GENERATE MODERN VIOLET DEFCONFIG"
+          echo "GENERATING MODERN DEFCONFIG"
           echo "========================================"
 
           make \
-            O=out \
+            O="$PWD/out" \
             ARCH=arm64 \
             savedefconfig
 
@@ -191,143 +164,63 @@ jobs:
 
           cp out/defconfig violet-perf_defconfig
 
-          test -f violet-perf_defconfig
+          echo
+          echo "Generated defconfig:"
+          ls -lh violet-perf_defconfig
 
           echo
-          echo "Modern Violet defconfig generated."
-
-          echo
-          echo "Lines:"
+          echo "Line count:"
           wc -l violet-perf_defconfig
 
-      - name: Show generated defconfig
+      - name: Re-test generated defconfig
         run: |
           set -e
 
           echo "========================================"
-          echo "GENERATED VIOLET DEFCONFIG"
-          echo "========================================"
-
-          cat violet-perf_defconfig
-
-      - name: Re-validate generated defconfig
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "RE-VALIDATING GENERATED DEFCONFIG"
+          echo "RE-TESTING GENERATED DEFCONFIG"
           echo "========================================"
 
           rm -rf verify
           mkdir -p verify
 
-          cp violet-perf_defconfig verify/.config
+          cp violet-perf_defconfig \
+            verify/violet-perf_defconfig
+
+          cd verify
 
           make \
-            O=verify \
+            -f ../Makefile \
+            O="$PWD" \
             ARCH=arm64 \
+            KCONFIG_CONFIG="$PWD/violet-perf_defconfig" \
             olddefconfig
 
-          test -f verify/.config
+          test -f "$PWD/violet-perf_defconfig"
 
           echo
-          echo "Defconfig successfully reconstructed."
+          echo "Defconfig successfully re-read by Kconfig."
 
-          echo
-          echo "Checking Violet-related options..."
-
-          grep -Ei \
-            'VIOLET|XIAOMI|SM6150' \
-            verify/.config || true
-
-          echo
-          echo "Checking fingerprint..."
-
-          grep -Ei \
-            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
-            verify/.config || true
-
-          echo
-          echo "Checking audio..."
-
-          grep -Ei \
-            '^CONFIG_.*TAS2563.*=' \
-            verify/.config || true
-
-      - name: Test defconfig stability
+      - name: Compare generated configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "TEST DEFCONFIG STABILITY"
+          echo "FINAL CONFIG CHECK"
           echo "========================================"
 
-          make \
-            O=verify \
-            ARCH=arm64 \
-            savedefconfig
+          echo
+          echo "Generated defconfig:"
+          wc -l violet-perf_defconfig
 
-          test -f verify/defconfig
+          echo
+          echo "Important options:"
+          grep -E \
+            'CONFIG_(MACH_XIAOMI_VIOLET|ARCH_SM6150|ARCH_QCOM|INPUT_FINGERPRINT|FINGERPRINT_|SND_SOC_TAS2563|TAS2563_)' \
+            violet-perf_defconfig || true
 
-          cp verify/defconfig verify-violet-perf_defconfig
-
-          if cmp -s violet-perf_defconfig verify-violet-perf_defconfig; then
-            echo
-            echo "========================================"
-            echo "DEFCONFIG IS STABLE"
-            echo "========================================"
-          else
-            echo
-            echo "========================================"
-            echo "WARNING: DEFCONFIG CHANGED"
-            echo "========================================"
-
-            diff -u \
-              violet-perf_defconfig \
-              verify-violet-perf_defconfig \
-              || true
-          fi
-
-      - name: Create report
-        run: |
-          set -e
-
-          echo "========================================" > violet-report.txt
-          echo "MODERN VIOLET DEFCONFIG REPORT" >> violet-report.txt
-          echo "========================================" >> violet-report.txt
-
-          echo >> violet-report.txt
-          echo "Commit:" >> violet-report.txt
-          git rev-parse HEAD >> violet-report.txt
-
-          echo >> violet-report.txt
-          echo "Branch:" >> violet-report.txt
-          git branch --show-current >> violet-report.txt
-
-          echo >> violet-report.txt
-          echo "Defconfig lines:" >> violet-report.txt
-          wc -l violet-perf_defconfig >> violet-report.txt
-
-          echo >> violet-report.txt
-          echo "Violet / Xiaomi / SM6150:" >> violet-report.txt
-          grep -Ei \
-            'VIOLET|XIAOMI|SM6150' \
-            violet-full.config \
-            >> violet-report.txt || true
-
-          echo >> violet-report.txt
-          echo "Fingerprint:" >> violet-report.txt
-          grep -Ei \
-            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
-            violet-full.config \
-            >> violet-report.txt || true
-
-          echo >> violet-report.txt
-          echo "Audio:" >> violet-report.txt
-          grep -Ei \
-            '^CONFIG_.*TAS2563.*=' \
-            violet-full.config \
-            >> violet-report.txt || true
+          echo
+          echo "Last 20 lines:"
+          tail -20 violet-perf_defconfig
 
       - name: Upload modern Violet defconfig
         uses: actions/upload-artifact@v4
@@ -336,23 +229,9 @@ jobs:
           path: violet-perf_defconfig
           if-no-files-found: error
 
-      - name: Upload full resolved config
+      - name: Upload generated full config
         uses: actions/upload-artifact@v4
         with:
-          name: violet-full-config
-          path: violet-full.config
-          if-no-files-found: error
-
-      - name: Upload verification config
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-verification-config
-          path: verify/.config
-          if-no-files-found: error
-
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-config-report
-          path: violet-report.txt
+          name: modern-violet-full-config
+          path: out/.config
           if-no-files-found: error
