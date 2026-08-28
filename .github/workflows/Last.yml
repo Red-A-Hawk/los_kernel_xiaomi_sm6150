@@ -1,0 +1,259 @@
+name: Build Kernel (violet)
+
+on:
+  push:
+    branches:
+      - 16
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+    # 1. Checkout kernel source
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+
+    # 2. Install dependencies
+    - name: Install dependencies
+      run: |
+        set -e
+
+        sudo apt update
+
+        sudo apt install -y \
+          git \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          make \
+          zip \
+          unzip \
+          curl \
+          wget \
+          libelf-dev \
+          libncurses-dev \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          device-tree-compiler \
+          python3 \
+          openjdk-17-jre-headless
+
+    # 3. Setup ZyCromerZ Clang 16.0.6
+    - name: Setup Clang
+      run: |
+        set -e
+
+        mkdir -p clang
+
+        wget -q \
+          https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+
+        tar -xzf \
+          Clang-16.0.6-20260807.tar.gz \
+          -C clang
+
+        echo "$PWD/clang/bin" >> "$GITHUB_PATH"
+
+    # 4. Verify Clang and LLD
+    - name: Verify Clang toolchain
+      run: |
+        set -e
+
+        echo "=== CLANG ==="
+        which clang
+        clang --version
+
+        echo
+        echo "=== LLD ==="
+        which ld.lld
+        ld.lld --version
+
+        echo
+        echo "=== DTC ==="
+        which dtc
+        dtc --version
+
+    # 5. Export build environment
+    - name: Export build environment
+      run: |
+        echo "ARCH=arm64" >> "$GITHUB_ENV"
+        echo "SUBARCH=arm64" >> "$GITHUB_ENV"
+        echo "CC=clang" >> "$GITHUB_ENV"
+        echo "LD=ld.lld" >> "$GITHUB_ENV"
+        echo "LLVM=1" >> "$GITHUB_ENV"
+        echo "LLVM_IAS=1" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
+
+    # 6. Load defconfig
+    - name: Load defconfig
+      run: |
+        set -e
+
+        make O=out vendor/violet-perf_defconfig
+
+    # 7. Debug Violet Device Tree
+    - name: Debug Violet Device Tree
+      run: |
+        set +e
+
+        echo "========================================"
+        echo "VIOLET DEVICE TREE DEBUG"
+        echo "========================================"
+
+        echo
+        echo "=== KERNEL TREE ==="
+        pwd
+
+        echo
+        echo "=== violet-sm6150.dtsi ==="
+        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi ]; then
+          nl -ba \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
+            | sed -n '1,120p'
+        else
+          echo "FILE NOT FOUND"
+        fi
+
+        echo
+        echo "=== violet-sm6150-memory.dtsi ==="
+        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi ]; then
+          nl -ba \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
+            | sed -n '1,160p'
+        else
+          echo "FILE NOT FOUND"
+        fi
+
+        echo
+        echo "=== reserved_memory DEFINITIONS ==="
+        grep -R -n \
+          -A25 \
+          -B5 \
+          "reserved_memory" \
+          arch/arm64/boot/dts/qcom 2>/dev/null \
+          | head -250
+
+        echo
+        echo "=== MEMORY NODE DEFINITIONS ==="
+        grep -R -n \
+          -E "pil_modem_mem|pil_video_mem|wlan_msa_mem|pil_cdsp_mem|pil_adsp_mem|pil_ipa_fw_mem|pil_ipa_gsi_mem|pil_gpu_mem|dfps_data_memory|disp_rdump_memory" \
+          arch/arm64/boot/dts/qcom 2>/dev/null \
+          | head -250
+
+        echo
+        echo "=== CHECK INCLUDED FILES ==="
+        grep -n \
+          '^#include' \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
+
+        echo
+        echo "=== DTS COMPILATION TEST ==="
+
+        make O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtb
+
+        DTS_RESULT=$?
+
+        echo
+        echo "========================================"
+        echo "DTS RETURN CODE: $DTS_RESULT"
+        echo "========================================"
+
+        if [ "$DTS_RESULT" -ne 0 ]; then
+          echo
+          echo "DTS COMPILATION FAILED"
+          echo "The full error above is the important part."
+        else
+          echo
+          echo "DTS COMPILATION PASSED"
+        fi
+
+        exit 0
+
+    # 8. Build kernel
+    - name: Build kernel
+      run: |
+        set -e
+
+        make O=out -j$(nproc) 2>&1 | tee build.log
+
+    # 9. Verify output
+    - name: Check build output
+      run: |
+        set -e
+
+        echo "=== CHECKING KERNEL ==="
+
+        test -f out/arch/arm64/boot/Image.gz
+
+        echo "Image.gz found."
+
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          echo "dtbo.img found."
+        else
+          echo "dtbo.img not found."
+        fi
+
+    # 10. Package AnyKernel3
+    - name: Package AnyKernel3
+      run: |
+        set -e
+
+        git clone \
+          --depth=1 \
+          -b sixteen \
+          https://github.com/Joker-V2/AnyKernel3.git \
+          AK3
+
+        cp \
+          out/arch/arm64/boot/Image.gz \
+          AK3/
+
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp \
+            out/arch/arm64/boot/dtbo.img \
+            AK3/
+        fi
+
+        cd AK3
+
+        zip -r9 \
+          ../Kernel-violet.zip \
+          *
+
+    # 11. Upload kernel
+    - name: Upload Kernel ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-violet
+        path: Kernel-violet.zip
+
+    # 12. Upload build log
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
+
+    # 13. Upload DTS debug information
+    - name: Upload DTS debug
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: violet-dts-debug
+        path: |
+          /tmp/violet-preprocessed.dts
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
