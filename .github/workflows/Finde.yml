@@ -1,0 +1,252 @@
+name: Analyze disp_rdump_memory
+
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Analyze Device Tree symbol
+        run: |
+          set -e
+
+          REPORT="disp_rdump_memory_report.txt"
+
+          {
+            echo "========================================"
+            echo "disp_rdump_memory DEVICE TREE ANALYSIS"
+            echo "========================================"
+            echo
+            echo "DATE: $(date)"
+            echo "BRANCH: $(git branch --show-current || true)"
+            echo "COMMIT: $(git rev-parse HEAD)"
+            echo
+            echo "TARGET SYMBOL: disp_rdump_memory"
+            echo
+          } > "$REPORT"
+
+          echo "========================================"
+          echo "[1] EXACT LABEL DEFINITIONS"
+          echo "========================================"
+
+          {
+            echo "========================================"
+            echo "[1] EXACT LABEL DEFINITIONS"
+            echo "========================================"
+            echo
+
+            found=0
+
+            while IFS= read -r file; do
+              line=0
+
+              while IFS= read -r text; do
+                line=$((line + 1))
+
+                if echo "$text" | grep -Eq '^[[:space:]]*disp_rdump_memory[[:space:]]*:'; then
+                  echo "FOUND DEFINITION"
+                  echo "FILE: $file"
+                  echo "LINE: $line"
+                  echo "CODE: $text"
+                  echo
+                  found=1
+                fi
+              done < "$file"
+
+            done < <(
+              find . \
+                -type f \
+                \( -name '*.dts' -o -name '*.dtsi' \) \
+                -not -path './.git/*' \
+                -print | sort
+            )
+
+            if [ "$found" -eq 0 ]; then
+              echo "NO EXACT LABEL DEFINITION FOUND"
+            fi
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[2] ALL SYMBOL REFERENCES"
+            echo "========================================"
+            echo
+
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              'disp_rdump_memory' \
+              . || true
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[3] REFERENCE TYPES"
+            echo "========================================"
+            echo
+
+            echo "--- Label/reference form ---"
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              -E '(^|[^A-Za-z0-9_])&disp_rdump_memory([^A-Za-z0-9_]|$)' \
+              . || true
+
+            echo
+            echo "--- Definition form ---"
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              -E 'disp_rdump_memory[[:space:]]*:' \
+              . || true
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[4] VIOLET DTS INCLUDE CHAIN"
+            echo "========================================"
+            echo
+
+            find arch/arm64/boot/dts \
+              -type f \
+              \( -name 'violet*.dts' -o -name 'violet*.dtsi' \) \
+              -print | sort
+
+            echo
+            echo "--- Includes containing violet-sm6150 ---"
+
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              -E 'violet-sm6150|disp_rdump_memory' \
+              arch/arm64/boot/dts/qcom/xiaomi/violet \
+              arch/arm64/boot/dts/qcom \
+              2>/dev/null || true
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[5] MEMORY DTSI CONTEXT"
+            echo "========================================"
+            echo
+
+            FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+
+            if [ -f "$FILE" ]; then
+              echo "FILE: $FILE"
+              echo
+              nl -ba "$FILE" | sed -n '40,65p'
+            else
+              echo "FILE NOT FOUND: $FILE"
+            fi
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[6] POTENTIAL DEFINITIONS WITH MEMORY NAMES"
+            echo "========================================"
+            echo
+
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              -E '(^|[[:space:]])[A-Za-z0-9_]*rdump[A-Za-z0-9_]*[[:space:]]*:' \
+              arch/arm64/boot/dts \
+              2>/dev/null || true
+
+            echo
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              -E '(^|[[:space:]])[A-Za-z0-9_]*disp[A-Za-z0-9_]*memory[A-Za-z0-9_]*[[:space:]]*:' \
+              arch/arm64/boot/dts \
+              2>/dev/null || true
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[7] DTS FILES INCLUDING MEMORY DTSI"
+            echo "========================================"
+            echo
+
+            grep -Rnw \
+              --include='*.dts' \
+              --include='*.dtsi' \
+              --exclude-dir=.git \
+              'violet-sm6150-memory.dtsi' \
+              arch/arm64/boot/dts \
+              2>/dev/null || true
+
+            echo
+          } >> "$REPORT"
+
+          {
+            echo "========================================"
+            echo "[8] SUMMARY"
+            echo "========================================"
+            echo
+
+            if grep -Eq '^[^:]+:[0-9]+:.*disp_rdump_memory[[:space:]]*:' "$REPORT"; then
+              echo "STATUS: DEFINITION FOUND"
+            else
+              echo "STATUS: EXACT DEFINITION NOT FOUND"
+            fi
+
+            REF_COUNT=$(
+              grep -R \
+                --include='*.dts' \
+                --include='*.dtsi' \
+                --exclude-dir=.git \
+                -h \
+                -E '&disp_rdump_memory([^A-Za-z0-9_]|$)' \
+                arch/arm64/boot/dts 2>/dev/null \
+                | wc -l
+            )
+
+            echo "REFERENCE COUNT: $REF_COUNT"
+
+            echo
+            echo "This report does NOT modify the source tree."
+            echo
+          } >> "$REPORT"
+
+          echo
+          echo "========================================"
+          echo "ANALYSIS COMPLETE"
+          echo "========================================"
+          echo
+          cat "$REPORT"
+
+      - name: Upload analysis report
+        uses: actions/upload-artifact@v4
+        with:
+          name: disp-rdump-memory-analysis
+          path: disp_rdump_memory_report.txt
+          if-no-files-found: error
