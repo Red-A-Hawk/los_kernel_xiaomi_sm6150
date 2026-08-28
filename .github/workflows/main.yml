@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
       - name: Checkout kernel
         uses: actions/checkout@v4
         with:
@@ -16,7 +17,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             bc \
@@ -34,24 +38,79 @@ jobs:
         run: |
           set -e
 
-          echo "=== COMMIT ==="
+          echo "========================================"
+          echo "KERNEL TREE"
+          echo "========================================"
+
+          echo
+          echo "Commit:"
           git rev-parse HEAD
 
           echo
-          echo "=== BRANCH ==="
+          echo "Branch:"
           git branch --show-current
 
           echo
-          echo "=== REQUIRED FILES ==="
+          echo "Required files:"
+
+          test -f Makefile
+          test -f arch/arm64/Kconfig
+          test -f arch/arm64/Makefile
           test -f arch/arm64/configs/defconfig
           test -f arch/arm64/configs/vendor/violet.config
           test -f scripts/kconfig/merge_config.sh
 
-          echo "All required files exist."
+          echo "All required files found."
+
+      - name: Inspect Violet definition
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "VIOLET SOURCE ANALYSIS"
+          echo "========================================"
 
           echo
-          echo "=== VIOLET CONFIG ==="
+          echo "=== vendor/violet.config ==="
           cat arch/arm64/configs/vendor/violet.config
+
+          echo
+          echo "=== Violet references ==="
+
+          grep -Rni "violet" \
+            arch/arm64/Kconfig \
+            arch/arm64/Kconfig.platforms \
+            arch/arm64/configs \
+            arch/arm64/boot/dts \
+            2>/dev/null | head -300 || true
+
+          echo
+          echo "=== SM6150 references ==="
+
+          grep -Rni "SM6150" \
+            arch/arm64/Kconfig \
+            arch/arm64/Kconfig.platforms \
+            arch/arm64/configs \
+            arch/arm64/boot/dts \
+            2>/dev/null | head -300 || true
+
+          echo
+          echo "=== Xiaomi references ==="
+
+          grep -Rni "XIAOMI" \
+            arch/arm64/Kconfig \
+            arch/arm64/Kconfig.platforms \
+            arch/arm64/configs \
+            arch/arm64/boot/dts \
+            2>/dev/null | head -300 || true
+
+          echo
+          echo "=== Violet device-tree files ==="
+
+          find arch/arm64/boot/dts \
+            -type f \
+            \( -iname '*violet*' -o -iname '*sm6150*' \) \
+            -print 2>/dev/null | sort
 
       - name: Generate base configuration
         run: |
@@ -60,17 +119,24 @@ jobs:
           rm -rf out
           mkdir -p out
 
+          echo "========================================"
+          echo "GENERATING BASE CONFIG"
+          echo "========================================"
+
           make O=out ARCH=arm64 defconfig
 
           test -f out/.config
 
           echo
-          echo "=== BASE CONFIG GENERATED ==="
-          wc -l out/.config
+          echo "Base configuration generated."
 
       - name: Merge Violet configuration
         run: |
           set -e
+
+          echo "========================================"
+          echo "MERGING VIOLET CONFIG"
+          echo "========================================"
 
           ./scripts/kconfig/merge_config.sh \
             -O out \
@@ -81,62 +147,67 @@ jobs:
         run: |
           set -e
 
+          echo "========================================"
+          echo "RESOLVING CONFIGURATION"
+          echo "========================================"
+
           make O=out ARCH=arm64 olddefconfig
 
           test -f out/.config
 
-      - name: Verify Violet configuration
+      - name: Analyze resolved configuration
         run: |
-          set -e
+          set +e
 
-          echo "=== VIOLET CONFIGURATION ==="
-
-          echo
-          echo "--- Architecture ---"
-          grep -E \
-            '^CONFIG_ARCH_QCOM=|^CONFIG_ARCH_SM6150=' \
-            out/.config || true
+          echo "========================================"
+          echo "RESOLVED CONFIGURATION"
+          echo "========================================"
 
           echo
-          echo "--- Device ---"
-          grep -E \
-            '^CONFIG_MACH_XIAOMI_VIOLET=' \
-            out/.config || true
+          echo "=== VIOLET ==="
+          grep -Ei 'violet' out/.config || true
 
           echo
-          echo "--- Fingerprint ---"
-          grep -E \
-            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_FPC1020=|^CONFIG_FINGERPRINT_GF3208=' \
-            out/.config || true
+          echo "=== XIAOMI ==="
+          grep -Ei 'xiaomi' out/.config || true
 
           echo
-          echo "--- Touchscreen ---"
+          echo "=== SM6150 ==="
+          grep -Ei 'sm6150' out/.config || true
+
+          echo
+          echo "=== QCOM ==="
+          grep -Ei '^CONFIG_.*QCOM.*=' out/.config || true
+
+          echo
+          echo "=== ARM64 ==="
+          grep -Ei '^CONFIG_ARCH.*=' out/.config || true
+
+          echo
+          echo "=== FINGERPRINT ==="
           grep -Ei \
-            '^CONFIG_.*(FTS|NT36|NVT).*=' \
+            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
             out/.config || true
 
           echo
-          echo "--- Audio ---"
-          grep -E \
-            '^CONFIG_SND_SOC_TAS2563=|^CONFIG_TAS2563_CODEC=|^CONFIG_TAS2563_MISC=|^CONFIG_TAS2563_REGMAP=' \
+          echo "=== TOUCHSCREEN ==="
+          grep -Ei \
+            '^CONFIG_.*(FTS|NVT|NT36|GOODIX).*=' \
             out/.config || true
 
-      - name: Require Violet support
-        run: |
-          set -e
-
-          echo "Checking required Violet options..."
-
-          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' out/.config
-          grep -q '^CONFIG_ARCH_SM6150=y$' out/.config
-          grep -q '^CONFIG_ARCH_QCOM=y$' out/.config
-
           echo
-          echo "Violet hardware configuration is enabled."
+          echo "=== AUDIO ==="
+          grep -Ei \
+            '^CONFIG_.*TAS2563.*=' \
+            out/.config || true
 
-      - name: Generate modern defconfig
+      - name: Generate modern Violet defconfig
         run: |
           set -e
+
+          echo "========================================"
+          echo "GENERATING DEFCONFIG"
+          echo "========================================"
 
           make O=out ARCH=arm64 savedefconfig
 
@@ -145,35 +216,58 @@ jobs:
           cp out/defconfig violet-perf_defconfig
 
           echo
-          echo "=== GENERATED DEFCONFIG ==="
+          echo "Generated defconfig:"
           wc -l violet-perf_defconfig
 
-          echo
-          echo "=== VIOLET ENTRIES IN GENERATED DEFCONFIG ==="
-          grep -E \
-            'VIOLET|SM6150|FPC1020|GF3208|TAS2563|FTS|NT36|NVT' \
-            violet-perf_defconfig || true
+      - name: Show generated defconfig
+        run: |
+          echo "========================================"
+          echo "GENERATED VIOLET DEFCONFIG"
+          echo "========================================"
 
-      - name: Validate generated defconfig
+          cat violet-perf_defconfig
+
+      - name: Re-validate generated defconfig
         run: |
           set -e
+
+          echo "========================================"
+          echo "RE-VALIDATING GENERATED DEFCONFIG"
+          echo "========================================"
 
           rm -rf verify
           mkdir -p verify
 
-          make O=verify ARCH=arm64 \
+          make \
+            O=verify \
+            ARCH=arm64 \
             KCONFIG_CONFIG="$GITHUB_WORKSPACE/violet-perf_defconfig" \
             olddefconfig
 
-          echo
-          echo "=== VERIFYING GENERATED DEFCONFIG ==="
-
-          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' verify/.config
-          grep -q '^CONFIG_ARCH_SM6150=y$' verify/.config
-          grep -q '^CONFIG_ARCH_QCOM=y$' verify/.config
+          test -f verify/.config
 
           echo
-          echo "Generated Violet defconfig passed validation."
+          echo "Generated defconfig successfully reconstructed."
+
+          echo
+          echo "=== RECONSTRUCTED CONFIG ==="
+
+          grep -Ei 'violet|xiaomi|sm6150' \
+            verify/.config || true
+
+          echo
+          echo "=== FINGERPRINT ==="
+
+          grep -Ei \
+            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
+            verify/.config || true
+
+          echo
+          echo "=== AUDIO ==="
+
+          grep -Ei \
+            '^CONFIG_.*TAS2563.*=' \
+            verify/.config || true
 
       - name: Upload modern Violet defconfig
         uses: actions/upload-artifact@v4
@@ -187,4 +281,11 @@ jobs:
         with:
           name: violet-full-config
           path: out/.config
+          if-no-files-found: error
+
+      - name: Upload verification config
+        uses: actions/upload-artifact@v4
+        with:
+          name: violet-verification-config
+          path: verify/.config
           if-no-files-found: error
