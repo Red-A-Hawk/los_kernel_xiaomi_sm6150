@@ -1,24 +1,135 @@
 name: Diagnose Violet DTS Memory References
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 jobs:
-  diagnose:
-    runs-on: ubuntu-22.04
+diagnose:
+runs-on: ubuntu-22.04
 
-    steps:
-      - name: Checkout kernel
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
+steps:
+  - name: Checkout kernel
+    uses: actions/checkout@v4
+    with:
+      ref: 16
+      fetch-depth: 1
 
-      - name: Diagnose Violet memory references
-        run: |
-          set +e
+  - name: Diagnose Violet memory references
+    run: |
+      set +e
 
-          echo "========================================"
-          echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
-          echo "========================================"
-          ...
+      echo "========================================"
+      echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
+      echo "========================================"
+
+      SM="arch/arm64/boot/dts/qcom/sm6150.dtsi"
+      VM="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+      DTS="arch/arm64/boot/dts/qcom/violet-sm6150.dts"
+
+      echo
+      echo "[1] VIOLET INCLUDE CHAIN"
+      echo "========================================"
+      grep -n '#include' "$DTS"
+
+      echo
+      echo "[2] DISP RDUMP DEFINITIONS"
+      echo "========================================"
+      git grep -n 'disp_rdump_memory:' -- '*.dts' '*.dtsi' || true
+
+      echo
+      echo "[3] DISP RDUMP REFERENCES"
+      echo "========================================"
+      git grep -n '&disp_rdump_memory' -- '*.dts' '*.dtsi' || true
+
+      echo
+      echo "[4] DFPS DEFINITIONS"
+      echo "========================================"
+      git grep -n 'dfps_data_memory:' -- '*.dts' '*.dtsi' || true
+
+      echo
+      echo "[5] DFPS REFERENCES"
+      echo "========================================"
+      git grep -n '&dfps_data_memory' -- '*.dts' '*.dtsi' || true
+
+      echo
+      echo "[6] QSEECOM DEFINITIONS"
+      echo "========================================"
+      git grep -n 'qseecom_mem:' -- '*.dts' '*.dtsi' || true
+
+      echo
+      echo "[7] VIOLET MEMORY OVERRIDES"
+      echo "========================================"
+      nl -ba "$VM"
+
+      echo
+      echo "[8] SM6150 MEMORY AREA"
+      echo "========================================"
+      nl -ba "$SM" | sed -n '620,645p'
+
+      echo
+      echo "[9] ADDRESS RANGE CHECK"
+      echo "========================================"
+
+      python3 - <<'PY'
+      regions = [
+          ("SM6150 cont_splash", 0x9c000000, 0x00f00000),
+          ("SM6150 dfps",        0x9cf00000, 0x00100000),
+          ("Violet dfps",        0x9d000000, 0x00100000),
+          ("Violet disp_rdump",  0x9d100000, 0x01000000),
+          ("SM6150 qseecom",     0x9e400000, 0x01400000),
+      ]
+
+      print("NAME                 START       END         SIZE")
+      print("----------------------------------------------------")
+
+      for name, start, size in regions:
+          end = start + size
+          print(
+              f"{name:20} "
+              f"0x{start:08x} "
+              f"0x{end:08x} "
+              f"0x{size:08x}"
+          )
+
+      print()
+      print("PAIRWISE OVERLAP CHECK")
+      print("----------------------------------------------------")
+
+      for i in range(len(regions)):
+          n1, s1, z1 = regions[i]
+          e1 = s1 + z1
+
+          for j in range(i + 1, len(regions)):
+              n2, s2, z2 = regions[j]
+              e2 = s2 + z2
+
+              if s1 < e2 and s2 < e1:
+                  print("OVERLAP:", n1, "<->", n2)
+
+      print()
+      print("DISP RDUMP -> QSEECOM")
+      print("----------------------------------------------------")
+
+      disp_start = 0x9d100000
+      disp_end = disp_start + 0x01000000
+      qsee_start = 0x9e400000
+
+      gap = qsee_start - disp_end
+
+      print("disp_rdump start :", hex(disp_start))
+      print("disp_rdump end   :", hex(disp_end))
+      print("qseecom start    :", hex(qsee_start))
+      print("gap              :", hex(gap))
+      print("gap MiB          :", gap / 0x100000)
+
+      if gap < 0:
+          print("RESULT: MEMORY OVERLAP")
+      else:
+          print("RESULT: NO MEMORY OVERLAP")
+
+      PY
+
+      echo
+      echo "========================================"
+      echo "DIAGNOSTIC COMPLETE"
+      echo "========================================"
