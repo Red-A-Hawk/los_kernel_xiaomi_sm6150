@@ -1,4 +1,4 @@
-name: Analyze SM6150 Reserved Memory
+name: Compare SM6150 Atoll Violet Memory
 
 on:
   workflow_dispatch:
@@ -15,30 +15,112 @@ jobs:
           ref: 16
           fetch-depth: 1
 
-      - name: Show SM6150 memory definitions
+      - name: Compare memory definitions
         run: |
           set -e
 
-          FILE="arch/arm64/boot/dts/qcom/sm6150.dtsi"
+          REPORT="memory_comparison_report.txt"
 
-          echo "========================================"
-          echo "SM6150 RESERVED MEMORY"
-          echo "========================================"
+          {
+            echo "========================================"
+            echo "SM6150 / ATOLL / VIOLET MEMORY COMPARE"
+            echo "========================================"
+            echo
+            echo "COMMIT: $(git rev-parse HEAD)"
+            echo
 
-          nl -ba "$FILE" | sed -n '530,650p'
+            echo "========================================"
+            echo "[1] SM6150.DTSI"
+            echo "========================================"
 
-          echo
-          echo "========================================"
-          echo "DISP RDUMP SEARCH"
-          echo "========================================"
+            nl -ba arch/arm64/boot/dts/qcom/sm6150.dtsi | sed -n '570,645p'
 
-          git grep -n "disp_rdump" -- \
-            '*.dts' '*.dtsi' || true
+            echo
 
-          echo
-          echo "========================================"
-          echo "DFPS SEARCH"
-          echo "========================================"
+            echo "========================================"
+            echo "[2] ATOLL.DTSI"
+            echo "========================================"
 
-          git grep -n "dfps_data_memory" -- \
-            '*.dts' '*.dtsi' || true
+            nl -ba arch/arm64/boot/dts/qcom/atoll.dtsi | sed -n '565,620p'
+
+            echo
+
+            echo "========================================"
+            echo "[3] VIOLET MEMORY DTSI"
+            echo "========================================"
+
+            nl -ba \
+              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
+              | sed -n '1,100p'
+
+            echo
+
+            echo "========================================"
+            echo "[4] MEMORY SYMBOL COMPARISON"
+            echo "========================================"
+
+            for symbol in \
+              qseecom_ta_mem \
+              sp_mem \
+              secure_display_memory \
+              cont_splash_memory \
+              dfps_data_memory \
+              disp_rdump_memory
+            do
+              echo
+              echo "----- $symbol -----"
+
+              echo "SM6150:"
+              git grep -n "$symbol" -- \
+                arch/arm64/boot/dts/qcom/sm6150.dtsi || true
+
+              echo "ATOLL:"
+              git grep -n "$symbol" -- \
+                arch/arm64/boot/dts/qcom/atoll.dtsi || true
+
+              echo "VIOLET:"
+              git grep -n "$symbol" -- \
+                arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi || true
+            done
+
+            echo
+
+            echo "========================================"
+            echo "[5] MEMORY ADDRESS MAP"
+            echo "========================================"
+
+            echo "SM6150 relevant addresses:"
+            git grep -n -E \
+              'cont_splash_region|dfps_data_region|disp_rdump_region|linux,cma' -- \
+              arch/arm64/boot/dts/qcom/sm6150.dtsi || true
+
+            echo
+
+            echo "ATOLL relevant addresses:"
+            git grep -n -E \
+              'cont_splash_region|dfps_data_region|disp_rdump_region|linux,cma' -- \
+              arch/arm64/boot/dts/qcom/atoll.dtsi || true
+
+            echo
+
+            echo "VIOLET overrides:"
+            git grep -n -E \
+              'cont_splash|dfps_data|disp_rdump|linux,cma' -- \
+              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi || true
+
+            echo
+
+            echo "========================================"
+            echo "END OF REPORT"
+            echo "========================================"
+
+          } > "$REPORT"
+
+          cat "$REPORT"
+
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-comparison-report
+          path: memory_comparison_report.txt
+          if-no-files-found: error
