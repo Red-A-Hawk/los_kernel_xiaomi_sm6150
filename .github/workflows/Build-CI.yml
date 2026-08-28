@@ -1,4 +1,4 @@
-name: VIOLET Deep Audit - Joker 296
+name: VIOLET Fast Deep Joker Audit
 
 on:
   workflow_dispatch:
@@ -18,7 +18,9 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             bc \
             bison \
@@ -32,12 +34,14 @@ jobs:
             wget \
             python3
 
-      - name: Prepare reports
+      - name: Prepare Joker source
         run: |
           set -e
-          rm -rf audit
-          mkdir -p audit/reports
+
           mkdir -p audit/joker
+          mkdir -p audit/reports
+          mkdir -p audit/index
+          mkdir -p audit/out
 
           wget -q \
             -O audit/joker/violet-perf_defconfig \
@@ -45,12 +49,14 @@ jobs:
 
           test -s audit/joker/violet-perf_defconfig
 
-      - name: Syntax validation
+          echo "Joker defconfig downloaded."
+
+      - name: Syntax check Joker defconfig
         run: |
           set -e
 
           echo "========================================"
-          echo "SYNTAX VALIDATION"
+          echo "SYNTAX CHECK"
           echo "========================================"
 
           python3 - <<'PY'
@@ -58,52 +64,64 @@ jobs:
           import re
           import sys
 
-          f = Path("audit/joker/violet-perf_defconfig")
+          path = Path("audit/joker/violet-perf_defconfig")
 
-          total = 0
-          bad = 0
+          valid = 0
+          errors = 0
 
-          for n, raw in enumerate(f.read_text(errors="replace").splitlines(), 1):
+          for number, raw in enumerate(
+              path.read_text(errors="replace").splitlines(), 1
+          ):
               line = raw.strip()
 
               if not line:
                   continue
 
               if line.startswith("# CONFIG_"):
-                  if not re.fullmatch(r"# CONFIG_[A-Za-z0-9_]+ is not set", line):
-                      print(f"BAD:{n}:{raw}")
-                      bad += 1
+                  if re.fullmatch(
+                      r"# CONFIG_[A-Za-z0-9_]+ is not set",
+                      line
+                  ):
+                      valid += 1
                   else:
-                      total += 1
+                      print(f"SYNTAX ERROR line {number}: {raw}")
+                      errors += 1
                   continue
 
               if line.startswith("CONFIG_"):
                   if "=" not in line:
-                      print(f"BAD:{n}:{raw}")
-                      bad += 1
-                  else:
-                      name, value = line.split("=", 1)
+                      print(f"SYNTAX ERROR line {number}: {raw}")
+                      errors += 1
+                      continue
 
-                      if not re.fullmatch(r"CONFIG_[A-Za-z0-9_]+", name):
-                          print(f"BAD:{n}:{raw}")
-                          bad += 1
-                      elif value == "":
-                          print(f"BAD:{n}:{raw}")
-                          bad += 1
-                      else:
-                          total += 1
+                  name, value = line.split("=", 1)
+
+                  if not re.fullmatch(
+                      r"CONFIG_[A-Za-z0-9_]+",
+                      name
+                  ):
+                      print(f"SYNTAX ERROR line {number}: {raw}")
+                      errors += 1
+                      continue
+
+                  if value == "":
+                      print(f"SYNTAX ERROR line {number}: {raw}")
+                      errors += 1
+                      continue
+
+                  valid += 1
 
           print("")
-          print("Valid settings :", total)
-          print("Syntax errors  :", bad)
+          print("Valid entries :", valid)
+          print("Syntax errors :", errors)
 
-          if bad:
+          if errors:
               sys.exit(1)
           PY
 
-          echo "Syntax: OK"
+          echo "Syntax: PASSED"
 
-      - name: Extract the 296 candidates
+      - name: Extract Joker settings
         run: |
           set -e
 
@@ -112,228 +130,365 @@ jobs:
           import re
 
           src = Path("audit/joker/violet-perf_defconfig")
-          out = Path("audit/reports/01_all_296.txt")
+          dst = Path("audit/reports/01_all_296.txt")
 
-          lines = []
+          found = []
 
-          for raw in src.read_text(errors="replace").splitlines():
-              s = raw.strip()
+          for line in src.read_text(errors="replace").splitlines():
+              line = line.strip()
 
-              if re.match(r"^CONFIG_[A-Za-z0-9_]+=", s):
-                  lines.append(s)
+              if re.fullmatch(
+                  r"CONFIG_[A-Za-z0-9_]+=.*",
+                  line
+              ):
+                  found.append(line)
 
-              elif re.match(r"^# CONFIG_[A-Za-z0-9_]+ is not set$", s):
-                  lines.append(s)
+              elif re.fullmatch(
+                  r"# CONFIG_[A-Za-z0-9_]+ is not set",
+                  line
+              ):
+                  found.append(line)
 
-          seen = set()
-          final = []
+          found = sorted(set(found))
 
-          for x in lines:
-              if x not in seen:
-                  seen.add(x)
-                  final.append(x)
+          dst.write_text("\n".join(found) + "\n")
 
-          out.write_text("\n".join(final) + "\n")
-
-          print("Candidate settings:", len(final))
+          print("Joker settings:", len(found))
           PY
 
-      - name: Build Kconfig symbol database
+      - name: Build fast Kconfig index
         run: |
           set -e
 
           echo "========================================"
-          echo "BUILDING KCONFIG DATABASE"
+          echo "BUILDING KCONFIG INDEX"
           echo "========================================"
 
-          : > audit/reports/kconfig_database.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-          grep -RhsE \
-            '^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Za-z0-9_]+' \
-            --include='Kconfig' \
-            --include='Kconfig.*' \
-            . \
-            2>/dev/null \
-            | sort -u \
-            > audit/reports/kconfig_database.txt
+          root = Path(".")
+          out = Path("audit/index/kconfig_symbols.txt")
 
-          wc -l audit/reports/kconfig_database.txt
+          results = []
 
-      - name: Deep source tree analysis
-        run: |
-          set -e
+          for path in root.rglob("Kconfig*"):
 
-          : > audit/reports/02_defined_in_kconfig.txt
-          : > audit/reports/03_source_presence.txt
-          : > audit/reports/04_dependency_analysis.txt
-          : > audit/reports/05_safe_candidates.txt
-          : > audit/reports/06_rejected.txt
-
-          while IFS= read -r request; do
-
-              [ -z "$request" ] && continue
-
-              case "$request" in
-
-                  CONFIG_*=*)
-                      symbol="${request%%=*}"
-                      ;;
-
-                  "# CONFIG_"*" is not set")
-                      symbol="${request#\# }"
-                      symbol="${symbol% is not set}"
-                      ;;
-
-                  *)
-                      continue
-                      ;;
-
-              esac
-
-              name="${symbol#CONFIG_}"
-
-              echo "========================================"
-              echo "SYMBOL: $symbol"
-              echo "REQUEST: $request"
-              echo "========================================"
-
-              config_hits="$(
-                  grep -RIl \
-                    --exclude-dir=.git \
-                    --exclude='*.o' \
-                    --exclude='*.ko' \
-                    --exclude='*.a' \
-                    --exclude='*.cmd' \
-                    --exclude='*.d' \
-                    -E "^[[:space:]]*(config|menuconfig)[[:space:]]+$name([[:space:]]|$)" \
-                    . 2>/dev/null \
-                    | head -n 50 || true
-              )"
-
-              if [ -n "$config_hits" ]; then
-
-                  {
-                      echo "========================================"
-                      echo "SYMBOL: $symbol"
-                      echo "REQUEST: $request"
-                      echo "STATUS: DEFINED IN KCONFIG"
-                      echo
-                      echo "$config_hits"
-                      echo
-                  } >> audit/reports/02_defined_in_kconfig.txt
-
-              else
-
-                  {
-                      echo "========================================"
-                      echo "SYMBOL: $symbol"
-                      echo "REQUEST: $request"
-                      echo "STATUS: NOT DEFINED IN KCONFIG"
-                      echo "========================================"
-                      echo
-                  } >> audit/reports/06_rejected.txt
-
+              if ".git" in path.parts:
                   continue
-              fi
 
-              source_hits="$(
-                  grep -RIn \
-                    --exclude-dir=.git \
-                    --exclude='*.o' \
-                    --exclude='*.ko' \
-                    --exclude='*.a' \
-                    --exclude='*.cmd' \
-                    --exclude='*.d' \
-                    -E "\b(CONFIG_${name}|IS_ENABLED\(CONFIG_${name}\)|IS_REACHABLE\(CONFIG_${name}\))\b" \
-                    . 2>/dev/null \
-                    | head -n 100 || true
-              )"
+              if not path.is_file():
+                  continue
 
-              {
-                  echo "========================================"
-                  echo "SYMBOL: $symbol"
-                  echo "REQUEST: $request"
-                  echo "========================================"
+              try:
+                  lines = path.read_text(
+                      errors="ignore"
+                  ).splitlines()
+              except Exception:
+                  continue
 
-                  if [ -n "$source_hits" ]; then
-                      echo "SOURCE REFERENCES: FOUND"
-                      echo
-                      echo "$source_hits"
-                  else
-                      echo "SOURCE REFERENCES: NONE FOUND"
-                  fi
+              for number, line in enumerate(lines, 1):
 
-                  echo
-              } >> audit/reports/03_source_presence.txt
+                  m = re.match(
+                      r"^\s*(?:config|menuconfig)\s+([A-Za-z0-9_]+)",
+                      line
+                  )
 
-              dep_hits="$(
-                  grep -RIn \
-                    --exclude-dir=.git \
-                    --include='Kconfig' \
-                    --include='Kconfig.*' \
-                    -E "depends on .*${name}|select .*${name}|imply .*${name}" \
-                    . 2>/dev/null \
-                    | head -n 100 || true
-              )"
+                  if m:
+                      results.append(
+                          f"{m.group(1)}|{path}:{number}"
+                      )
 
-              {
-                  echo "========================================"
-                  echo "SYMBOL: $symbol"
-                  echo "REQUEST: $request"
-                  echo "========================================"
+          results = sorted(set(results))
 
-                  if [ -n "$dep_hits" ]; then
-                      echo "DEPENDENCY / SELECT / IMPLY:"
-                      echo
-                      echo "$dep_hits"
-                  else
-                      echo "DEPENDENCY REFERENCES: NONE FOUND"
-                  fi
+          out.write_text("\n".join(results) + "\n")
 
-                  echo
-              } >> audit/reports/04_dependency_analysis.txt
+          print("Kconfig symbols:", len(results))
+          PY
 
-              source_count=0
-              dep_count=0
+      - name: Build fast source reference index
+        run: |
+          set -e
 
-              if [ -n "$source_hits" ]; then
-                  source_count=1
-              fi
+          echo "========================================"
+          echo "BUILDING SOURCE INDEX"
+          echo "========================================"
 
-              if [ -n "$dep_hits" ]; then
-                  dep_count=1
-              fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-              if [ "$source_count" -eq 1 ]; then
+          root = Path(".")
+          out = Path("audit/index/source_references.txt")
 
-                  {
-                      echo "$request"
-                  } >> audit/reports/05_safe_candidates.txt
+          files = []
 
-              else
+          skip = {
+              ".git",
+              "audit",
+              "out",
+              "joker_test"
+          }
 
-                  {
-                      echo "========================================"
-                      echo "SYMBOL: $symbol"
-                      echo "REQUEST: $request"
-                      echo "REASON: Kconfig exists but no source reference detected"
-                      echo "========================================"
-                      echo
-                  } >> audit/reports/06_rejected.txt
+          extensions = {
+              ".c",
+              ".h",
+              ".cc",
+              ".cpp",
+              ".S",
+              ".s",
+              ".Kconfig",
+              ".dts",
+              ".dtsi"
+          }
 
-              fi
+          for path in root.rglob("*"):
 
-          done < audit/reports/01_all_296.txt
+              if not path.is_file():
+                  continue
 
-      - name: Run Kconfig resolution test
+              if any(part in skip for part in path.parts):
+                  continue
+
+              if path.suffix not in extensions:
+                  continue
+
+              files.append(path)
+
+          print("Source files:", len(files))
+
+          results = []
+
+          config_re = re.compile(
+              r"\bCONFIG_([A-Za-z0-9_]+)\b"
+          )
+
+          for path in files:
+
+              try:
+                  text = path.read_text(
+                      errors="ignore"
+                  )
+              except Exception:
+                  continue
+
+              symbols = set(config_re.findall(text))
+
+              for symbol in symbols:
+                  results.append(
+                      f"{symbol}|{path}"
+                  )
+
+          results = sorted(set(results))
+
+          out.write_text("\n".join(results) + "\n")
+
+          print("Indexed references:", len(results))
+          PY
+
+      - name: Generate source and Kconfig reports
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          base = Path("audit")
+          reports = base / "reports"
+          index = base / "index"
+
+          defined = {}
+          references = {}
+
+          for line in (index / "kconfig_symbols.txt").read_text(
+              errors="ignore"
+          ).splitlines():
+
+              if "|" not in line:
+                  continue
+
+              symbol, location = line.split("|", 1)
+
+              defined.setdefault(symbol, []).append(location)
+
+          for line in (index / "source_references.txt").read_text(
+              errors="ignore"
+          ).splitlines():
+
+              if "|" not in line:
+                  continue
+
+              symbol, location = line.split("|", 1)
+
+              references.setdefault(symbol, []).append(location)
+
+          all_settings = []
+
+          for raw in (reports / "01_all_296.txt").read_text(
+              errors="ignore"
+          ).splitlines():
+
+              request = raw.strip()
+
+              if not request:
+                  continue
+
+              if request.startswith("CONFIG_"):
+                  symbol = request.split("=", 1)[0]
+              else:
+                  symbol = request[2:].split(" ", 1)[0]
+
+              all_settings.append((symbol, request))
+
+          defined_report = []
+          source_report = []
+          dependency_report = []
+          safe_report = []
+          rejected_report = []
+
+          for symbol, request in all_settings:
+
+              name = symbol.replace("CONFIG_", "", 1)
+
+              kconfig_locations = defined.get(name, [])
+              source_locations = references.get(name, [])
+
+              defined_report.append(
+                  "========================================\n"
+                  f"SYMBOL: {symbol}\n"
+                  f"REQUEST: {request}\n"
+                  f"KCONFIG DEFINITION: "
+                  f"{'FOUND' if kconfig_locations else 'NOT FOUND'}\n"
+                  + (
+                      "\n".join(kconfig_locations[:20])
+                      if kconfig_locations else
+                      ""
+                  )
+                  + "\n"
+              )
+
+              source_report.append(
+                  "========================================\n"
+                  f"SYMBOL: {symbol}\n"
+                  f"REQUEST: {request}\n"
+                  f"SOURCE REFERENCE: "
+                  f"{'FOUND' if source_locations else 'NOT FOUND'}\n"
+                  + (
+                      "\n".join(source_locations[:30])
+                      if source_locations else
+                      ""
+                  )
+                  + "\n"
+              )
+
+              deps = []
+
+              for path_str in kconfig_locations:
+
+                  file_name, line_number = path_str.rsplit(":", 1)
+
+                  try:
+                      lines = Path(file_name).read_text(
+                          errors="ignore"
+                      ).splitlines()
+                  except Exception:
+                      continue
+
+                  start = max(0, int(line_number) - 1)
+
+                  context = lines[
+                      start:min(len(lines), start + 40)
+                  ]
+
+                  for context_line in context:
+
+                      if re.search(
+                          r"\b(depends on|select|imply)\b",
+                          context_line
+                      ):
+                          deps.append(
+                              f"{file_name}:{context_line.strip()}"
+                          )
+
+              deps = sorted(set(deps))
+
+              dependency_report.append(
+                  "========================================\n"
+                  f"SYMBOL: {symbol}\n"
+                  f"REQUEST: {request}\n"
+                  f"DEPENDENCY ENTRIES: "
+                  f"{len(deps)}\n"
+                  + (
+                      "\n".join(deps)
+                      if deps else
+                      "NONE FOUND"
+                  )
+                  + "\n"
+              )
+
+              if kconfig_locations and source_locations:
+                  safe_report.append(request)
+              else:
+                  rejected_report.append(
+                      "========================================\n"
+                      f"SYMBOL: {symbol}\n"
+                      f"REQUEST: {request}\n"
+                      f"KCONFIG: "
+                      f"{'FOUND' if kconfig_locations else 'NOT FOUND'}\n"
+                      f"SOURCE: "
+                      f"{'FOUND' if source_locations else 'NOT FOUND'}\n"
+                  )
+
+          (reports / "02_defined_in_kconfig.txt").write_text(
+              "\n".join(defined_report)
+          )
+
+          (reports / "03_source_presence.txt").write_text(
+              "\n".join(source_report)
+          )
+
+          (reports / "04_dependency_analysis.txt").write_text(
+              "\n".join(dependency_report)
+          )
+
+          safe_report = sorted(set(safe_report))
+
+          (reports / "05_safe_candidates.txt").write_text(
+              "\n".join(safe_report) +
+              ("\n" if safe_report else "")
+          )
+
+          (reports / "06_rejected.txt").write_text(
+              "\n".join(rejected_report) +
+              ("\n" if rejected_report else "")
+          )
+
+          print("Defined:", sum(
+              1 for x in all_settings
+              if x[0].replace("CONFIG_", "", 1) in defined
+          ))
+
+          print("Source references:", sum(
+              1 for x in all_settings
+              if x[0].replace("CONFIG_", "", 1) in references
+          ))
+
+          print("Potential candidates:", len(safe_report))
+          print("Rejected:", len(rejected_report))
+          PY
+
+      - name: Kconfig resolution
         run: |
           set -e
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          rm -rf audit/out
-          mkdir -p audit/out
+          echo "========================================"
+          echo "KCONFIG RESOLUTION"
+          echo "========================================"
 
           make O=audit/out vendor/sdmsteppe-perf_defconfig \
             > audit/reports/kconfig_base.log 2>&1
@@ -351,44 +506,46 @@ jobs:
           make O=audit/out olddefconfig \
             > audit/reports/kconfig_resolve.log 2>&1
 
-          cp audit/out/.config audit/out/resolved.config
+          cp audit/out/.config \
+            audit/out/resolved.config
 
-          echo "Kconfig resolution completed."
+          echo "Kconfig resolution: OK"
 
-      - name: Final candidate verification
+      - name: Verify final candidates
         run: |
           set -e
 
-          tmp="audit/reports/safe.tmp"
-          final="audit/reports/05_safe_candidates.txt"
+          python3 - <<'PY'
+          from pathlib import Path
 
-          : > "$tmp"
+          reports = Path("audit/reports")
+          resolved = Path("audit/out/resolved.config").read_text(
+              errors="ignore"
+          )
 
-          while IFS= read -r request; do
+          candidates = []
 
-              [ -z "$request" ] && continue
+          for line in (reports / "05_safe_candidates.txt").read_text(
+              errors="ignore"
+          ).splitlines():
 
-              case "$request" in
-                  CONFIG_*=*)
-                      symbol="${request%%=*}"
-                      ;;
-                  "# CONFIG_"*" is not set")
-                      symbol="${request#\# }"
-                      symbol="${symbol% is not set}"
-                      ;;
-                  *)
-                      continue
-                      ;;
-              esac
+              line = line.strip()
 
-              if grep -q -F "$request" audit/out/resolved.config; then
-                  echo "$request" >> "$tmp"
-              fi
+              if not line:
+                  continue
 
-          done < audit/reports/01_all_296.txt
+              if line in resolved:
+                  candidates.append(line)
 
-          sort -u "$tmp" > "$final"
-          rm -f "$tmp"
+          candidates = sorted(set(candidates))
+
+          (reports / "05_safe_candidates.txt").write_text(
+              "\n".join(candidates) +
+              ("\n" if candidates else "")
+          )
+
+          print("Final Kconfig-resolved candidates:", len(candidates))
+          PY
 
       - name: Generate summary
         run: |
@@ -396,34 +553,35 @@ jobs:
 
           total=$(grep -c '^' audit/reports/01_all_296.txt || true)
           defined=$(grep -c '^SYMBOL:' audit/reports/02_defined_in_kconfig.txt || true)
-          source_refs=$(grep -c '^SOURCE REFERENCES: FOUND' audit/reports/03_source_presence.txt || true)
+          source=$(grep -c 'SOURCE REFERENCE: FOUND' audit/reports/03_source_presence.txt || true)
           candidates=$(grep -c '^CONFIG_' audit/reports/05_safe_candidates.txt || true)
           rejected=$(grep -c '^SYMBOL:' audit/reports/06_rejected.txt || true)
 
           {
-              echo "========================================"
-              echo "VIOLET DEEP JOKER AUDIT"
-              echo "========================================"
-              echo
-              echo "Joker settings       : $total"
-              echo "Defined in Kconfig   : $defined"
-              echo "Source references    : $source_refs"
-              echo "Final candidates     : $candidates"
-              echo "Rejected             : $rejected"
-              echo
-              echo "========================================"
-              echo "ANALYSIS"
-              echo "========================================"
-              echo
-              echo "Syntax validation    : PASSED"
-              echo "Kconfig resolution   : PERFORMED"
-              echo "Source tree scan     : PERFORMED"
-              echo "Dependency scan      : PERFORMED"
-              echo "Kernel build         : NOT PERFORMED"
-              echo
-              echo "violet.config        : NOT MODIFIED"
-              echo
-              echo "========================================"
+            echo "========================================"
+            echo "VIOLET FAST DEEP JOKER AUDIT"
+            echo "========================================"
+            echo
+            echo "Joker settings       : $total"
+            echo "Kconfig defined      : $defined"
+            echo "Source references    : $source"
+            echo "Final candidates     : $candidates"
+            echo "Rejected             : $rejected"
+            echo
+            echo "========================================"
+            echo "CHECKS"
+            echo "========================================"
+            echo
+            echo "Syntax check         : PASSED"
+            echo "Kconfig index        : BUILT"
+            echo "Source index         : BUILT"
+            echo "Dependency scan      : PERFORMED"
+            echo "Kconfig resolution   : PERFORMED"
+            echo "Kernel build         : NOT PERFORMED"
+            echo
+            echo "violet.config        : NOT MODIFIED"
+            echo
+            echo "========================================"
           } > audit/reports/07_summary.txt
 
           cat audit/reports/07_summary.txt
@@ -431,7 +589,7 @@ jobs:
       - name: Upload seven reports
         uses: actions/upload-artifact@v4
         with:
-          name: violet-joker-deep-audit
+          name: violet-fast-deep-joker-audit
           path: |
             audit/reports/01_all_296.txt
             audit/reports/02_defined_in_kconfig.txt
