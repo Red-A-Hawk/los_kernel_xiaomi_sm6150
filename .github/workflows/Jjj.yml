@@ -1,137 +1,139 @@
-name: Check Violet Memory Address Conflicts
+name: Diagnose Violet DTS Memory References
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 jobs:
-  analyze:
-    runs-on: ubuntu-22.04
+diagnose:
+runs-on: ubuntu-22.04
 
-    steps:
+steps:
+  - name: Checkout kernel
+    uses: actions/checkout@v4
+    with:
+      ref: 16
+      fetch-depth: 1
 
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
+  - name: Diagnose Violet memory references
+    run: |
+      set +e
 
-      - name: Scan memory address conflicts
-        run: |
-          set -e
+      echo "========================================"
+      echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
+      echo "========================================"
 
-          REPORT="violet_memory_conflict_report.txt"
+      SM="arch/arm64/boot/dts/qcom/sm6150.dtsi"
+      VIOLET="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+      DTS="arch/arm64/boot/dts/qcom/violet-sm6150.dts"
 
-          {
-            echo "========================================"
-            echo "VIOLET MEMORY ADDRESS CONFLICT SCAN"
-            echo "========================================"
-            echo
-            echo "COMMIT: $(git rev-parse HEAD)"
-            echo
+      echo
+      echo "[1] disp_rdump_memory DEFINITIONS"
+      echo "========================================"
 
-            echo "========================================"
-            echo "[1] TARGET ADDRESSES"
-            echo "========================================"
+      git grep -n "disp_rdump_memory:" -- \
+        '*.dts' '*.dtsi' || true
 
-            for addr in \
-              0x9c000000 \
-              0x9cf00000 \
-              0x9d000000 \
-              0x9d100000 \
-              0x9e000000 \
-              0x9e100000 \
-              0x9e400000
-            do
-              echo
-              echo "----- ADDRESS: $addr -----"
+      echo
+      echo "[2] disp_rdump_memory REFERENCES"
+      echo "========================================"
 
-              git grep -ni "$addr" -- \
-                '*.dts' '*.dtsi' || true
-            done
+      git grep -n "&disp_rdump_memory" -- \
+        '*.dts' '*.dtsi' || true
 
-            echo
+      echo
+      echo "[3] DFPS DEFINITIONS / REFERENCES"
+      echo "========================================"
 
-            echo "========================================"
-            echo "[2] RELEVANT MEMORY NODES"
-            echo "========================================"
+      git grep -n "dfps_data_memory:" -- \
+        '*.dts' '*.dtsi' || true
 
-            git grep -niE \
-              'cont_splash_region|dfps_data_region|disp_rdump_region|qseecom_region|reserved-memory|linux,cma' -- \
-              '*.dts' '*.dtsi' || true
+      git grep -n "&dfps_data_memory" -- \
+        '*.dts' '*.dtsi' || true
 
-            echo
+      echo
+      echo "[4] VIOLET INCLUDE CHAIN"
+      echo "========================================"
 
-            echo "========================================"
-            echo "[3] VIOLET MEMORY OVERRIDES"
-            echo "========================================"
+      grep -n '#include' "$DTS" || true
 
-            nl -ba \
-              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
-              | sed -n '40,70p'
+      echo
+      echo "[5] VIOLET MEMORY FILE"
+      echo "========================================"
 
-            echo
+      nl -ba "$VIOLET" || true
 
-            echo "========================================"
-            echo "[4] SM6150 MEMORY MAP"
-            echo "========================================"
+      echo
+      echo "[6] SM6150 MEMORY DEFINITIONS"
+      echo "========================================"
 
-            nl -ba \
-              arch/arm64/boot/dts/qcom/sm6150.dtsi \
-              | sed -n '580,645p'
+      grep -n -E \
+        'reserved_memory:|qseecom_mem:|cont_splash_memory:|dfps_data_memory:|linux,cma|adsp_mem:|sdsp_mem:' \
+        "$SM" || true
 
-            echo
+      echo
+      echo "[7] ADDRESS RANGE CHECK"
+      echo "========================================"
 
-            echo "========================================"
-            echo "[5] ADDRESS RANGE CHECK"
-            echo "========================================"
+      python3 - <<'PY'
+      regions = [
+          ("SM6150 cont_splash", 0x9c000000, 0x0f00000),
+          ("SM6150 dfps",         0x9cf00000, 0x0100000),
+          ("Violet dfps",         0x9d000000, 0x0100000),
+          ("Violet disp_rdump",   0x9d100000, 0x01000000),
+          ("SM6150 qseecom",      0x9e400000, 0x01400000),
+      ]
 
-            echo "Expected Violet disp_rdump:"
-            echo "START : 0x9d100000"
-            echo "SIZE  : 0x01000000"
-            echo "END   : 0x9e100000"
-            echo
+      print("NAME                  START       END         SIZE")
+      print("------------------------------------------------------")
 
-            echo "Existing SM6150 qseecom:"
-            echo "START : 0x9e400000"
-            echo "SIZE  : 0x01400000"
-            echo "END   : 0x9f800000"
-            echo
+      for name, start, size in regions:
+          end = start + size
+          print(f"{name:21} 0x{start:08x} 0x{end:08x} 0x{size:x}")
 
-            echo "Gap between disp_rdump and qseecom:"
-            echo "0x9e400000 - 0x9e100000 = 0x300000 (3 MiB)"
-            echo
+      print()
+      print("OVERLAP CHECK")
+      print("------------------------------------------------------")
 
-            echo "========================================"
-            echo "[6] DISP RDUMP DEFINITIONS"
-            echo "========================================"
+      for i in range(len(regions)):
+          n1, s1, z1 = regions[i]
+          e1 = s1 + z1
 
-            git grep -ni -E \
-              'disp_rdump_memory[[:space:]]*:' -- \
-              '*.dts' '*.dtsi' || true
+          for j in range(i + 1, len(regions)):
+              n2, s2, z2 = regions[j]
+              e2 = s2 + z2
 
-            echo
+              if s1 < e2 and s2 < e1:
+                  print(f"OVERLAP: {n1} <-> {n2}")
+              else:
+                  print(f"OK:      {n1} / {n2}")
 
-            echo "========================================"
-            echo "[7] DISP RDUMP REFERENCES"
-            echo "========================================"
+      print()
+      print("KEY GAP")
+      print("------------------------------------------------------")
 
-            git grep -ni -E \
-              '&disp_rdump_memory' -- \
-              '*.dts' '*.dtsi' || true
+      disp_end = 0x9d100000 + 0x01000000
+      qsee_start = 0x9e400000
 
-            echo
+      print(f"disp_rdump END : 0x{disp_end:08x}")
+      print(f"qseecom START  : 0x{qsee_start:08x}")
+      print(f"GAP            : 0x{qsee_start - disp_end:x}")
+      print(f"GAP MiB        : {(qsee_start - disp_end) / 0x100000:.1f}")
 
-            echo "========================================"
-            echo "END OF REPORT"
-            echo "========================================"
+      PY
 
-          } > "$REPORT"
+      echo
+      echo "[8] SUMMARY"
+      echo "========================================"
 
-          cat "$REPORT"
+      if git grep -q "disp_rdump_memory:" -- \
+        arch/arm64/boot/dts/qcom/sm6150.dtsi \
+        arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi; then
+        echo "disp_rdump_memory: DEFINED"
+      else
+        echo "disp_rdump_memory: NOT DEFINED IN SM6150/VIOLET FILES"
+      fi
 
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-memory-conflict-report
-          path: violet_memory_conflict_report.txt
-          if-no-files-found: error
+      echo
+      echo "Diagnostic complete."
+      echo "========================================"
+      exit 0
