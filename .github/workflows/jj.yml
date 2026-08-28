@@ -1,135 +1,130 @@
 name: Diagnose Violet DTS Memory References
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-diagnose:
-runs-on: ubuntu-22.04
+  diagnose:
+    runs-on: ubuntu-22.04
 
-steps:
-  - name: Checkout kernel
-    uses: actions/checkout@v4
-    with:
-      ref: 16
-      fetch-depth: 1
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
 
-  - name: Diagnose Violet memory references
-    run: |
-      set +e
+      - name: Diagnose Violet memory references
+        run: |
+          set +e
 
-      echo "========================================"
-      echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
-      echo "========================================"
+          echo "========================================"
+          echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
+          echo "========================================"
 
-      SM="arch/arm64/boot/dts/qcom/sm6150.dtsi"
-      VM="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
-      DTS="arch/arm64/boot/dts/qcom/violet-sm6150.dts"
+          FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
 
-      echo
-      echo "[1] VIOLET INCLUDE CHAIN"
-      echo "========================================"
-      grep -n '#include' "$DTS"
+          echo
+          echo "[1] VIOLET MEMORY FILE"
+          echo "========================================"
 
-      echo
-      echo "[2] DISP RDUMP DEFINITIONS"
-      echo "========================================"
-      git grep -n 'disp_rdump_memory:' -- '*.dts' '*.dtsi' || true
+          if [ -f "$FILE" ]; then
+            echo "FOUND: $FILE"
+            nl -ba "$FILE"
+          else
+            echo "ERROR: FILE NOT FOUND"
+          fi
 
-      echo
-      echo "[3] DISP RDUMP REFERENCES"
-      echo "========================================"
-      git grep -n '&disp_rdump_memory' -- '*.dts' '*.dtsi' || true
+          echo
+          echo "[2] CHECK REFERENCED LABELS"
+          echo "========================================"
 
-      echo
-      echo "[4] DFPS DEFINITIONS"
-      echo "========================================"
-      git grep -n 'dfps_data_memory:' -- '*.dts' '*.dtsi' || true
+          for label in \
+            qcom_seecom \
+            qcom_smcinvoke \
+            pil_modem_mem \
+            pil_video_mem \
+            wlan_msa_mem \
+            pil_cdsp_mem \
+            pil_adsp_mem \
+            pil_ipa_fw_mem \
+            pil_ipa_gsi_mem \
+            pil_gpu_mem \
+            dfps_data_memory \
+            disp_rdump_memory
+          do
+            echo
+            echo "----- $label -----"
 
-      echo
-      echo "[5] DFPS REFERENCES"
-      echo "========================================"
-      git grep -n '&dfps_data_memory' -- '*.dts' '*.dtsi' || true
+            echo "Definitions:"
+            git grep -n "${label}:" -- \
+              'arch/arm64/boot/dts/qcom/*.dts' \
+              'arch/arm64/boot/dts/qcom/*.dtsi' \
+              'arch/arm64/boot/dts/qcom/xiaomi/*.dts' \
+              'arch/arm64/boot/dts/qcom/xiaomi/*.dtsi' \
+              2>/dev/null || true
 
-      echo
-      echo "[6] QSEECOM DEFINITIONS"
-      echo "========================================"
-      git grep -n 'qseecom_mem:' -- '*.dts' '*.dtsi' || true
+            echo "References:"
+            git grep -n "&${label}" -- \
+              'arch/arm64/boot/dts/qcom/*.dts' \
+              'arch/arm64/boot/dts/qcom/*.dtsi' \
+              'arch/arm64/boot/dts/qcom/xiaomi/*.dts' \
+              'arch/arm64/boot/dts/qcom/xiaomi/*.dtsi' \
+              2>/dev/null || true
+          done
 
-      echo
-      echo "[7] VIOLET MEMORY OVERRIDES"
-      echo "========================================"
-      nl -ba "$VM"
+          echo
+          echo "[3] DISP RDUMP"
+          echo "========================================"
 
-      echo
-      echo "[8] SM6150 MEMORY AREA"
-      echo "========================================"
-      nl -ba "$SM" | sed -n '620,645p'
+          git grep -n "disp_rdump_memory" -- \
+            'arch/arm64/boot/dts/qcom/*.dts' \
+            'arch/arm64/boot/dts/qcom/*.dtsi' \
+            2>/dev/null || true
 
-      echo
-      echo "[9] ADDRESS RANGE CHECK"
-      echo "========================================"
+          echo
+          echo "[4] DFPS"
+          echo "========================================"
 
-      python3 - <<'PY'
-      regions = [
-          ("SM6150 cont_splash", 0x9c000000, 0x00f00000),
-          ("SM6150 dfps",        0x9cf00000, 0x00100000),
-          ("Violet dfps",        0x9d000000, 0x00100000),
-          ("Violet disp_rdump",  0x9d100000, 0x01000000),
-          ("SM6150 qseecom",     0x9e400000, 0x01400000),
-      ]
+          git grep -n "dfps_data_memory" -- \
+            'arch/arm64/boot/dts/qcom/*.dts' \
+            'arch/arm64/boot/dts/qcom/*.dtsi' \
+            2>/dev/null || true
 
-      print("NAME                 START       END         SIZE")
-      print("----------------------------------------------------")
+          echo
+          echo "[5] MEMORY ADDRESS REFERENCES"
+          echo "========================================"
 
-      for name, start, size in regions:
-          end = start + size
-          print(
-              f"{name:20} "
-              f"0x{start:08x} "
-              f"0x{end:08x} "
-              f"0x{size:08x}"
-          )
+          git grep -n -E \
+            "0x9c000000|0x9cf00000|0x9d000000|0x9d100000|0x9e000000|0x9e400000|0x9f800000" \
+            -- \
+            'arch/arm64/boot/dts/qcom/*.dts' \
+            'arch/arm64/boot/dts/qcom/*.dtsi' \
+            2>/dev/null || true
 
-      print()
-      print("PAIRWISE OVERLAP CHECK")
-      print("----------------------------------------------------")
+          echo
+          echo "[6] SM6150 RESERVED MEMORY"
+          echo "========================================"
 
-      for i in range(len(regions)):
-          n1, s1, z1 = regions[i]
-          e1 = s1 + z1
+          SM="arch/arm64/boot/dts/qcom/sm6150.dtsi"
 
-          for j in range(i + 1, len(regions)):
-              n2, s2, z2 = regions[j]
-              e2 = s2 + z2
+          if [ -f "$SM" ]; then
+            nl -ba "$SM" | sed -n '490,650p'
+          else
+            echo "ERROR: $SM NOT FOUND"
+          fi
 
-              if s1 < e2 and s2 < e1:
-                  print("OVERLAP:", n1, "<->", n2)
+          echo
+          echo "[7] DTB BUILD CHECK"
+          echo "========================================"
 
-      print()
-      print("DISP RDUMP -> QSEECOM")
-      print("----------------------------------------------------")
+          if command -v dtc >/dev/null 2>&1; then
+            dtc --version
+          else
+            echo "dtc not installed"
+          fi
 
-      disp_start = 0x9d100000
-      disp_end = disp_start + 0x01000000
-      qsee_start = 0x9e400000
-
-      gap = qsee_start - disp_end
-
-      print("disp_rdump start :", hex(disp_start))
-      print("disp_rdump end   :", hex(disp_end))
-      print("qseecom start    :", hex(qsee_start))
-      print("gap              :", hex(gap))
-      print("gap MiB          :", gap / 0x100000)
-
-      if gap < 0:
-          print("RESULT: MEMORY OVERLAP")
-      else:
-          print("RESULT: NO MEMORY OVERLAP")
-
-      PY
-
-      echo
-      echo "========================================"
-      echo "DIAGNOSTIC COMPLETE"
-      echo "========================================"
+          echo
+          echo "========================================"
+          echo "DIAGNOSTIC COMPLETE"
+          echo "========================================"
