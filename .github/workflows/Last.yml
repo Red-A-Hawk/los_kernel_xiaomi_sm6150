@@ -50,16 +50,30 @@ jobs:
       run: |
         set -e
 
+        CLANG_ARCHIVE="Clang-16.0.6-20260807.tar.gz"
+        CLANG_URL="https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/${CLANG_ARCHIVE}"
+
+        echo "========================================"
+        echo "DOWNLOADING CLANG"
+        echo "========================================"
+
+        wget -q --show-progress "$CLANG_URL"
+
+        test -f "$CLANG_ARCHIVE"
+
+        echo
+        echo "========================================"
+        echo "EXTRACTING CLANG"
+        echo "========================================"
+
         mkdir -p clang
 
-        wget -q \
-          https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-
-        tar -xzf \
-          Clang-16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz \
-          -C clang
+        tar -xzf "$CLANG_ARCHIVE" -C clang
 
         echo "$PWD/clang/bin" >> "$GITHUB_PATH"
+
+        echo
+        echo "Clang setup completed."
 
     # 4. Verify toolchain
     - name: Verify toolchain
@@ -101,16 +115,29 @@ jobs:
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
 
-    # 6. Inspect complete Device Tree structure
+    # 6. Inspect Violet Device Tree
     - name: Inspect Device Tree
       run: |
         set +e
 
         echo "========================================"
+        echo "VIOLET DIRECTORY"
+        echo "========================================"
+
+        find \
+          arch/arm64/boot/dts/qcom/xiaomi/violet \
+          -maxdepth 1 \
+          -type f \
+          -print \
+          | sort
+
+        echo
+        echo "========================================"
         echo "ALL DTS FILES"
         echo "========================================"
 
-        find arch/arm64/boot/dts \
+        find \
+          arch/arm64/boot/dts \
           -type f \
           -name "*.dts" \
           -print \
@@ -118,7 +145,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "ALL VIOLET REFERENCES"
+        echo "VIOLET REFERENCES"
         echo "========================================"
 
         grep -R -n \
@@ -140,19 +167,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "VIOLET DIRECTORY"
-        echo "========================================"
-
-        find \
-          arch/arm64/boot/dts/qcom/xiaomi/violet \
-          -maxdepth 1 \
-          -type f \
-          -print \
-          | sort
-
-        echo
-        echo "========================================"
-        echo "MAKEFILE REFERENCES"
+        echo "DTS MAKEFILE REFERENCES"
         echo "========================================"
 
         grep -R -n \
@@ -162,7 +177,7 @@ jobs:
           2>/dev/null \
           | head -300
 
-    # 7. Inspect modified DTSI files
+    # 7. Inspect Violet DTSI
     - name: Inspect Violet DTSI
       run: |
         set -e
@@ -215,7 +230,7 @@ jobs:
 
         make O=out vendor/violet-perf_defconfig
 
-    # 10. Build all Device Trees
+    # 10. Build Device Trees
     - name: Build Device Trees
       run: |
         set +e
@@ -240,7 +255,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "IMPORTANT DTS ERRORS"
+        echo "IMPORTANT ERRORS"
         echo "========================================"
 
         grep -n -E \
@@ -267,7 +282,7 @@ jobs:
           -j$(nproc) \
           2>&1 | tee build.log
 
-    # 12. Verify kernel
+    # 12. Verify kernel output
     - name: Check build output
       run: |
         set -e
@@ -281,19 +296,26 @@ jobs:
         echo "Image.gz found."
 
         echo
-        echo "DTB FILES:"
-        find out/arch/arm64/boot/dts \
+        echo "========================================"
+        echo "DTB OUTPUT"
+        echo "========================================"
+
+        find \
+          out/arch/arm64/boot/dts \
           -type f \
           \( -name "*.dtb" -o -name "*.dtbo" \) \
           -print \
           2>/dev/null \
           | sort
 
+        echo
+        echo "========================================"
+        echo "DTBO"
+        echo "========================================"
+
         if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          echo
           echo "dtbo.img found."
         else
-          echo
           echo "dtbo.img not found."
         fi
 
@@ -339,8 +361,8 @@ jobs:
         name: build-log
         path: build.log
 
-    # 16. Upload DTS log
-    - name: Upload DTS diagnostic log
+    # 16. Upload DTS diagnostics
+    - name: Upload DTS diagnostics
       if: always()
       uses: actions/upload-artifact@v4
       with:
