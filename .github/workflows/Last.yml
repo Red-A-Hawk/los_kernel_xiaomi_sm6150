@@ -62,7 +62,7 @@ jobs:
         echo "$PWD/clang/bin" >> "$GITHUB_PATH"
 
     # 4. Verify toolchain
-    - name: Verify Clang toolchain
+    - name: Verify toolchain
       run: |
         set -e
 
@@ -101,80 +101,201 @@ jobs:
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
 
-    # 6. Load defconfig
+    # 6. Inspect Violet Device Tree
+    - name: Inspect Violet Device Tree
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "VIOLET DEVICE TREE FILES"
+        echo "========================================"
+
+        if [ -d arch/arm64/boot/dts/qcom/xiaomi/violet ]; then
+          find \
+            arch/arm64/boot/dts/qcom/xiaomi/violet \
+            -maxdepth 1 \
+            -type f \
+            -print \
+            | sort
+        else
+          echo "VIOLET DIRECTORY NOT FOUND"
+          exit 1
+        fi
+
+        echo
+        echo "========================================"
+        echo "ALL VIOLET DTS/DTSI FILES"
+        echo "========================================"
+
+        find \
+          arch/arm64/boot/dts/qcom/xiaomi/violet \
+          -maxdepth 1 \
+          -type f \
+          \( -name "*.dts" -o -name "*.dtsi" \) \
+          -print \
+          | sort
+
+        echo
+        echo "========================================"
+        echo "VIOLET REFERENCES"
+        echo "========================================"
+
+        grep -R -n \
+          "violet-sm6150" \
+          arch/arm64/boot/dts/qcom/xiaomi/violet \
+          arch/arm64/boot/dts/qcom \
+          2>/dev/null \
+          | head -200 || true
+
+        echo
+        echo "========================================"
+        echo "DTS MAKEFILE ENTRIES"
+        echo "========================================"
+
+        grep -R -n \
+          -E "violet|sm6150" \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/Makefile \
+          arch/arm64/boot/dts/qcom/Makefile \
+          2>/dev/null \
+          | head -200 || true
+
+    # 7. Inspect the modified files
+    - name: Inspect Modified Violet DTS Files
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "violet-sm6150.dtsi"
+        echo "========================================"
+
+        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi ]; then
+          nl -ba \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
+            | sed -n '1,160p'
+        else
+          echo "violet-sm6150.dtsi NOT FOUND"
+        fi
+
+        echo
+        echo "========================================"
+        echo "violet-sm6150-memory.dtsi"
+        echo "========================================"
+
+        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi ]; then
+          nl -ba \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
+            | sed -n '1,220p'
+        else
+          echo "violet-sm6150-memory.dtsi NOT FOUND"
+        fi
+
+    # 8. Load defconfig
     - name: Load defconfig
       run: |
         set -e
 
         make O=out vendor/violet-perf_defconfig
 
-    # 7. Debug Violet Device Tree
-    - name: Debug Violet Device Tree
+    # 9. Detect the actual Violet DTS target
+    - name: Detect Violet DTS target
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "DETECTING VIOLET DTS TARGET"
+        echo "========================================"
+
+        DTS_DIR="arch/arm64/boot/dts/qcom/xiaomi/violet"
+
+        if [ ! -d "$DTS_DIR" ]; then
+          echo "ERROR: $DTS_DIR does not exist"
+          exit 1
+        fi
+
+        echo
+        echo "DTS files:"
+
+        find "$DTS_DIR" \
+          -maxdepth 1 \
+          -type f \
+          -name "*.dts" \
+          -print \
+          | sort
+
+        echo
+        echo "DTSI files:"
+
+        find "$DTS_DIR" \
+          -maxdepth 1 \
+          -type f \
+          -name "*.dtsi" \
+          -print \
+          | sort
+
+        echo
+        echo "Searching for violet-sm6150 DTS..."
+
+        FOUND=""
+
+        while IFS= read -r file; do
+          base="$(basename "$file" .dts)"
+
+          if grep -q \
+            'violet-sm6150\.dtsi\|violet-sm6150' \
+            "$file" 2>/dev/null; then
+
+            echo "FOUND: $file"
+            FOUND="$base"
+          fi
+        done < <(
+          find "$DTS_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.dts" \
+            -print \
+            | sort
+        )
+
+        if [ -z "$FOUND" ]; then
+          echo
+          echo "No DTS directly referencing violet-sm6150 found."
+          echo "Listing all DTS files for manual inspection:"
+
+          find "$DTS_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name "*.dts" \
+            -print \
+            | sort
+
+          exit 1
+        fi
+
+        echo
+        echo "Selected DTS:"
+        echo "$FOUND"
+
+        echo "VIOLET_DTS_TARGET=$FOUND" >> "$GITHUB_ENV"
+
+    # 10. Compile the actual Violet Device Tree
+    - name: Compile Violet Device Tree
       run: |
         set +e
 
         echo "========================================"
-        echo "VIOLET DEVICE TREE DEBUG"
+        echo "VIOLET DTS COMPILATION"
         echo "========================================"
 
-        echo
-        echo "=== violet-sm6150.dtsi ==="
-        nl -ba \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
-          | sed -n '1,120p'
+        echo "Target: $VIOLET_DTS_TARGET"
 
         echo
-        echo "=== violet-sm6150-memory.dtsi ==="
-        nl -ba \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
-          | sed -n '1,160p'
-
-        echo
-        echo "=== INCLUDED FILES ==="
-        grep -n \
-          '^#include' \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
-
-        echo
-        echo "=== reserved_memory DEFINITIONS ==="
-        grep -R -n \
-          -A25 \
-          -B5 \
-          "reserved_memory" \
-          arch/arm64/boot/dts/qcom 2>/dev/null \
-          | head -250
-
-        echo
-        echo "=== MEMORY LABELS ==="
-        grep -R -n \
-          -E "pil_modem_mem|pil_video_mem|wlan_msa_mem|pil_cdsp_mem|pil_adsp_mem|pil_ipa_fw_mem|pil_ipa_gsi_mem|pil_gpu_mem|dfps_data_memory|disp_rdump_memory" \
-          arch/arm64/boot/dts/qcom 2>/dev/null \
-          | head -250
-
-        echo
-        echo "=== CHECK FILES ==="
-
-        for file in \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
-        do
-          if [ -f "$file" ]; then
-            echo "FOUND: $file"
-          else
-            echo "MISSING: $file"
-          fi
-        done
-
-        echo
-        echo "========================================"
-        echo "DTS COMPILATION TEST"
-        echo "========================================"
+        echo "Running kernel DTS build..."
 
         make O=out \
           ARCH=arm64 \
           LLVM=1 \
           LLVM_IAS=1 \
-          qcom/xiaomi/violet/violet-sm6150.dtb \
+          "arch/arm64/boot/dts/qcom/xiaomi/violet/${VIOLET_DTS_TARGET}.dtb" \
           2>&1 | tee dts-error.log
 
         DTS_RESULT=${PIPESTATUS[0]}
@@ -185,20 +306,22 @@ jobs:
         echo "========================================"
 
         echo
-        echo "=== DTS ERROR LOG ==="
+        echo "========================================"
+        echo "DTS ERROR LOG"
+        echo "========================================"
 
         cat dts-error.log
 
         exit "$DTS_RESULT"
 
-    # 8. Build kernel
+    # 11. Build kernel
     - name: Build kernel
       run: |
         set -e
 
         make O=out -j$(nproc) 2>&1 | tee build.log
 
-    # 9. Verify output
+    # 12. Verify output
     - name: Check build output
       run: |
         set -e
@@ -217,7 +340,7 @@ jobs:
           echo "dtbo.img not found."
         fi
 
-    # 10. Package AnyKernel3
+    # 13. Package AnyKernel3
     - name: Package AnyKernel3
       run: |
         set -e
@@ -244,14 +367,14 @@ jobs:
           ../Kernel-violet.zip \
           *
 
-    # 11. Upload kernel
+    # 14. Upload kernel
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet
         path: Kernel-violet.zip
 
-    # 12. Upload build log
+    # 15. Upload build log
     - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
@@ -259,7 +382,7 @@ jobs:
         name: build-log
         path: build.log
 
-    # 13. Upload DTS debug log
+    # 16. Upload DTS debug log
     - name: Upload DTS debug log
       if: always()
       uses: actions/upload-artifact@v4
