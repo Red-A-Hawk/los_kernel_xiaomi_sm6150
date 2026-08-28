@@ -8,16 +8,19 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
       - name: Checkout kernel
         uses: actions/checkout@v4
         with:
           ref: 16
           fetch-depth: 1
 
-      - name: Install ARM64 toolchain
+      - name: Install ARM64 compiler
         run: |
           set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             bc \
             bison \
@@ -32,6 +35,7 @@ jobs:
       - name: Verify ARM64 compiler
         run: |
           set -e
+
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
@@ -39,23 +43,48 @@ jobs:
           echo "ARM64 TOOLCHAIN"
           echo "========================================"
 
+          echo "ARCH=$ARCH"
+          echo "CROSS_COMPILE=$CROSS_COMPILE"
+
           "$CROSS_COMPILE"gcc --version | head -n 1
           "$CROSS_COMPILE"ld --version | head -n 1
+
+          echo
+          echo "ARM64 COMPILER: READY"
 
       - name: Verify VIOLET sources
         run: |
           set -e
 
+          echo "========================================"
+          echo "VERIFYING SOURCES"
+          echo "========================================"
+
           test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
           test -f arch/arm64/configs/vendor/violet.config
           test -f Kconfig
 
-          echo "========================================"
-          echo "SOURCES VERIFIED"
-          echo "========================================"
           echo "sdmsteppe-perf_defconfig : OK"
           echo "violet.config             : OK"
           echo "Kconfig                   : OK"
+
+          echo
+          echo "VIOLET SETTINGS FOUND IN FRAGMENT:"
+
+          awk '
+            /^CONFIG_[A-Za-z0-9_]+=/ { count++ }
+            /^# CONFIG_[A-Za-z0-9_]+ is not set$/ { count++ }
+            END { print count+0 }
+          ' arch/arm64/configs/vendor/violet.config
+
+      - name: Prepare output
+        run: |
+          set -e
+
+          rm -rf out artifact
+
+          mkdir -p out
+          mkdir -p artifact
 
       - name: Generate base configuration
         run: |
@@ -64,13 +93,14 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          rm -rf out artifact
-          mkdir -p out artifact
-
           echo "========================================"
           echo "BASE KCONFIG"
           echo "========================================"
-          echo "sdmsteppe-perf_defconfig"
+
+          echo "Using:"
+          echo "  sdmsteppe-perf_defconfig"
+          echo "  ARCH=arm64"
+          echo "  CROSS_COMPILE=aarch64-linux-gnu-"
 
           make O=out \
             ARCH=arm64 \
@@ -81,10 +111,12 @@ jobs:
 
           cp out/.config out/base.config
 
+          echo
           echo "BASE CONFIG GENERATED"
+          echo "Base configuration lines:"
           wc -l out/base.config
 
-      - name: Merge VIOLET
+      - name: Merge VIOLET configuration
         run: |
           set -e
 
@@ -94,6 +126,7 @@ jobs:
           echo "========================================"
           echo "KCONFIG MERGE"
           echo "========================================"
+
           echo "sdmsteppe-perf_defconfig"
           echo "+"
           echo "violet.config"
@@ -107,9 +140,10 @@ jobs:
 
           test -s out/.config
 
-          echo "MERGE COMPLETED"
+          echo
+          echo "VIOLET MERGE COMPLETED"
 
-      - name: Resolve Kconfig
+      - name: Resolve final Kconfig
         run: |
           set -e
 
@@ -127,14 +161,81 @@ jobs:
 
           test -s out/.config
 
+          echo
           echo "KCONFIG RESOLUTION: COMPLETED"
 
-      - name: Verify VIOLET configuration
+      - name: Verify all VIOLET settings
         run: |
           set -e
 
           echo "========================================"
-          echo "VIOLET VALIDATION"
+          echo "VERIFYING VIOLET CONFIGURATION"
+          echo "========================================"
+
+          requested=0
+          applied=0
+          failed=0
+
+          while IFS= read -r line || [ -n "$line" ]; do
+
+            case "$line" in
+
+              CONFIG_*=*)
+                symbol="${line%%=*}"
+                expected="$line"
+                ;;
+
+              "# CONFIG_"*" is not set")
+                symbol="$(echo "$line" | sed 's/^# //; s/ is not set$//')"
+                expected="$line"
+                ;;
+
+              *)
+                continue
+                ;;
+
+            esac
+
+            requested=$((requested + 1))
+
+            actual="$(grep -E \
+              "^${symbol}=|^# ${symbol} is not set" \
+              out/.config | head -n 1 || true)"
+
+            if [ "$actual" = "$expected" ]; then
+              echo "OK      $expected"
+              applied=$((applied + 1))
+            else
+              echo "MISMATCH"
+              echo "  REQUESTED: $expected"
+              echo "  ACTUAL:    ${actual:-NOT PRESENT}"
+              failed=$((failed + 1))
+            fi
+
+          done < arch/arm64/configs/vendor/violet.config
+
+          echo
+          echo "========================================"
+          echo "VIOLET KCONFIG RESULT"
+          echo "========================================"
+          echo "Violet settings found : $requested"
+          echo "Applied successfully  : $applied"
+          echo "Failed                : $failed"
+          echo "========================================"
+
+          if [ "$failed" -ne 0 ]; then
+            echo "VIOLET CONFIGURATION: FAILED"
+            exit 1
+          fi
+
+          echo "VIOLET CONFIGURATION: ALL SETTINGS APPLIED"
+
+      - name: Verify VIOLET platform
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "VIOLET PLATFORM VALIDATION"
           echo "========================================"
 
           grep -q '^CONFIG_ARCH_QCOM=y$' out/.config
@@ -145,18 +246,18 @@ jobs:
           grep -q '^CONFIG_MMC_SDHCI_PLTFM=y$' out/.config
           grep -q '^CONFIG_MMC_SDHCI_MSM=y$' out/.config
 
-          echo "CONFIG_ARCH_QCOM=y                    OK"
-          echo "CONFIG_ARCH_SM6150=y                  OK"
-          echo "CONFIG_MACH_XIAOMI_VIOLET=y           OK"
-          echo "CONFIG_MMC=y                           OK"
-          echo "CONFIG_MMC_SDHCI=y                    OK"
-          echo "CONFIG_MMC_SDHCI_PLTFM=y               OK"
-          echo "CONFIG_MMC_SDHCI_MSM=y                 OK"
+          echo "CONFIG_ARCH_QCOM=y              OK"
+          echo "CONFIG_ARCH_SM6150=y            OK"
+          echo "CONFIG_MACH_XIAOMI_VIOLET=y     OK"
+          echo "CONFIG_MMC=y                     OK"
+          echo "CONFIG_MMC_SDHCI=y              OK"
+          echo "CONFIG_MMC_SDHCI_PLTFM=y        OK"
+          echo "CONFIG_MMC_SDHCI_MSM=y          OK"
 
           echo
-          echo "VIOLET CONFIGURATION: VALID"
+          echo "VIOLET PLATFORM: VALID"
 
-      - name: Export FULL VIOLET defconfig
+      - name: Export FULL VIOLET configuration
         run: |
           set -e
 
@@ -164,21 +265,79 @@ jobs:
           echo "EXPORTING FULL VIOLET DEFCONFIG"
           echo "========================================"
 
-          cp out/.config artifact/violet_full_defconfig
+          cp out/.config \
+            artifact/violet_full_defconfig
 
           test -s artifact/violet_full_defconfig
 
           echo
-          echo "FULL CONFIGURATION:"
+          echo "FULL VIOLET CONFIGURATION"
+          echo "========================================"
+
+          echo "Lines:"
           wc -l artifact/violet_full_defconfig
 
           echo
-          echo "OUTPUT:"
-          echo "artifact/violet_full_defconfig"
+          echo "Bytes:"
+          wc -c artifact/violet_full_defconfig
 
-      - name: Upload artifact
+          echo
+          echo "This is the complete resolved .config."
+          echo "No savedefconfig was used."
+
+      - name: Final integrity check
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "FINAL INTEGRITY CHECK"
+          echo "========================================"
+
+          test -s artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_ARCH_QCOM=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_ARCH_SM6150=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_MMC=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_MMC_SDHCI=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_MMC_SDHCI_PLTFM=y$' \
+            artifact/violet_full_defconfig
+
+          grep -q '^CONFIG_MMC_SDHCI_MSM=y$' \
+            artifact/violet_full_defconfig
+
+          echo
+          echo "========================================"
+          echo "SUCCESS"
+          echo "========================================"
+
+          echo
+          echo "sdmsteppe-perf_defconfig"
+          echo "        +"
+          echo "violet.config"
+          echo "        +"
+          echo "Kconfig"
+          echo "        ="
+          echo "FULL VIOLET CONFIGURATION"
+
+          echo
+          echo "Final lines:"
+          wc -l artifact/violet_full_defconfig
+
+      - name: Upload single artifact
         uses: actions/upload-artifact@v4
         with:
           name: violet-full-defconfig
           path: artifact/violet_full_defconfig
           if-no-files-found: error
+          retention-days: 30
