@@ -11,14 +11,15 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    # 1️⃣ Checkout kernel source
+
+    # 1. Checkout kernel source
     - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
         ref: 16
         fetch-depth: 1
 
-    # 2️⃣ Install dependencies
+    # 2. Install dependencies
     - name: Install dependencies
       run: |
         sudo apt update
@@ -31,7 +32,7 @@ jobs:
           python3 \
           openjdk-17-jre-headless
 
-    # 3️⃣ Setup ZyCromerZ Clang 16.0.6
+    # 3. Setup ZyCromerZ Clang 16.0.6
     - name: Setup Clang
       run: |
         mkdir -p clang
@@ -39,7 +40,15 @@ jobs:
         tar -xzf Clang-16.0.6-20260807.tar.gz -C clang
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
-    # 4️⃣ Export build environment
+    # 4. Verify Clang and LLD
+    - name: Verify Clang toolchain
+      run: |
+        which clang
+        clang --version
+        which ld.lld
+        ld.lld --version
+
+    # 5. Export build environment
     - name: Export build environment
       run: |
         echo "ARCH=arm64" >> $GITHUB_ENV
@@ -51,22 +60,22 @@ jobs:
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
 
-    # 5️⃣ Load defconfig
+    # 6. Load defconfig
     - name: Load defconfig
       run: |
         make O=out vendor/violet-perf_defconfig
 
-    # 6️⃣ Build kernel
+    # 7. Build kernel
     - name: Build kernel
       run: |
         make O=out -j$(nproc) 2>&1 | tee build.log
 
-    # 7️⃣ Verify output
+    # 8. Verify output
     - name: Check build output
       run: |
         test -f out/arch/arm64/boot/Image.gz
 
-    # 8️⃣ Package with AnyKernel3
+    # 9. Package with AnyKernel3
     - name: Package AnyKernel3
       run: |
         git clone --depth=1 -b sixteen https://github.com/Joker-V2/AnyKernel3.git AK3
@@ -75,14 +84,14 @@ jobs:
         cd AK3
         zip -r9 ../Kernel-violet.zip *
 
-    # 9️⃣ Upload kernel
+    # 10. Upload kernel
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet
         path: Kernel-violet.zip
 
-    # 🔟 Upload build log
+    # 11. Upload build log
     - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
