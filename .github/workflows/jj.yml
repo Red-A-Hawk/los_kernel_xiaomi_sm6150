@@ -33,6 +33,9 @@ jobs:
           BASE="arch/arm64/boot/dts/qcom"
           VIOLET="$BASE/xiaomi/violet"
 
+          mkdir -p /tmp/violet-dts-check
+          mkdir -p /tmp/violet-artifact
+
           echo "[1] VIOLET DTS FILES"
           echo "========================================"
 
@@ -245,9 +248,7 @@ jobs:
                   if a[0] < b[1] and b[0] < a[1]:
                       found = True
 
-                      print(
-                          "OVERLAP:"
-                      )
+                      print("OVERLAP:")
 
                       print(
                           f"  A: 0x{a[0]:x}-0x{a[1]:x} "
@@ -321,14 +322,12 @@ jobs:
           echo "[15] DTS SYNTAX CHECK"
           echo "========================================"
 
-          mkdir -p /tmp/violet-dts-check
-
           MAIN_DTS=""
 
-          for f in \
-            "$VIOLET"/*.dts \
-            "$BASE"/xiaomi/*.dts
-          do
+          echo "Searching for Violet DTS including memory file..."
+          echo
+
+          while IFS= read -r f; do
             [ -f "$f" ] || continue
 
             if grep -q \
@@ -338,13 +337,48 @@ jobs:
               MAIN_DTS="$f"
               break
             fi
-          done
+          done < <(
+            find "$BASE" \
+              -type f \
+              \( -name "*.dts" -o -name "*.dtsi" \) \
+              -print 2>/dev/null | sort
+          )
+
+          if [ -z "$MAIN_DTS" ]; then
+            echo
+            echo "Direct include search failed."
+            echo "Searching Violet DTS files by model/compatible..."
+            echo
+
+            while IFS= read -r f; do
+              [ -f "$f" ] || continue
+
+              if grep -q \
+                -E "xiaomi,violet|Violet|violet" \
+                "$f" 2>/dev/null; then
+
+                MAIN_DTS="$f"
+                break
+              fi
+            done < <(
+              find "$VIOLET" \
+                -type f \
+                -name "*.dts" \
+                -print 2>/dev/null | sort
+            )
+          fi
 
           if [ -n "$MAIN_DTS" ]; then
 
             echo "Candidate DTS:"
             echo "$MAIN_DTS"
             echo
+
+            cp "$MAIN_DTS" \
+              /tmp/violet-artifact/main-dts.txt
+
+            cp "$MEMORY" \
+              /tmp/violet-artifact/violet-sm6150-memory.dtsi
 
             dtc \
               -I dts \
@@ -355,6 +389,14 @@ jobs:
               /tmp/violet-dts-check/dtc.log
 
             DTC_STATUS=${PIPESTATUS[0]}
+
+            cp /tmp/violet-dts-check/dtc.log \
+              /tmp/violet-artifact/dtc.log
+
+            if [ -f /tmp/violet-dts-check/violet.dtb ]; then
+              cp /tmp/violet-dts-check/violet.dtb \
+                /tmp/violet-artifact/violet.dtb
+            fi
 
             echo
             echo "DTC EXIT STATUS: $DTC_STATUS"
@@ -369,6 +411,13 @@ jobs:
           else
             echo "WARNING: Could not automatically identify main Violet DTS."
             echo "DTC compilation skipped."
+
+            echo "MAIN DTS NOT FOUND" \
+              > /tmp/violet-artifact/main-dts.txt
+
+            cp "$MEMORY" \
+              /tmp/violet-artifact/violet-sm6150-memory.dtsi \
+              2>/dev/null
           fi
 
           echo
@@ -382,6 +431,14 @@ jobs:
           echo
           echo "SM6150 DTS:"
           [ -f "$SM6150" ] && echo "FOUND" || echo "MISSING"
+
+          echo
+          echo "Main Violet DTS:"
+          if [ -n "$MAIN_DTS" ]; then
+            echo "FOUND: $MAIN_DTS"
+          else
+            echo "NOT FOUND"
+          fi
 
           echo
           echo "Required labels:"
@@ -402,16 +459,45 @@ jobs:
           echo "DIAGNOSTIC COMPLETE"
           echo "========================================"
 
+          echo
+          echo "[17] PREPARING ARTIFACT"
+          echo "========================================"
+
+          {
+            echo "VIOLET DTS DEEP MEMORY DIAGNOSTIC"
+            echo
+            echo "Main DTS:"
+            echo "${MAIN_DTS:-NOT FOUND}"
+            echo
+            echo "Memory file:"
+            echo "$MEMORY"
+            echo
+            echo "DTC:"
+            dtc --version
+            echo
+            echo "Generated files:"
+            find /tmp/violet-artifact \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f\n' \
+              2>/dev/null | sort
+          } > /tmp/violet-artifact/README.txt
+
+          echo
+          echo "ARTIFACT CONTENTS:"
+          find /tmp/violet-artifact \
+            -maxdepth 1 \
+            -type f \
+            -printf '%f\n' \
+            2>/dev/null | sort
+
           exit 0
 
-      - name: Upload diagnostic artifact
+      - name: Upload Violet DTS Diagnostic Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: violet-dts-deep-memory-diagnostic
-          path: |
-            arch/arm64/boot/dts/qcom/xiaomi/violet/*.dts
-            arch/arm64/boot/dts/qcom/xiaomi/violet/*.dtsi
-            /tmp/violet-dts-check/
+          name: violet-dts-diagnostic
+          path: /tmp/violet-artifact/
           if-no-files-found: warn
           retention-days: 7
