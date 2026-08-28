@@ -12,7 +12,7 @@ jobs:
       - name: Checkout kernel
         uses: actions/checkout@v4
         with:
-          ref: hawki
+          ref: 16
           fetch-depth: 1
 
       - name: Install dependencies
@@ -43,12 +43,12 @@ jobs:
           echo "========================================"
 
           echo
-          echo "Commit:"
-          git rev-parse HEAD
-
-          echo
           echo "Branch:"
           git branch --show-current
+
+          echo
+          echo "Commit:"
+          git rev-parse HEAD
 
           echo
           echo "Required files:"
@@ -60,6 +60,7 @@ jobs:
           test -f arch/arm64/configs/vendor/violet.config
           test -f scripts/kconfig/merge_config.sh
 
+          echo
           echo "All required files found."
 
       - name: Inspect Violet definition
@@ -180,10 +181,6 @@ jobs:
           grep -Ei '^CONFIG_.*QCOM.*=' out/.config || true
 
           echo
-          echo "=== ARM64 ==="
-          grep -Ei '^CONFIG_ARCH.*=' out/.config || true
-
-          echo
           echo "=== FINGERPRINT ==="
           grep -Ei \
             '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
@@ -287,9 +284,6 @@ jobs:
             O=verify \
             ARCH=arm64 \
             savedefconfig
-
-          echo
-          echo "Comparing generated defconfig with reconstructed defconfig..."
 
           diff -u \
             violet-perf_defconfig \
