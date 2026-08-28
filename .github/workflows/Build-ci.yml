@@ -1,10 +1,10 @@
-name: Violet Kconfig Forensic Analyzer
+name: Generate Clean VIOLET Defconfig
 
 on:
   workflow_dispatch:
 
 jobs:
-  analyze:
+  generate:
     runs-on: ubuntu-22.04
 
     steps:
@@ -18,337 +18,228 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
-            git \
             bc \
             bison \
             flex \
             libssl-dev \
             libelf-dev \
-            libncurses5-dev \
-            gcc \
             make \
-            rsync
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            device-tree-compiler
 
-      - name: Prepare ARM64 Kconfig environment
+      - name: Verify kernel and VIOLET files
+        run: |
+          set -e
+
+          echo "=== KERNEL ==="
+          make kernelversion
+
+          echo
+          echo "=== ARCH ==="
+          test -f arch/arm64/Kconfig
+
+          echo
+          echo "=== BASE DEFCONFIG ==="
+          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+
+          echo
+          echo "=== VIOLET CONFIG ==="
+          test -f arch/arm64/configs/vendor/violet.config
+
+          echo
+          echo "=== VIOLET REQUESTS ==="
+          grep -E \
+            '^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+            arch/arm64/configs/vendor/violet.config
+
+      - name: Prepare output
+        run: |
+          set -e
+
+          rm -rf out
+          mkdir -p out
+          mkdir -p artifact
+
+      - name: Generate base configuration
         run: |
           set -e
 
           export ARCH=arm64
-          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
-          echo "ARCH=$ARCH" >> "$GITHUB_ENV"
-          echo "SUBARCH=$SUBARCH" >> "$GITHUB_ENV"
+          make O=out vendor/sdmsteppe-perf_defconfig
 
-          mkdir -p out
-          mkdir -p analysis
-
-          echo "========================================"
-          echo "KERNEL IDENTITY"
-          echo "========================================"
-
-          echo "ARCH=$ARCH"
-          echo "SUBARCH=$SUBARCH"
+          cp out/.config out/base.config
 
           echo
-          echo "KERNEL MAKEFILE:"
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)[[:space:]]*=' Makefile || true
+          echo "=== BASE VIOLET PLATFORM ==="
 
-          echo
-          echo "VIOLET CONFIG:"
-          test -f arch/arm64/configs/vendor/violet.config
+          grep -E \
+            '^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_ARCH_SDMMAGPIE=y$|^# CONFIG_MACH_XIAOMI_VIOLET is not set$' \
+            out/.config || true
 
-          echo
-          echo "BASE DEFCONFIG:"
-          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-
-      - name: Generate correct ARM64 base configuration
+      - name: Merge VIOLET fragment
         run: |
           set -e
 
-          rm -f out/.config
-
-          make \
-            O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            vendor/sdmsteppe-perf_defconfig
-
-          test -f out/.config
-
-          cp out/.config analysis/01-base.config
-
-      - name: Merge Violet configuration
-        run: |
-          set -e
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
           ./scripts/kconfig/merge_config.sh \
             -O out \
-            out/.config \
+            out/base.config \
             arch/arm64/configs/vendor/violet.config
 
-          test -f out/.config
-
-          cp out/.config analysis/02-after-merge.config
-
-      - name: Resolve configuration with ARM64 Kconfig
+      - name: Resolve VIOLET with Kconfig
         run: |
           set -e
 
-          make \
-            O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            olddefconfig
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
-          test -f out/.config
+          make O=out olddefconfig
 
-          cp out/.config analysis/03-final.config
-
-      - name: Build forensic report
+      - name: Verify resolved VIOLET configuration
         run: |
-          set +e
+          set -e
 
-          REPORT="analysis/VIOLET_KCONFIG_FORENSIC_REPORT.txt"
+          echo "========================================"
+          echo "VIOLET KCONFIG VERIFICATION"
+          echo "========================================"
 
-          : > "$REPORT"
+          check() {
+            symbol="$1"
+            expected="$2"
 
-          {
-            echo "############################################################"
-            echo "# VIOLET KCONFIG FORENSIC REPORT"
-            echo "############################################################"
-            echo
-            echo "This report analyzes Kconfig behavior only."
-            echo "The kernel source tree is not modified."
-            echo
-            echo "============================================================"
-            echo "1. ENVIRONMENT"
-            echo "============================================================"
-            echo
-            echo "ARCH=$ARCH"
-            echo "SUBARCH=$SUBARCH"
-            echo "HOST_ARCH=$(uname -m)"
-            echo
-            echo "Kernel Makefile:"
-            grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)[[:space:]]*=' Makefile || true
-            echo
-
-            echo "============================================================"
-            echo "2. BASE DEFCONFIG"
-            echo "============================================================"
-            echo
-            echo "arch/arm64/configs/vendor/sdmsteppe-perf_defconfig"
-            echo
-
-            echo "============================================================"
-            echo "3. TARGET SYMBOLS THROUGH CONFIGURATION TIMELINE"
-            echo "============================================================"
-
-            for FILE in \
-              analysis/01-base.config \
-              analysis/02-after-merge.config \
-              analysis/03-final.config
-            do
-              echo
-              echo "------------------------------------------------------------"
-              echo "$FILE"
-              echo "------------------------------------------------------------"
-
-              for SYMBOL in \
-                CONFIG_ARCH_QCOM \
-                CONFIG_ARCH_SM6150 \
-                CONFIG_ARCH_SDMMAGPIE \
-                CONFIG_MACH_XIAOMI_VIOLET \
-                CONFIG_MACH_XIAOMI_TUCANA \
-                CONFIG_MACH_XIAOMI_SM6150 \
-                CONFIG_MACH_XIAOMI_SDMMAGPIE \
-                CONFIG_MMC \
-                CONFIG_MMC_SDHCI \
-                CONFIG_MMC_SDHCI_PLTFM \
-                CONFIG_MMC_SDHCI_MSM
-              do
-                echo
-                echo "[$SYMBOL]"
-
-                grep -E \
-                  "^${SYMBOL}=|^# ${SYMBOL} is not set" \
-                  "$FILE" || echo "NOT PRESENT"
-              done
-            done
+            actual="$(grep -E "^${symbol}=|^# ${symbol} is not set" out/.config | head -n 1 || true)"
 
             echo
-            echo "============================================================"
-            echo "4. VIOLET.FRAGMENT REQUESTS"
-            echo "============================================================"
-            echo
+            echo "[${symbol}]"
+            echo "Expected: ${expected}"
+            echo "Actual:   ${actual:-NOT PRESENT}"
 
-            grep -E \
-              '^[[:space:]]*(CONFIG_[A-Za-z0-9_]+)(=| )|^[[:space:]]*# CONFIG_[A-Za-z0-9_]+ is not set' \
-              arch/arm64/configs/vendor/violet.config || true
-
-            echo
-            echo "============================================================"
-            echo "5. TARGET SYMBOL DEFINITIONS"
-            echo "============================================================"
-
-            for SYMBOL in \
-              ARCH_QCOM \
-              ARCH_SM6150 \
-              ARCH_SDMMAGPIE \
-              MACH_XIAOMI_VIOLET \
-              MACH_XIAOMI_TUCANA \
-              MACH_XIAOMI_SM6150 \
-              MACH_XIAOMI_SDMMAGPIE \
-              MMC_SDHCI_MSM
-            do
-              echo
-              echo "------------------------------------------------------------"
-              echo "SYMBOL: $SYMBOL"
-              echo "------------------------------------------------------------"
-
-              grep -R -n \
-                --include='Kconfig' \
-                --include='Kconfig.platforms' \
-                -E "^[[:space:]]*config ${SYMBOL}$" \
-                arch drivers 2>/dev/null || true
-            done
-
-            echo
-            echo "============================================================"
-            echo "6. DEPENDENCY LINES"
-            echo "============================================================"
-
-            grep -R -n \
-              --include='Kconfig' \
-              --include='Kconfig.platforms' \
-              -E \
-              'depends on .*ARCH_QCOM|depends on .*ARCH_SM6150|select .*MACH_XIAOMI|depends on .*MMC_SDHCI_PLTFM|depends on .*ARCH_MSM' \
-              arch/arm64 drivers 2>/dev/null || true
-
-            echo
-            echo "============================================================"
-            echo "7. MERGE TOOL"
-            echo "============================================================"
-
-            echo
-            echo "merge_config.sh:"
-            test -f scripts/kconfig/merge_config.sh \
-              && echo "PRESENT" \
-              || echo "MISSING"
-
-            echo
-            echo "merge_config.sh options:"
-            grep -E \
-              'ALLTARGET=|make .*KCONFIG_ALLCONFIG|allnoconfig|alldefconfig' \
-              scripts/kconfig/merge_config.sh 2>/dev/null || true
-
-            echo
-            echo "============================================================"
-            echo "8. KCONFIG WARNINGS"
-            echo "============================================================"
-
-            if grep -R -n \
-              -E \
-              '/boot/config-|arch/x86/configs|Can't find default configuration' \
-              analysis 2>/dev/null
-            then
-              echo
-              echo "WARNING: WRONG ARCH OR HOST CONFIG DETECTED"
-            else
-              echo
-              echo "No x86 /boot configuration contamination detected."
+            if [ "$actual" != "$expected" ]; then
+              echo "FAIL"
+              exit 1
             fi
 
-            echo
-            echo "============================================================"
-            echo "9. FINAL TARGET STATUS"
-            echo "============================================================"
+            echo "OK"
+          }
 
-            for SYMBOL in \
-              CONFIG_ARCH_QCOM \
-              CONFIG_ARCH_SM6150 \
-              CONFIG_ARCH_SDMMAGPIE \
-              CONFIG_MACH_XIAOMI_VIOLET \
-              CONFIG_MACH_XIAOMI_TUCANA \
-              CONFIG_MACH_XIAOMI_SM6150 \
-              CONFIG_MACH_XIAOMI_SDMMAGPIE \
-              CONFIG_MMC_SDHCI_MSM
-            do
-              echo
-              echo "[$SYMBOL]"
+          check CONFIG_ARCH_QCOM "CONFIG_ARCH_QCOM=y"
+          check CONFIG_ARCH_SM6150 "CONFIG_ARCH_SM6150=y"
+          check CONFIG_MACH_XIAOMI_VIOLET "CONFIG_MACH_XIAOMI_VIOLET=y"
+          check CONFIG_MMC "CONFIG_MMC=y"
+          check CONFIG_MMC_SDHCI "CONFIG_MMC_SDHCI=y"
+          check CONFIG_MMC_SDHCI_PLTFM "CONFIG_MMC_SDHCI_PLTFM=y"
+          check CONFIG_MMC_SDHCI_MSM "CONFIG_MMC_SDHCI_MSM=y"
 
-              VALUE=$(grep -E \
-                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
-                analysis/03-final.config 2>/dev/null || true)
+          echo
+          echo "========================================"
+          echo "VIOLET PLATFORM: VALID"
+          echo "========================================"
 
-              if [ -n "$VALUE" ]; then
-                echo "$VALUE"
-              else
-                echo "NOT PRESENT"
-              fi
-            done
+      - name: Verify VIOLET drivers
+        run: |
+          set -e
 
-            echo
-            echo "============================================================"
-            echo "10. RESULT INTERPRETATION"
-            echo "============================================================"
-            echo
+          echo "=== VIOLET CONFIG SYMBOLS ==="
 
-            echo "Configuration stages:"
-            echo
-            echo "BASE"
-            echo "  analysis/01-base.config"
-            echo
-            echo "      ↓"
-            echo
-            echo "AFTER MERGE"
-            echo "  analysis/02-after-merge.config"
-            echo
-            echo "      ↓"
-            echo
-            echo "FINAL KCONFIG"
-            echo "  analysis/03-final.config"
-            echo
+          grep '^CONFIG_' \
+            arch/arm64/configs/vendor/violet.config
 
-            echo "If a symbol disappears between BASE and AFTER MERGE,"
-            echo "the merge stage or its input configuration is responsible."
-            echo
-            echo "If a symbol exists AFTER MERGE but disappears in FINAL,"
-            echo "Kconfig dependency resolution is responsible."
-            echo
-            echo "If a symbol is already absent from BASE,"
-            echo "the selected defconfig does not enable it."
-            echo
+          echo
+          echo "=== RESOLVED VIOLET SYMBOLS ==="
 
-            echo "============================================================"
-            echo "11. IMPORTANT ARCH CHECK"
-            echo "============================================================"
-            echo
-            echo "Expected:"
-            echo "ARCH=arm64"
-            echo "Defconfig path:"
-            echo "arch/arm64/configs/vendor/sdmsteppe-perf_defconfig"
-            echo
-            echo "The workflow must never use:"
-            echo "arch/x86/configs/vendor/sdmsteppe-perf_defconfig"
-            echo
-            echo "The workflow must never use:"
-            echo "/boot/config-6.8.0-1064-azure"
-            echo
+          while read -r line; do
+            case "$line" in
+              CONFIG_*=*)
+                symbol="${line%%=*}"
+                grep -E "^${symbol}=|^# ${symbol} is not set" \
+                  out/.config || true
+                ;;
+            esac
+          done < arch/arm64/configs/vendor/violet.config
 
-            echo "############################################################"
-            echo "# END OF FORENSIC REPORT"
-            echo "############################################################"
+      - name: Generate clean defconfig
+        run: |
+          set -e
 
-          } >> "$REPORT"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
-          echo "REPORT GENERATED:"
-          cat "$REPORT"
+          make O=out savedefconfig
 
-      - name: Upload single forensic artifact
+          cp out/defconfig \
+            artifact/violet_defconfig
+
+      - name: Final VIOLET-only validation
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "FINAL VIOLET DEFCONFIG"
+          echo "========================================"
+
+          test -s artifact/violet_defconfig
+
+          grep -E \
+            '^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+            artifact/violet_defconfig
+
+          echo
+          echo "=== CHECK TUCANA ==="
+
+          if grep -q '^CONFIG_MACH_XIAOMI_TUCANA=y$' \
+            artifact/violet_defconfig; then
+            echo "ERROR: TUCANA is enabled"
+            exit 1
+          fi
+
+          echo "TUCANA: NOT ENABLED"
+
+          echo
+          echo "========================================"
+          echo "VIOLET DEFCONFIG READY"
+          echo "========================================"
+
+      - name: Create artifact report
+        run: |
+          set -e
+
+          {
+            echo "========================================"
+            echo "VIOLET SM6150 DEFCONFIG"
+            echo "========================================"
+            echo
+            echo "Git ref: 16"
+            echo "Architecture: arm64"
+            echo "Platform: Qualcomm SM6150"
+            echo "Board: Xiaomi VIOLET"
+            echo
+            echo "Required symbols:"
+            echo
+            grep -E \
+              '^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+              artifact/violet_defconfig
+            echo
+            echo "TUCANA:"
+            echo "CONFIG_MACH_XIAOMI_TUCANA is not enabled"
+            echo
+            echo "Generated with:"
+            echo "make savedefconfig"
+            echo
+            echo "========================================"
+          } > artifact/README.txt
+
+      - name: Upload VIOLET artifact
         uses: actions/upload-artifact@v4
         with:
-          name: violet-kconfig-forensic
-          path: analysis/VIOLET_KCONFIG_FORENSIC_REPORT.txt
+          name: violet-defconfig
+          path: artifact/
           if-no-files-found: error
