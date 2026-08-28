@@ -1,4 +1,4 @@
-name: Generate Modern Violet Defconfig (Kconfig Debug)
+name: Generate Modern Violet Defconfig (Kconfig Analysis)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,9 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             git \
             bc \
@@ -32,14 +34,15 @@ jobs:
             gcc-arm-linux-gnueabi \
             python3
 
-      - name: Verify required configs
+      - name: Verify required files
         run: |
           set -e
 
           test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
           test -f arch/arm64/configs/vendor/violet.config
+          test -x scripts/kconfig/merge_config.sh
 
-          echo "Required configuration files found."
+          echo "Required files found."
 
       - name: Generate base configuration
         run: |
@@ -52,52 +55,50 @@ jobs:
 
           test -s out/.config
 
-      - name: Merge Violet configuration
+          echo "Base configuration generated."
+
+      - name: Save base configuration
         run: |
-          set -e
+          mkdir -p analysis
+
+          cp out/.config analysis/base.config
+          cp arch/arm64/configs/vendor/sdmsteppe-perf_defconfig \
+            analysis/sdmsteppe-perf_defconfig
+          cp arch/arm64/configs/vendor/violet.config \
+            analysis/violet.config
+
+      - name: Merge Violet fragment and capture complete log
+        run: |
+          set +e
 
           ./scripts/kconfig/merge_config.sh \
             -O out \
             out/.config \
-            arch/arm64/configs/vendor/violet.config
+            arch/arm64/configs/vendor/violet.config \
+            2>&1 | tee analysis/merge-config.log
+
+          MERGE_STATUS=${PIPESTATUS[0]}
+
+          echo
+          echo "merge_config.sh exit code: $MERGE_STATUS"
+
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            echo "merge_config.sh failed."
+          else
+            echo "merge_config.sh completed."
+          fi
 
           test -s out/.config
 
-      - name: Resolve configuration
-        run: |
-          set -e
-
-          make O=out ARCH=arm64 olddefconfig
-
-          test -s out/.config
-
-      - name: Kconfig Debug Report
+      - name: Capture configuration after merge
         if: always()
         run: |
           set +e
 
-          mkdir -p kconfig-debug
+          cp out/.config analysis/after-merge.config 2>/dev/null || true
 
-          REPORT="kconfig-debug/kconfig-debug.txt"
-
-          echo "========================================" > "$REPORT"
-          echo "VIOLET KCONFIG DEBUG REPORT" >> "$REPORT"
-          echo "========================================" >> "$REPORT"
-
-          echo >> "$REPORT"
-          echo "=== KERNEL VERSION ===" >> "$REPORT"
-          head -n 10 Makefile >> "$REPORT"
-
-          echo >> "$REPORT"
-          echo "=== BASE DEFCONFIG ===" >> "$REPORT"
-          cat arch/arm64/configs/vendor/sdmsteppe-perf_defconfig >> "$REPORT"
-
-          echo >> "$REPORT"
-          echo "=== VIOLET FRAGMENT ===" >> "$REPORT"
-          cat arch/arm64/configs/vendor/violet.config >> "$REPORT"
-
-          echo >> "$REPORT"
-          echo "=== FINAL VALUES ===" >> "$REPORT"
+          echo "=== TARGET SYMBOLS AFTER MERGE ===" \
+            > analysis/target-symbols-after-merge.txt
 
           for symbol in \
             CONFIG_ARCH_QCOM \
@@ -105,73 +106,112 @@ jobs:
             CONFIG_ARCH_SDMMAGPIE \
             CONFIG_MACH_XIAOMI_VIOLET
           do
-            echo >> "$REPORT"
-            echo "--- $symbol ---" >> "$REPORT"
-            grep -E "^${symbol}=|^# ${symbol} is not set" \
-              out/.config >> "$REPORT"
+            echo >> analysis/target-symbols-after-merge.txt
+            echo "[$symbol]" >> analysis/target-symbols-after-merge.txt
+
+            grep -E \
+              "^${symbol}=|^# ${symbol} is not set" \
+              out/.config \
+              >> analysis/target-symbols-after-merge.txt
           done
 
-          echo >> "$REPORT"
-          echo "=== ALL CONFIG DEFINITIONS ===" >> "$REPORT"
+      - name: Resolve final configuration
+        run: |
+          set -e
 
-          grep -R -n -E \
-            "^[[:space:]]*(config|menuconfig)[[:space:]]+(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET)([[:space:]]|$)" \
-            arch/arm64 arch/arm drivers 2>/dev/null \
-            >> "$REPORT"
+          make O=out ARCH=arm64 olddefconfig
 
-          echo >> "$REPORT"
-          echo "=== ALL REFERENCES TO TARGET SYMBOLS ===" >> "$REPORT"
+          test -s out/.config
 
-          grep -R -n -E \
-            "ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET" \
-            arch/arm64 arch/arm drivers 2>/dev/null \
-            | grep -v "/.git/" \
-            >> "$REPORT"
+          echo "Final configuration resolved."
 
-          echo >> "$REPORT"
-          echo "=== KCONFIG FILES ===" >> "$REPORT"
+      - name: Capture Kconfig resolution
+        if: always()
+        run: |
+          set +e
 
-          find arch/arm64 arch/arm drivers \
-            -type f \( -name "Kconfig" -o -name "Kconfig.*" \) \
-            2>/dev/null \
-            | sort \
-            > kconfig-debug/kconfig-files.txt
+          cp out/.config analysis/final.config
 
-          echo >> "$REPORT"
-          echo "=== MERGE CONFIG LOGIC ===" >> "$REPORT"
+          {
+            echo "========================================"
+            echo "FINAL TARGET SYMBOLS"
+            echo "========================================"
 
-          sed -n '1,260p' scripts/kconfig/merge_config.sh \
-            > kconfig-debug/merge_config.sh.txt
+            for symbol in \
+              CONFIG_ARCH_QCOM \
+              CONFIG_ARCH_SM6150 \
+              CONFIG_ARCH_SDMMAGPIE \
+              CONFIG_MACH_XIAOMI_VIOLET
+            do
+              echo
+              echo "[$symbol]"
 
-          echo >> "$REPORT"
-          echo "=== FINAL FULL CONFIG ===" >> "$REPORT"
+              grep -E \
+                "^${symbol}=|^# ${symbol} is not set" \
+                out/.config
+            done
 
-          cp out/.config kconfig-debug/final.config
+            echo
+            echo "========================================"
+            echo "QCOM RELATED SYMBOLS"
+            echo "========================================"
 
-          echo >> "$REPORT"
-          echo "=== SYMBOL SEARCH IN FINAL CONFIG ===" >> "$REPORT"
+            grep -E \
+              "^CONFIG_(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|QCOM|MSM|SM6150)" \
+              out/.config
 
-          grep -n -E \
-            "ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET" \
-            out/.config \
-            >> "$REPORT"
+          } > analysis/final-symbols.txt
 
-          echo >> "$REPORT"
-          echo "=== KCONFIG DEBUG COMPLETE ===" >> "$REPORT"
+      - name: Inspect Kconfig definitions
+        if: always()
+        run: |
+          set +e
 
-          cat "$REPORT"
+          {
+            echo "========================================"
+            echo "ARCH_QCOM DEFINITIONS"
+            echo "========================================"
 
-      - name: Save full configuration
+            grep -R -n \
+              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+ARCH_QCOM([[:space:]]|$)" \
+              arch/arm64 arch/arm drivers 2>/dev/null
+
+            echo
+            echo "========================================"
+            echo "ARCH_SM6150 DEFINITIONS"
+            echo "========================================"
+
+            grep -R -n \
+              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+ARCH_SM6150([[:space:]]|$)" \
+              arch/arm64 arch/arm drivers 2>/dev/null
+
+            echo
+            echo "========================================"
+            echo "MACH_XIAOMI_VIOLET DEFINITIONS"
+            echo "========================================"
+
+            grep -R -n \
+              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+MACH_XIAOMI_VIOLET([[:space:]]|$)" \
+              . 2>/dev/null \
+              | grep -v "/.git/"
+
+            echo
+            echo "========================================"
+            echo "ALL TARGET REFERENCES"
+            echo "========================================"
+
+            grep -R -n \
+              -E "ARCH_QCOM|ARCH_SM6150|MACH_XIAOMI_VIOLET" \
+              arch/arm64 arch/arm drivers 2>/dev/null \
+              | grep -v "/.git/"
+
+          } > analysis/kconfig-definitions.txt
+
+      - name: Generate final files
         run: |
           set -e
 
           cp out/.config violet-full.config
-
-          test -s violet-full.config
-
-      - name: Generate final defconfig
-        run: |
-          set -e
 
           make O=out ARCH=arm64 savedefconfig
 
@@ -179,13 +219,42 @@ jobs:
 
           cp out/defconfig violet-perf_defconfig
 
-      - name: Upload artifacts
+      - name: Show final result
+        run: |
+          echo "========================================"
+          echo "FINAL FILES"
+          echo "========================================"
+
+          echo
+          echo "violet-full.config:"
+          wc -l violet-full.config
+
+          echo
+          echo "violet-perf_defconfig:"
+          wc -l violet-perf_defconfig
+
+          echo
+          echo "========================================"
+          echo "TARGET SYMBOLS"
+          echo "========================================"
+
+          grep -E \
+            "^CONFIG_ARCH_QCOM=|^# CONFIG_ARCH_QCOM is not set|^CONFIG_ARCH_SM6150=|^# CONFIG_ARCH_SM6150 is not set|^CONFIG_MACH_XIAOMI_VIOLET=|^# CONFIG_MACH_XIAOMI_VIOLET is not set" \
+            violet-full.config || true
+
+      - name: Upload generated configs
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-violet-defconfig
+          path: |
+            violet-full.config
+            violet-perf_defconfig
+          if-no-files-found: error
+
+      - name: Upload Kconfig analysis
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: modern-violet-defconfig-debug
-          path: |
-            violet-perf_defconfig
-            violet-full.config
-            kconfig-debug/
-          if-no-files-found: error
+          name: violet-kconfig-analysis
+          path: analysis/
+          if-no-files-found: warn
