@@ -1,0 +1,190 @@
+name: Generate Modern Violet Defconfig
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: hawki
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            libncurses-dev \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            python3
+
+      - name: Verify kernel tree
+        run: |
+          set -e
+
+          echo "=== COMMIT ==="
+          git rev-parse HEAD
+
+          echo
+          echo "=== BRANCH ==="
+          git branch --show-current
+
+          echo
+          echo "=== REQUIRED FILES ==="
+          test -f arch/arm64/configs/defconfig
+          test -f arch/arm64/configs/vendor/violet.config
+          test -f scripts/kconfig/merge_config.sh
+
+          echo "All required files exist."
+
+          echo
+          echo "=== VIOLET CONFIG ==="
+          cat arch/arm64/configs/vendor/violet.config
+
+      - name: Generate base configuration
+        run: |
+          set -e
+
+          rm -rf out
+          mkdir -p out
+
+          make O=out ARCH=arm64 defconfig
+
+          test -f out/.config
+
+          echo
+          echo "=== BASE CONFIG GENERATED ==="
+          wc -l out/.config
+
+      - name: Merge Violet configuration
+        run: |
+          set -e
+
+          ./scripts/kconfig/merge_config.sh \
+            -O out \
+            out/.config \
+            arch/arm64/configs/vendor/violet.config
+
+      - name: Resolve configuration
+        run: |
+          set -e
+
+          make O=out ARCH=arm64 olddefconfig
+
+          test -f out/.config
+
+      - name: Verify Violet configuration
+        run: |
+          set -e
+
+          echo "=== VIOLET CONFIGURATION ==="
+
+          echo
+          echo "--- Architecture ---"
+          grep -E \
+            '^CONFIG_ARCH_QCOM=|^CONFIG_ARCH_SM6150=' \
+            out/.config || true
+
+          echo
+          echo "--- Device ---"
+          grep -E \
+            '^CONFIG_MACH_XIAOMI_VIOLET=' \
+            out/.config || true
+
+          echo
+          echo "--- Fingerprint ---"
+          grep -E \
+            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_FPC1020=|^CONFIG_FINGERPRINT_GF3208=' \
+            out/.config || true
+
+          echo
+          echo "--- Touchscreen ---"
+          grep -Ei \
+            '^CONFIG_.*(FTS|NT36|NVT).*=' \
+            out/.config || true
+
+          echo
+          echo "--- Audio ---"
+          grep -E \
+            '^CONFIG_SND_SOC_TAS2563=|^CONFIG_TAS2563_CODEC=|^CONFIG_TAS2563_MISC=|^CONFIG_TAS2563_REGMAP=' \
+            out/.config || true
+
+      - name: Require Violet support
+        run: |
+          set -e
+
+          echo "Checking required Violet options..."
+
+          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' out/.config
+          grep -q '^CONFIG_ARCH_SM6150=y$' out/.config
+          grep -q '^CONFIG_ARCH_QCOM=y$' out/.config
+
+          echo
+          echo "Violet hardware configuration is enabled."
+
+      - name: Generate modern defconfig
+        run: |
+          set -e
+
+          make O=out ARCH=arm64 savedefconfig
+
+          test -f out/defconfig
+
+          cp out/defconfig violet-perf_defconfig
+
+          echo
+          echo "=== GENERATED DEFCONFIG ==="
+          wc -l violet-perf_defconfig
+
+          echo
+          echo "=== VIOLET ENTRIES IN GENERATED DEFCONFIG ==="
+          grep -E \
+            'VIOLET|SM6150|FPC1020|GF3208|TAS2563|FTS|NT36|NVT' \
+            violet-perf_defconfig || true
+
+      - name: Validate generated defconfig
+        run: |
+          set -e
+
+          rm -rf verify
+          mkdir -p verify
+
+          make O=verify ARCH=arm64 \
+            KCONFIG_CONFIG="$GITHUB_WORKSPACE/violet-perf_defconfig" \
+            olddefconfig
+
+          echo
+          echo "=== VERIFYING GENERATED DEFCONFIG ==="
+
+          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' verify/.config
+          grep -q '^CONFIG_ARCH_SM6150=y$' verify/.config
+          grep -q '^CONFIG_ARCH_QCOM=y$' verify/.config
+
+          echo
+          echo "Generated Violet defconfig passed validation."
+
+      - name: Upload modern Violet defconfig
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-violet-defconfig
+          path: violet-perf_defconfig
+          if-no-files-found: error
+
+      - name: Upload full resolved config
+        uses: actions/upload-artifact@v4
+        with:
+          name: violet-full-config
+          path: out/.config
+          if-no-files-found: error
