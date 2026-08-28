@@ -31,12 +31,12 @@ jobs:
           python3 \
           openjdk-17-jre-headless
 
-    # 3️⃣ Setup ZyCromerZ Clang
+    # 3️⃣ Setup ZyCromerZ Clang 16.0.6
     - name: Setup Clang
       run: |
         mkdir -p clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20251111-release/Clang-15.0.7-20251111.tar.gz
-        tar -xzf Clang-15.0.7-20251111-release/Clang-15.0.7-20251111.tar.gz -C clang
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+        tar -xzf Clang-16.0.6-20260807.tar.gz -C clang
         echo "$PWD/clang/bin" >> $GITHUB_PATH
 
     # 4️⃣ Export build environment
