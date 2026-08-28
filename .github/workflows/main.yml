@@ -42,16 +42,15 @@ jobs:
           echo "KERNEL TREE"
           echo "========================================"
 
+          echo "Commit:"
+          git rev-parse HEAD
+
           echo
           echo "Branch:"
           git branch --show-current
 
           echo
-          echo "Commit:"
-          git rev-parse HEAD
-
-          echo
-          echo "Required files:"
+          echo "Checking required files..."
 
           test -f Makefile
           test -f arch/arm64/Kconfig
@@ -63,80 +62,33 @@ jobs:
           echo
           echo "All required files found."
 
-      - name: Inspect Violet definition
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "VIOLET SOURCE ANALYSIS"
-          echo "========================================"
-
-          echo
-          echo "=== vendor/violet.config ==="
-          cat arch/arm64/configs/vendor/violet.config
-
-          echo
-          echo "=== Violet references ==="
-
-          grep -Rni "violet" \
-            arch/arm64/Kconfig \
-            arch/arm64/Kconfig.platforms \
-            arch/arm64/configs \
-            arch/arm64/boot/dts \
-            2>/dev/null | head -300 || true
-
-          echo
-          echo "=== SM6150 references ==="
-
-          grep -Rni "SM6150" \
-            arch/arm64/Kconfig \
-            arch/arm64/Kconfig.platforms \
-            arch/arm64/configs \
-            arch/arm64/boot/dts \
-            2>/dev/null | head -300 || true
-
-          echo
-          echo "=== Xiaomi references ==="
-
-          grep -Rni "XIAOMI" \
-            arch/arm64/Kconfig \
-            arch/arm64/Kconfig.platforms \
-            arch/arm64/configs \
-            arch/arm64/boot/dts \
-            2>/dev/null | head -300 || true
-
-          echo
-          echo "=== Violet device-tree files ==="
-
-          find arch/arm64/boot/dts \
-            -type f \
-            \( -iname '*violet*' -o -iname '*sm6150*' \) \
-            -print 2>/dev/null | sort
-
       - name: Generate base configuration
         run: |
           set -e
 
+          echo "========================================"
+          echo "GENERATE BASE CONFIG"
+          echo "========================================"
+
           rm -rf out
           mkdir -p out
 
-          echo "========================================"
-          echo "GENERATING BASE CONFIG"
-          echo "========================================"
-
-          make O=out ARCH=arm64 defconfig
+          make \
+            O=out \
+            ARCH=arm64 \
+            defconfig
 
           test -f out/.config
 
           echo
-          echo "Base configuration generated."
+          echo "Base config generated successfully."
 
       - name: Merge Violet configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "MERGING VIOLET CONFIG"
+          echo "MERGE VIOLET CONFIG"
           echo "========================================"
 
           ./scripts/kconfig/merge_config.sh \
@@ -144,80 +96,114 @@ jobs:
             out/.config \
             arch/arm64/configs/vendor/violet.config
 
-      - name: Resolve configuration
+      - name: Resolve Violet configuration
         run: |
           set -e
 
           echo "========================================"
-          echo "RESOLVING CONFIGURATION"
+          echo "RESOLVE CONFIG"
           echo "========================================"
 
-          make O=out ARCH=arm64 olddefconfig
+          make \
+            O=out \
+            ARCH=arm64 \
+            olddefconfig
 
           test -f out/.config
 
-      - name: Analyze resolved configuration
+          echo
+          echo "Resolved configuration created."
+
+      - name: Validate Violet configuration
         run: |
           set +e
 
           echo "========================================"
-          echo "RESOLVED CONFIGURATION"
+          echo "VIOLET CONFIGURATION"
           echo "========================================"
 
           echo
-          echo "=== VIOLET ==="
-          grep -Ei 'violet' out/.config || true
+          echo "--- Architecture ---"
+
+          grep -Ei \
+            '^CONFIG_ARCH_|^CONFIG_ARM64=' \
+            out/.config || true
 
           echo
-          echo "=== XIAOMI ==="
-          grep -Ei 'xiaomi' out/.config || true
+          echo "--- Device ---"
+
+          grep -Ei \
+            'VIOLET|XIAOMI|SM6150' \
+            out/.config || true
 
           echo
-          echo "=== SM6150 ==="
-          grep -Ei 'sm6150' out/.config || true
+          echo "--- Fingerprint ---"
 
-          echo
-          echo "=== QCOM ==="
-          grep -Ei '^CONFIG_.*QCOM.*=' out/.config || true
-
-          echo
-          echo "=== FINGERPRINT ==="
           grep -Ei \
             '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
             out/.config || true
 
           echo
-          echo "=== TOUCHSCREEN ==="
-          grep -Ei \
-            '^CONFIG_.*(FTS|NVT|NT36|GOODIX).*=' \
-            out/.config || true
+          echo "--- Audio ---"
 
-          echo
-          echo "=== AUDIO ==="
           grep -Ei \
             '^CONFIG_.*TAS2563.*=' \
             out/.config || true
 
-      - name: Generate modern Violet defconfig
+          echo
+          echo "--- Touchscreen ---"
+
+          grep -Ei \
+            '^CONFIG_.*(FTS|NVT|NT36|GOODIX).*=' \
+            out/.config || true
+
+      - name: Save resolved config
         run: |
           set -e
 
           echo "========================================"
-          echo "GENERATING DEFCONFIG"
+          echo "SAVE RESOLVED CONFIG"
           echo "========================================"
 
-          make O=out ARCH=arm64 savedefconfig
+          cp out/.config violet-full.config
+
+          test -f violet-full.config
+
+          echo
+          echo "Full resolved config saved."
+
+          wc -l violet-full.config
+
+      - name: Generate modern defconfig
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "GENERATE MODERN VIOLET DEFCONFIG"
+          echo "========================================"
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            savedefconfig
 
           test -f out/defconfig
 
           cp out/defconfig violet-perf_defconfig
 
+          test -f violet-perf_defconfig
+
           echo
-          echo "Generated defconfig:"
+          echo "Modern Violet defconfig generated."
+
+          echo
+          echo "Lines:"
           wc -l violet-perf_defconfig
 
       - name: Show generated defconfig
         run: |
+          set -e
+
           echo "========================================"
           echo "GENERATED VIOLET DEFCONFIG"
           echo "========================================"
@@ -245,39 +231,35 @@ jobs:
           test -f verify/.config
 
           echo
-          echo "Generated defconfig successfully reconstructed."
+          echo "Defconfig successfully reconstructed."
 
           echo
-          echo "=== RECONSTRUCTED CONFIG ==="
+          echo "Checking Violet-related options..."
 
-          grep -Ei 'violet|xiaomi|sm6150' \
+          grep -Ei \
+            'VIOLET|XIAOMI|SM6150' \
             verify/.config || true
 
           echo
-          echo "=== FINGERPRINT ==="
+          echo "Checking fingerprint..."
 
           grep -Ei \
             '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
             verify/.config || true
 
           echo
-          echo "=== AUDIO ==="
+          echo "Checking audio..."
 
           grep -Ei \
             '^CONFIG_.*TAS2563.*=' \
             verify/.config || true
 
-          echo
-          echo "=== CONFIG SIZE ==="
-
-          wc -l verify/.config
-
-      - name: Compare generated config
+      - name: Test defconfig stability
         run: |
           set -e
 
           echo "========================================"
-          echo "CONFIG COMPARISON"
+          echo "TEST DEFCONFIG STABILITY"
           echo "========================================"
 
           make \
@@ -285,19 +267,67 @@ jobs:
             ARCH=arm64 \
             savedefconfig
 
-          diff -u \
-            violet-perf_defconfig \
-            verify/defconfig \
-            > defconfig.diff || true
+          test -f verify/defconfig
 
-          if [ -s defconfig.diff ]; then
+          cp verify/defconfig verify-violet-perf_defconfig
+
+          if cmp -s violet-perf_defconfig verify-violet-perf_defconfig; then
             echo
-            echo "Differences found:"
-            cat defconfig.diff
+            echo "========================================"
+            echo "DEFCONFIG IS STABLE"
+            echo "========================================"
           else
             echo
-            echo "Defconfig is stable."
+            echo "========================================"
+            echo "WARNING: DEFCONFIG CHANGED"
+            echo "========================================"
+
+            diff -u \
+              violet-perf_defconfig \
+              verify-violet-perf_defconfig \
+              || true
           fi
+
+      - name: Create report
+        run: |
+          set -e
+
+          echo "========================================" > violet-report.txt
+          echo "MODERN VIOLET DEFCONFIG REPORT" >> violet-report.txt
+          echo "========================================" >> violet-report.txt
+
+          echo >> violet-report.txt
+          echo "Commit:" >> violet-report.txt
+          git rev-parse HEAD >> violet-report.txt
+
+          echo >> violet-report.txt
+          echo "Branch:" >> violet-report.txt
+          git branch --show-current >> violet-report.txt
+
+          echo >> violet-report.txt
+          echo "Defconfig lines:" >> violet-report.txt
+          wc -l violet-perf_defconfig >> violet-report.txt
+
+          echo >> violet-report.txt
+          echo "Violet / Xiaomi / SM6150:" >> violet-report.txt
+          grep -Ei \
+            'VIOLET|XIAOMI|SM6150' \
+            violet-full.config \
+            >> violet-report.txt || true
+
+          echo >> violet-report.txt
+          echo "Fingerprint:" >> violet-report.txt
+          grep -Ei \
+            '^CONFIG_INPUT_FINGERPRINT=|^CONFIG_FINGERPRINT_' \
+            violet-full.config \
+            >> violet-report.txt || true
+
+          echo >> violet-report.txt
+          echo "Audio:" >> violet-report.txt
+          grep -Ei \
+            '^CONFIG_.*TAS2563.*=' \
+            violet-full.config \
+            >> violet-report.txt || true
 
       - name: Upload modern Violet defconfig
         uses: actions/upload-artifact@v4
@@ -310,7 +340,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: violet-full-config
-          path: out/.config
+          path: violet-full.config
           if-no-files-found: error
 
       - name: Upload verification config
@@ -320,9 +350,9 @@ jobs:
           path: verify/.config
           if-no-files-found: error
 
-      - name: Upload config comparison
+      - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: violet-defconfig-comparison
-          path: defconfig.diff
-          if-no-files-found: warn
+          name: violet-config-report
+          path: violet-report.txt
+          if-no-files-found: error
