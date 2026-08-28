@@ -61,18 +61,19 @@ jobs:
 
         test -f "$CLANG_ARCHIVE"
 
+        mkdir -p clang
+
         echo
         echo "========================================"
         echo "EXTRACTING CLANG"
         echo "========================================"
 
-        mkdir -p clang
-
         tar -xzf "$CLANG_ARCHIVE" -C clang
+
+        test -x clang/bin/clang
 
         echo "$PWD/clang/bin" >> "$GITHUB_PATH"
 
-        echo
         echo "Clang setup completed."
 
     # 4. Verify toolchain
@@ -115,32 +116,29 @@ jobs:
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
 
-    # 6. Inspect Violet Device Tree
-    - name: Inspect Device Tree
+    # 6. Inspect actual Violet DTS target
+    - name: Detect Violet DTS
       run: |
         set +e
 
         echo "========================================"
-        echo "VIOLET DIRECTORY"
+        echo "VIOLET DTS TARGET"
         echo "========================================"
 
-        find \
-          arch/arm64/boot/dts/qcom/xiaomi/violet \
-          -maxdepth 1 \
+        echo
+        echo "DTS files:"
+        find arch/arm64/boot/dts \
           -type f \
-          -print \
+          -name "*.dts" \
+          | grep -i violet \
           | sort
 
         echo
-        echo "========================================"
-        echo "ALL DTS FILES"
-        echo "========================================"
-
-        find \
-          arch/arm64/boot/dts \
+        echo "DTSI files:"
+        find arch/arm64/boot/dts/qcom/xiaomi/violet \
+          -maxdepth 1 \
           -type f \
-          -name "*.dts" \
-          -print \
+          -name "*.dtsi" \
           | sort
 
         echo
@@ -156,79 +154,135 @@ jobs:
 
         echo
         echo "========================================"
-        echo "violet-sm6150.dtsi INCLUDES"
+        echo "violet-sm6150.dtsi INCLUDE"
         echo "========================================"
 
         grep -R -n \
           '#include.*violet-sm6150.dtsi' \
           arch/arm64/boot/dts \
           2>/dev/null \
-          | head -200
+          || true
 
-        echo
-        echo "========================================"
-        echo "DTS MAKEFILE REFERENCES"
-        echo "========================================"
-
-        grep -R -n \
-          -E "violet|sm6150" \
-          arch/arm64/boot/dts \
-          --include="Makefile" \
-          2>/dev/null \
-          | head -300
-
-    # 7. Inspect Violet DTSI
-    - name: Inspect Violet DTSI
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "violet-sm6150.dtsi"
-        echo "========================================"
-
-        nl -ba \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
-          | sed -n '1,220p'
-
-        echo
-        echo "========================================"
-        echo "violet-sm6150-memory.dtsi"
-        echo "========================================"
-
-        nl -ba \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
-          | sed -n '1,260p'
-
-    # 8. Check memory labels
-    - name: Check Memory Labels
-      run: |
-        set +e
-
-        echo "========================================"
-        echo "MEMORY LABEL DEFINITIONS"
-        echo "========================================"
-
-        grep -R -n -E \
-          "qcom_seecom:|qcom_smcinvoke:|pil_modem_mem:|pil_video_mem:|wlan_msa_mem:|pil_cdsp_mem:|pil_adsp_mem:|pil_ipa_fw_mem:|pil_ipa_gsi_mem:|pil_gpu_mem:|dfps_data_memory:|disp_rdump_memory:|reserved_memory:" \
-          arch/arm64/boot/dts \
-          2>/dev/null \
-          | head -500
-
-        echo
-        echo "========================================"
-        echo "MEMORY LABEL REFERENCES"
-        echo "========================================"
-
-        grep -n \
-          '^&' \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
-
-    # 9. Load defconfig
+    # 7. Load defconfig
     - name: Load defconfig
       run: |
         set -e
 
         make O=out vendor/violet-perf_defconfig
+
+    # 8. Validate Violet memory labels
+    - name: Validate Violet memory labels
+      run: |
+        set -e
+
+        FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+
+        echo "========================================"
+        echo "VALIDATING MEMORY LABELS"
+        echo "========================================"
+
+        test -f "$FILE"
+
+        echo
+        echo "Referenced labels:"
+        grep -n '^&' "$FILE"
+
+        echo
+        echo "========================================"
+        echo "CHECKING LABEL DEFINITIONS"
+        echo "========================================"
+
+        labels=(
+          qcom_seecom
+          qcom_smcinvoke
+          pil_modem_mem
+          pil_video_mem
+          wlan_msa_mem
+          pil_cdsp_mem
+          pil_adsp_mem
+          pil_ipa_fw_mem
+          pil_ipa_gsi_mem
+          pil_gpu_mem
+          dfps_data_memory
+          disp_rdump_memory
+          reserved_memory
+        )
+
+        missing=0
+
+        for label in "${labels[@]}"; do
+          if grep -R -qE "(^|[[:space:]])${label}:" arch/arm64/boot/dts/qcom; then
+            echo "FOUND    : $label"
+          else
+            echo "MISSING  : $label"
+            missing=$((missing + 1))
+          fi
+        done
+
+        echo
+        echo "Missing labels: $missing"
+
+    # 9. Disable only unsupported disp_rdump_memory override
+    - name: Fix unsupported disp_rdump_memory
+      run: |
+        set -e
+
+        FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+
+        echo "========================================"
+        echo "CHECKING disp_rdump_memory"
+        echo "========================================"
+
+        if grep -R -qE "(^|[[:space:]])disp_rdump_memory:" arch/arm64/boot/dts/qcom; then
+
+          echo "disp_rdump_memory exists."
+          echo "Keeping original override."
+
+        else
+
+          echo "disp_rdump_memory does NOT exist."
+          echo "Removing only its unsupported override."
+
+          python3 - "$FILE" <<'PY'
+import sys
+
+path = sys.argv[1]
+
+with open(path, "r", encoding="utf-8") as f:
+    data = f.read()
+
+old = '''&disp_rdump_memory{
+    reg = <0x0 0x9d100000 0x0 0x01000000>;
+};
+'''
+
+old2 = '''&disp_rdump_memory {
+    reg = <0x0 0x9d100000 0x0 0x01000000>;
+};
+'''
+
+if old in data:
+    data = data.replace(old, "")
+elif old2 in data:
+    data = data.replace(old2, "")
+else:
+    print("WARNING: disp_rdump_memory block was not found.")
+    sys.exit(0)
+
+with open(path, "w", encoding="utf-8") as f:
+    f.write(data)
+
+print("disp_rdump_memory override removed.")
+PY
+
+        fi
+
+        echo
+        echo "========================================"
+        echo "FINAL MEMORY DTSI"
+        echo "========================================"
+
+        nl -ba "$FILE" | sed -n '1,220p'
 
     # 10. Build Device Trees
     - name: Build Device Trees
@@ -259,14 +313,14 @@ jobs:
         echo "========================================"
 
         grep -n -E \
-          "Error:|error:|ERROR:|syntax error|FATAL ERROR|No rule to make target" \
+          "Error:|error:|ERROR:|syntax error|FATAL ERROR|Label or path|No rule to make target" \
           dts-error.log \
           2>/dev/null \
           || true
 
         echo
         echo "========================================"
-        echo "FULL DTS LOG"
+        echo "DTS LOG"
         echo "========================================"
 
         cat dts-error.log
@@ -277,6 +331,10 @@ jobs:
     - name: Build kernel
       run: |
         set -e
+
+        echo "========================================"
+        echo "BUILDING KERNEL"
+        echo "========================================"
 
         make O=out \
           -j$(nproc) \
@@ -300,8 +358,7 @@ jobs:
         echo "DTB OUTPUT"
         echo "========================================"
 
-        find \
-          out/arch/arm64/boot/dts \
+        find out/arch/arm64/boot/dts \
           -type f \
           \( -name "*.dtb" -o -name "*.dtbo" \) \
           -print \
@@ -361,7 +418,7 @@ jobs:
         name: build-log
         path: build.log
 
-    # 16. Upload DTS diagnostics
+    # 16. Upload DTS diagnostic
     - name: Upload DTS diagnostics
       if: always()
       uses: actions/upload-artifact@v4
