@@ -1,10 +1,10 @@
-name: VIOLET Deep Joker Kconfig Audit
+name: VIOLET Deep Analysis - 296 Joker Candidates
 
 on:
   workflow_dispatch:
 
 jobs:
-  audit:
+  analyze:
     runs-on: ubuntu-22.04
 
     steps:
@@ -30,35 +30,16 @@ jobs:
             make \
             gcc-aarch64-linux-gnu \
             binutils-aarch64-linux-gnu \
-            device-tree-compiler \
             git \
-            wget
-
-      - name: Syntax check
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "SYNTAX CHECK"
-          echo "========================================"
-
-          cat > /tmp/test.sh <<'EOF'
-          set -e
-          echo syntax-ok
-          EOF
-
-          bash -n /tmp/test.sh
-
-          echo "BASH SYNTAX: OK"
+            wget \
+            ripgrep
 
       - name: Verify sources
-        shell: bash
         run: |
           set -e
 
           echo "========================================"
-          echo "VERIFYING SOURCES"
+          echo "VERIFYING VIOLET SOURCES"
           echo "========================================"
 
           test -f Kconfig
@@ -72,7 +53,6 @@ jobs:
           echo "merge_config.sh           : OK"
 
       - name: Download Joker defconfig
-        shell: bash
         run: |
           set -e
 
@@ -85,33 +65,10 @@ jobs:
 
           test -s joker/violet-perf_defconfig
 
-          echo "Joker violet-perf_defconfig: OK"
-          echo "Joker lines:"
+          echo "Joker defconfig:"
           wc -l joker/violet-perf_defconfig
 
-      - name: Prepare ARM64 compiler
-        shell: bash
-        run: |
-          set -e
-
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          echo "========================================"
-          echo "ARM64 COMPILER"
-          echo "========================================"
-
-          echo "ARCH=$ARCH"
-          echo "CROSS_COMPILE=$CROSS_COMPILE"
-
-          command -v aarch64-linux-gnu-gcc
-          command -v aarch64-linux-gnu-ld
-
-          aarch64-linux-gnu-gcc --version | head -n 1
-          aarch64-linux-gnu-ld --version | head -n 1
-
-      - name: Generate VIOLET final base
-        shell: bash
+      - name: Generate VIOLET base Kconfig
         run: |
           set -e
 
@@ -119,18 +76,11 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
 
           rm -rf out
-
           mkdir -p out
 
           echo "========================================"
-          echo "GENERATING VIOLET BASE"
+          echo "GENERATING BASE CONFIG"
           echo "========================================"
-
-          echo "sdmsteppe-perf_defconfig"
-          echo "+"
-          echo "violet.config"
-          echo "+"
-          echo "Kconfig"
 
           make O=out vendor/sdmsteppe-perf_defconfig
 
@@ -140,20 +90,18 @@ jobs:
             -O out \
             out/sdmsteppe.config \
             arch/arm64/configs/vendor/violet.config \
-            > reports/violet_merge.log 2>&1
+            > reports/base_merge.log 2>&1
 
           make O=out olddefconfig \
-            > reports/violet_kconfig.log 2>&1
+            > reports/base_kconfig.log 2>&1
 
-          cp out/.config out/violet_final.config
+          cp out/.config out/violet.config.resolved
 
           echo
-          echo "VIOLET BASE READY"
+          echo "Resolved VIOLET configuration:"
+          wc -l out/violet.config.resolved
 
-          wc -l out/violet_final.config
-
-      - name: Extract Joker candidates
-        shell: bash
+      - name: Extract 296 candidates
         run: |
           set -e
 
@@ -161,131 +109,52 @@ jobs:
           echo "EXTRACTING JOKER CANDIDATES"
           echo "========================================"
 
-          : > reports/01_joker_candidates.txt
+          : > reports/01_all_296.txt
 
-          while IFS= read -r line
-          do
+          while IFS= read -r line; do
+
             case "$line" in
 
               CONFIG_*=*)
-                symbol="${line%%=*}"
+                echo "$line" >> reports/01_all_296.txt
                 ;;
 
               "# CONFIG_"*" is not set")
-                symbol="${line#\# }"
-                symbol="${symbol% is not set}"
-                ;;
-
-              *)
-                continue
+                echo "$line" >> reports/01_all_296.txt
                 ;;
 
             esac
 
-            current="$(
-              grep -E \
-                "^${symbol}=|^# ${symbol} is not set$" \
-                out/violet_final.config \
-                | head -n 1 || true
-            )"
-
-            if [ "$current" != "$line" ]
-            then
-              echo "$line" >> reports/01_joker_candidates.txt
-            fi
-
           done < joker/violet-perf_defconfig
 
-          sort -u \
-            reports/01_joker_candidates.txt \
-            -o reports/01_joker_candidates.txt
+          sort -u reports/01_all_296.txt \
+            -o reports/01_all_296.txt
 
-          echo "Candidates:"
-          wc -l reports/01_joker_candidates.txt
+          echo "Total Joker entries:"
+          wc -l reports/01_all_296.txt
 
-      - name: Build complete Kconfig symbol database
-        shell: bash
+      - name: Find missing but Kconfig accepted
         run: |
           set -e
 
           echo "========================================"
-          echo "BUILDING KCONFIG DATABASE"
+          echo "FINDING MISSING BUT SUPPORTED"
           echo "========================================"
 
-          : > reports/02_kconfig_database.txt
+          : > reports/02_missing_but_supported.txt
 
-          find . \
-            -type f \
-            \( \
-              -name 'Kconfig' \
-              -o -name 'Kconfig.*' \
-            \) \
-            -not -path './.git/*' \
-            -print0 |
-          while IFS= read -r -d '' file
-          do
-
-            awk -v file="$file" '
-              /^[[:space:]]*config[[:space:]]+[A-Za-z0-9_]+/ {
-                print "FILE: " file
-                print "LINE: " NR
-                print $0
-                print ""
-              }
-
-              /^[[:space:]]*menuconfig[[:space:]]+[A-Za-z0-9_]+/ {
-                print "FILE: " file
-                print "LINE: " NR
-                print $0
-                print ""
-              }
-            ' "$file" >> reports/02_kconfig_database.txt
-
-          done
-
-          echo "Kconfig definitions collected:"
-          wc -l reports/02_kconfig_database.txt
-
-      - name: Analyze Joker candidates
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "DEEP KCONFIG ANALYSIS"
-          echo "========================================"
-
-          : > reports/03_violet_relevant.txt
-          : > reports/04_generic_supported.txt
-          : > reports/05_platform_mismatch.txt
-          : > reports/06_not_defined.txt
-          : > reports/07_dependencies.txt
-          : > reports/08_current_vs_joker.txt
-
-          total=0
-          defined=0
-          undefined=0
-          violet=0
-          generic=0
-          mismatch=0
-
-          get_value()
-          {
+          get_value() {
             cfg="$1"
             sym="$2"
 
-            grep -E \
-              "^${sym}=|^# ${sym} is not set$" \
+            grep -E "^${sym}=|^# ${sym} is not set$" \
               "$cfg" \
               | head -n 1 || true
           }
 
-          while IFS= read -r requested
-          do
+          while IFS= read -r requested; do
 
             [ -z "$requested" ] && continue
-
-            total=$((total + 1))
 
             case "$requested" in
 
@@ -304,290 +173,277 @@ jobs:
 
             esac
 
-            current="$(get_value out/violet_final.config "$symbol")"
+            current="$(get_value out/violet.config.resolved "$symbol")"
 
-            definition="$(
-              grep \
-                -n \
-                -E \
-                "^[[:space:]]*(config|menuconfig)[[:space:]]+${symbol}[[:space:]]*$" \
-                reports/02_kconfig_database.txt \
-                | head -n 5 || true
-            )"
-
-            if [ -z "$definition" ]
-            then
-
-              {
-                echo "SYMBOL: $symbol"
-                echo "JOKER: $requested"
-                echo "CURRENT: ${current:-NOT PRESENT}"
-                echo "STATUS: NOT DEFINED IN KCONFIG DATABASE"
-                echo
-              } >> reports/06_not_defined.txt
-
-              undefined=$((undefined + 1))
-
+            if [ -n "$current" ]; then
               continue
+            fi
+
+            echo "$requested" \
+              >> reports/02_missing_but_supported.txt
+
+          done < reports/01_all_296.txt
+
+          sort -u \
+            reports/02_missing_but_supported.txt \
+            -o reports/02_missing_but_supported.txt
+
+          echo "Missing candidates:"
+          wc -l reports/02_missing_but_supported.txt
+
+      - name: Deep source tree analysis
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "DEEP SOURCE TREE ANALYSIS"
+          echo "========================================"
+
+          : > reports/03_violet_relevant.txt
+          : > reports/04_other_platform.txt
+          : > reports/05_dependencies.txt
+          : > reports/06_no_source_reference.txt
+          : > reports/07_safe_candidates.txt
+
+          total=0
+          violet=0
+          other=0
+          deps=0
+          none=0
+
+          while IFS= read -r requested; do
+
+            [ -z "$requested" ] && continue
+
+            case "$requested" in
+
+              CONFIG_*=*)
+                symbol="${requested%%=*}"
+                ;;
+
+              "# CONFIG_"*" is not set")
+                symbol="${requested#\# }"
+                symbol="${symbol% is not set}"
+                ;;
+
+              *)
+                continue
+                ;;
+
+            esac
+
+            total=$((total + 1))
+
+            tmp="reports/tmp_${symbol}.txt"
+            : > "$tmp"
+
+            echo "========================================" >> "$tmp"
+            echo "SYMBOL: $symbol" >> "$tmp"
+            echo "REQUEST: $requested" >> "$tmp"
+            echo "========================================" >> "$tmp"
+
+            echo >> "$tmp"
+            echo "KCONFIG DEFINITIONS:" >> "$tmp"
+
+            rg -n \
+              --glob 'Kconfig*' \
+              --glob '!out/**' \
+              "config[[:space:]]+$symbol" \
+              . >> "$tmp" 2>/dev/null || true
+
+            echo >> "$tmp"
+            echo "SOURCE REFERENCES:" >> "$tmp"
+
+            rg -n \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob '*.Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              "$symbol" \
+              . >> "$tmp" 2>/dev/null || true
+
+            echo >> "$tmp"
+            echo "PLATFORM REFERENCES:" >> "$tmp"
+
+            rg -n \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob 'Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              'SM6150|SM6150P|VIOLET|XIAOMI_VIOLET|SDMSTEPPE|QCOM' \
+              . >> "$tmp" 2>/dev/null || true
+
+            echo >> "$tmp"
+            echo "OTHER PLATFORM REFERENCES:" >> "$tmp"
+
+            rg -n \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob 'Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              'SM8150|SM8250|SM8350|SM8450|SDM845|SDM855' \
+              . >> "$tmp" 2>/dev/null || true
+
+            definition_count="$(rg -c \
+              --glob 'Kconfig*' \
+              --glob '!out/**' \
+              "config[[:space:]]+$symbol" \
+              . 2>/dev/null \
+              | awk -F: '{sum += $NF} END {print sum+0}')"
+
+            source_count="$(rg -c \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob '*.Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              "$symbol" \
+              . 2>/dev/null \
+              | awk -F: '{sum += $NF} END {print sum+0}')"
+
+            platform_count="$(rg -c \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob 'Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              'SM6150|SM6150P|VIOLET|XIAOMI_VIOLET|SDMSTEPPE|QCOM' \
+              . 2>/dev/null \
+              | awk -F: '{sum += $NF} END {print sum+0}')"
+
+            other_count="$(rg -c \
+              --glob '*.c' \
+              --glob '*.h' \
+              --glob 'Kconfig*' \
+              --glob 'Makefile*' \
+              --glob '!out/**' \
+              'SM8150|SM8250|SM8350|SM8450|SDM845|SDM855' \
+              . 2>/dev/null \
+              | awk -F: '{sum += $NF} END {print sum+0}')"
+
+            echo >> "$tmp"
+            echo "DEFINITION COUNT: $definition_count" >> "$tmp"
+            echo "SOURCE COUNT: $source_count" >> "$tmp"
+            echo "VIOLET/QCOM PLATFORM COUNT: $platform_count" >> "$tmp"
+            echo "OTHER PLATFORM COUNT: $other_count" >> "$tmp"
+
+            echo >> "$tmp"
+
+            if [ "$definition_count" -eq 0 ]; then
+
+              echo "STATUS: NO KCONFIG DEFINITION FOUND" >> "$tmp"
+              cat "$tmp" >> reports/06_no_source_reference.txt
+              echo >> reports/06_no_source_reference.txt
+
+              none=$((none + 1))
+
+            elif [ "$other_count" -gt "$platform_count" ] && [ "$platform_count" -eq 0 ]; then
+
+              echo "STATUS: OTHER PLATFORM" >> "$tmp"
+              cat "$tmp" >> reports/04_other_platform.txt
+              echo >> reports/04_other_platform.txt
+
+              other=$((other + 1))
+
+            elif [ "$platform_count" -gt 0 ]; then
+
+              echo "STATUS: VIOLET/QCOM RELEVANT" >> "$tmp"
+              cat "$tmp" >> reports/03_violet_relevant.txt
+              echo >> reports/03_violet_relevant.txt
+
+              violet=$((violet + 1))
+
+              if [ "$source_count" -gt 0 ]; then
+                echo "$requested" >> reports/07_safe_candidates.txt
+              fi
+
+            else
+
+              echo "STATUS: DEFINED BUT PLATFORM RELATION UNCLEAR" >> "$tmp"
+              cat "$tmp" >> reports/05_dependencies.txt
+              echo >> reports/05_dependencies.txt
+
+              deps=$((deps + 1))
 
             fi
 
-            defined=$((defined + 1))
+            rm -f "$tmp"
 
-            case "$symbol" in
+          done < reports/02_missing_but_supported.txt
 
-              CONFIG_MACH_XIAOMI_VIOLET)
-                class="VIOLET"
-                ;;
+          sort -u reports/07_safe_candidates.txt \
+            -o reports/07_safe_candidates.txt
 
-              CONFIG_MMC*)
-                class="VIOLET-HARDWARE"
-                ;;
-
-              CONFIG_TOUCHSCREEN*)
-                class="VIOLET-HARDWARE"
-                ;;
-
-              CONFIG_FINGERPRINT*)
-                class="VIOLET-HARDWARE"
-                ;;
-
-              CONFIG_MSM_*SM6150*)
-                class="SM6150"
-                ;;
-
-              CONFIG_MSM_*SM8150*)
-                class="SM8150"
-                ;;
-
-              CONFIG_MSM_*SM8250*)
-                class="SM8250"
-                ;;
-
-              CONFIG_MSM_*SM8350*)
-                class="SM8350"
-                ;;
-
-              CONFIG_QCOM_*)
-                class="QCOM"
-                ;;
-
-              CONFIG_ARCH_*)
-                class="ARCH"
-                ;;
-
-              CONFIG_VIDEO_*)
-                class="VIDEO"
-                ;;
-
-              CONFIG_LCD_*)
-                class="DISPLAY"
-                ;;
-
-              CONFIG_WLAN_VENDOR_*)
-                class="WLAN"
-                ;;
-
-              CONFIG_USB_*)
-                class="USB"
-                ;;
-
-              CONFIG_CRYPTO_*)
-                class="CRYPTO"
-                ;;
-
-              CONFIG_F2FS_*)
-                class="FILESYSTEM"
-                ;;
-
-              CONFIG_EROFS_*)
-                class="FILESYSTEM"
-                ;;
-
-              *)
-                class="GENERIC"
-                ;;
-
-            esac
-
-            {
-              echo "========================================"
-              echo "SYMBOL: $symbol"
-              echo "JOKER REQUEST: $requested"
-              echo "CURRENT VIOLET: ${current:-NOT PRESENT}"
-              echo "CLASS: $class"
-              echo "KCONFIG:"
-              echo "$definition"
-              echo "========================================"
-              echo
-            } >> reports/08_current_vs_joker.txt
-
-            case "$class" in
-
-              SM8150|SM8250|SM8350)
-                {
-                  echo "SYMBOL: $symbol"
-                  echo "REQUEST: $requested"
-                  echo "CLASS: $class"
-                  echo "STATUS: PLATFORM MISMATCH CANDIDATE"
-                  echo
-                } >> reports/05_platform_mismatch.txt
-
-                mismatch=$((mismatch + 1))
-                ;;
-
-              VIOLET|VIOLET-HARDWARE|SM6150|QCOM)
-                {
-                  echo "SYMBOL: $symbol"
-                  echo "REQUEST: $requested"
-                  echo "CURRENT: ${current:-NOT PRESENT}"
-                  echo "CLASS: $class"
-                  echo "STATUS: VIOLET RELEVANT CANDIDATE"
-                  echo
-                } >> reports/03_violet_relevant.txt
-
-                violet=$((violet + 1))
-                ;;
-
-              *)
-                {
-                  echo "SYMBOL: $symbol"
-                  echo "REQUEST: $requested"
-                  echo "CURRENT: ${current:-NOT PRESENT}"
-                  echo "CLASS: $class"
-                  echo "STATUS: GENERIC SUPPORTED CANDIDATE"
-                  echo
-                } >> reports/04_generic_supported.txt
-
-                generic=$((generic + 1))
-                ;;
-
-            esac
-
-            {
-              echo "========================================"
-              echo "SYMBOL: $symbol"
-              echo "REQUEST: $requested"
-              echo "CURRENT VIOLET: ${current:-NOT PRESENT}"
-              echo
-              echo "KCONFIG CONTEXT:"
-              grep -n -B 3 -A 12 \
-                -E \
-                "^[[:space:]]*(config|menuconfig)[[:space:]]+${symbol}[[:space:]]*$" \
-                reports/02_kconfig_database.txt \
-                | head -n 30 || true
-              echo
-            } >> reports/07_dependencies.txt
-
-          done < reports/01_joker_candidates.txt
-
+          echo
           echo "========================================"
-          echo "ANALYSIS COMPLETE"
+          echo "DEEP ANALYSIS RESULT"
           echo "========================================"
+          echo "Candidates analyzed : $total"
+          echo "VIOLET/QCOM relevant: $violet"
+          echo "Other platform      : $other"
+          echo "Unclear/dependency  : $deps"
+          echo "No Kconfig/source   : $none"
 
-          echo "Total candidates : $total"
-          echo "Defined          : $defined"
-          echo "Not defined      : $undefined"
-          echo "VIOLET/QCOM      : $violet"
-          echo "Generic          : $generic"
-          echo "Platform mismatch: $mismatch"
-
-      - name: Generate clean candidate configs
-        shell: bash
+      - name: Generate final summary
         run: |
           set -e
 
-          echo "========================================"
-          echo "GENERATING CLEAN CONFIG LISTS"
-          echo "========================================"
-
-          grep \
-            -E \
-            '^SYMBOL: |^REQUEST: ' \
-            reports/03_violet_relevant.txt \
-            > reports/09_violet_relevant_summary.txt || true
-
-          grep \
-            -E \
-            '^SYMBOL: |^REQUEST: ' \
-            reports/04_generic_supported.txt \
-            > reports/10_generic_summary.txt || true
-
-          grep \
-            -E \
-            '^SYMBOL: |^REQUEST: ' \
-            reports/05_platform_mismatch.txt \
-            > reports/11_platform_mismatch_summary.txt || true
-
-      - name: Final summary
-        shell: bash
-        run: |
-          set -e
-
-          total="$(wc -l < reports/01_joker_candidates.txt)"
+          total="$(wc -l < reports/02_missing_but_supported.txt)"
           violet="$(grep -c '^SYMBOL:' reports/03_violet_relevant.txt || true)"
-          generic="$(grep -c '^SYMBOL:' reports/04_generic_supported.txt || true)"
-          mismatch="$(grep -c '^SYMBOL:' reports/05_platform_mismatch.txt || true)"
-          undefined="$(grep -c '^SYMBOL:' reports/06_not_defined.txt || true)"
+          other="$(grep -c '^SYMBOL:' reports/04_other_platform.txt || true)"
+          none="$(grep -c '^SYMBOL:' reports/06_no_source_reference.txt || true)"
+          safe="$(wc -l < reports/07_safe_candidates.txt)"
 
           {
             echo "========================================"
-            echo "VIOLET DEEP JOKER KCONFIG AUDIT"
+            echo "VIOLET DEEP JOKER ANALYSIS"
             echo "========================================"
             echo
-            echo "Kernel branch       : 16"
-            echo "Architecture        : arm64"
-            echo "Cross compiler      : aarch64-linux-gnu-"
-            echo
-            echo "Base:"
-            echo "sdmsteppe-perf_defconfig"
-            echo
-            echo "VIOLET:"
-            echo "arch/arm64/configs/vendor/violet.config"
-            echo
-            echo "JOKER:"
-            echo "Joker-V2/kernel_xiaomi_violet"
-            echo "branch: sixteen"
+            echo "Joker missing candidates : $total"
+            echo "VIOLET/QCOM relevant     : $violet"
+            echo "Other platform           : $other"
+            echo "No Kconfig/source        : $none"
+            echo "Potential candidates     : $safe"
             echo
             echo "========================================"
-            echo "RESULT"
+            echo "SOURCE"
             echo "========================================"
             echo
-            echo "Joker candidates    : $total"
-            echo "VIOLET relevant     : $violet"
-            echo "Generic             : $generic"
-            echo "Platform mismatch   : $mismatch"
-            echo "Not defined         : $undefined"
+            echo "VIOLET kernel branch: 16"
+            echo "Base: sdmsteppe-perf_defconfig"
+            echo "VIOLET: arch/arm64/configs/vendor/violet.config"
+            echo "JOKER: Joker-V2/kernel_xiaomi_violet"
+            echo "JOKER branch: sixteen"
+            echo
+            echo "Architecture: arm64"
+            echo "Cross compiler: aarch64-linux-gnu-"
+            echo
+            echo "Kernel build: NOT PERFORMED"
+            echo "violet.config: NOT MODIFIED"
+            echo
+            echo "This is source-tree and Kconfig analysis only."
             echo
             echo "========================================"
-            echo "IMPORTANT"
-            echo "========================================"
-            echo
-            echo "No kernel was built."
-            echo "violet.config was not modified."
-            echo "This is Kconfig/source-tree analysis only."
-            echo
-          } > reports/12_final_summary.txt
+          } > reports/08_summary.txt
 
-          cat reports/12_final_summary.txt
+          cat reports/08_summary.txt
 
-      - name: Upload TXT reports
+      - name: Upload deep analysis
         uses: actions/upload-artifact@v4
         with:
-          name: violet-deep-joker-kconfig-audit
+          name: violet-joker-deep-analysis
           path: |
-            reports/01_joker_candidates.txt
-            reports/02_kconfig_database.txt
+            reports/01_all_296.txt
+            reports/02_missing_but_supported.txt
             reports/03_violet_relevant.txt
-            reports/04_generic_supported.txt
-            reports/05_platform_mismatch.txt
-            reports/06_not_defined.txt
-            reports/07_dependencies.txt
-            reports/08_current_vs_joker.txt
-            reports/09_violet_relevant_summary.txt
-            reports/10_generic_summary.txt
-            reports/11_platform_mismatch_summary.txt
-            reports/12_final_summary.txt
-            reports/violet_merge.log
-            reports/violet_kconfig.log
+            reports/04_other_platform.txt
+            reports/05_dependencies.txt
+            reports/06_no_source_reference.txt
+            reports/07_safe_candidates.txt
+            reports/08_summary.txt
+            reports/base_merge.log
+            reports/base_kconfig.log
           if-no-files-found: error
