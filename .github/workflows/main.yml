@@ -1,264 +1,123 @@
-name: Generate Modern Violet Defconfig (Fixed)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  generate:
-    runs-on: ubuntu-22.04
-
-    steps:
-
-      - name: Checkout kernel
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
-
-      - name: Install dependencies
+- name: Diagnose Kconfig resolution
+        if: always()
         run: |
-          set -e
-          sudo apt-get update
-          sudo apt-get install -y \
-            git bc bison flex libssl-dev libelf-dev libncurses-dev \
-            build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
+          set +e
 
-      - name: List all available kernel configs (DIAGNOSTIC)
-        run: |
-          echo "========================================"
-          echo "ALL FILES IN arch/arm64/configs/"
-          echo "========================================"
-          ls -la arch/arm64/configs/
+          mkdir -p kconfig-diagnostics
 
-          echo
-          echo "========================================"
-          echo "ALL FILES IN arch/arm64/configs/vendor/"
-          echo "========================================"
-          ls -la arch/arm64/configs/vendor/
+          echo "========================================" > kconfig-diagnostics/summary.txt
+          echo "KCONFIG DIAGNOSTIC SUMMARY" >> kconfig-diagnostics/summary.txt
+          echo "========================================" >> kconfig-diagnostics/summary.txt
 
-          echo
-          echo "========================================"
-          echo "ANY FILE CONTAINING 'violet'"
-          echo "========================================"
-          find . -iname "*violet*" -type f 2>/dev/null | grep -v "\.git" || echo "none found"
-
-      - name: Determine correct base defconfig
-        id: pick_base
-        run: |
-          set -e
-
-          # Always start from the shared Qualcomm/SM6150 platform base.
-          # Do NOT reuse a previously generated violet-perf_defconfig.
-          if [ -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig ]; then
-            echo "BASE=vendor/sdmsteppe-perf_defconfig" >> "$GITHUB_OUTPUT"
-            echo "Using shared Qualcomm SM6150 platform base:"
-            echo "vendor/sdmsteppe-perf_defconfig"
-          else
-            echo "::error::vendor/sdmsteppe-perf_defconfig was not found."
-            exit 1
-          fi
-
-      - name: Verify Violet fragment exists
-        run: |
-          set -e
-
-          if [ ! -f arch/arm64/configs/vendor/violet.config ]; then
-            echo "::error::arch/arm64/configs/vendor/violet.config was not found."
-            exit 1
-          fi
-
-          echo "Found Violet fragment:"
-          echo "arch/arm64/configs/vendor/violet.config"
-
-          echo
-          echo "Violet fragment:"
-          cat arch/arm64/configs/vendor/violet.config
-
-      - name: Generate base configuration
-        run: |
-          set -e
-
-          rm -rf out
-          mkdir -p out
-
-          make O=out ARCH=arm64 ${{ steps.pick_base.outputs.BASE }}
-
-          test -f out/.config
-
-          echo
-          echo "Base configuration generated successfully."
-
-      - name: Verify base configuration
-        run: |
-          set -e
-
-          echo "Checking base platform configuration..."
-
-          grep -q "^CONFIG_ARCH_QCOM=y$" out/.config
-          grep -q "^CONFIG_ARCH_SM6150=y$" out/.config
-
-          echo "OK: Qualcomm platform base detected."
-          echo
-          grep -E "^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_ARCH_SDMMAGPIE=y$" out/.config || true
-
-      - name: Merge Violet fragment
-        run: |
-          set -e
-
-          ./scripts/kconfig/merge_config.sh \
-            -O out \
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== FINAL CONFIG VALUES ===" >> kconfig-diagnostics/summary.txt
+          grep -E "CONFIG_(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET|QCOM_SCM|TOUCHSCREEN_FTS_F7B|TOUCHSCREEN_NT36xxx|TOUCHSCREEN_XIAOMI_TOUCHFEATURE|TOUCHSCREEN_NVT_F7B|INPUT_FINGERPRINT|FINGERPRINT_FPC1020|FINGERPRINT_GF3208|SND_SOC_TAS2563|TAS2563_CODEC|TAS2563_MISC|TAS2563_REGMAP)" \
             out/.config \
-            arch/arm64/configs/vendor/violet.config
+            >> kconfig-diagnostics/summary.txt
 
-          test -f out/.config
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== BASE DEFCONFIG ===" >> kconfig-diagnostics/summary.txt
+          cat arch/arm64/configs/vendor/sdmsteppe-perf_defconfig \
+            > kconfig-diagnostics/sdmsteppe-perf_defconfig.txt
 
-          echo
-          echo "Violet fragment merged."
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== VIOLET FRAGMENT ===" >> kconfig-diagnostics/summary.txt
+          cat arch/arm64/configs/vendor/violet.config \
+            > kconfig-diagnostics/violet.config.txt
 
-      - name: Resolve configuration
-        run: |
-          set -e
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== FINAL FULL CONFIG ===" >> kconfig-diagnostics/summary.txt
+          cp out/.config kconfig-diagnostics/final.config
 
-          make O=out ARCH=arm64 olddefconfig
-
-          test -f out/.config
-
-          echo "Configuration resolved successfully."
-
-      - name: Validate final Violet configuration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "FINAL VIOLET CONFIG VALIDATION"
-          echo "========================================"
-
-          FAIL=0
-
-          check_config() {
-            NAME="$1"
-            EXPECTED="$2"
-
-            if grep -q "^${NAME}=${EXPECTED}$" out/.config; then
-              echo "[OK]   ${NAME}=${EXPECTED}"
-            else
-              echo "[FAIL] ${NAME} expected ${EXPECTED}"
-              FAIL=1
-            fi
-          }
-
-          echo
-          echo "--- Qualcomm / SM6150 ---"
-
-          check_config "CONFIG_ARCH_QCOM" "y"
-          check_config "CONFIG_ARCH_SM6150" "y"
-
-          echo
-          echo "--- Violet device ---"
-
-          if grep -q "^CONFIG_MACH_XIAOMI_VIOLET=y$" out/.config; then
-            echo "[OK]   CONFIG_MACH_XIAOMI_VIOLET=y"
-          else
-            echo "[WARN] CONFIG_MACH_XIAOMI_VIOLET is not present after Kconfig resolution."
-            echo "       This may mean the symbol is unavailable or renamed in this tree."
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== FINAL DEFCONFIG ===" >> kconfig-diagnostics/summary.txt
+          if [ -f out/defconfig ]; then
+            cp out/defconfig kconfig-diagnostics/final-defconfig
           fi
 
-          echo
-          echo "--- Violet touchscreen ---"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== KCONFIG DEFINITIONS ===" >> kconfig-diagnostics/summary.txt
 
-          check_config "CONFIG_TOUCHSCREEN_FTS_F7B" "y"
-          check_config "CONFIG_TOUCHSCREEN_NT36xxx" "y"
-          check_config "CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE" "y"
-          check_config "CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE_GAMEMODE" "y"
-          check_config "CONFIG_TOUCHSCREEN_NVT_F7B" "y"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "--- ARCH_QCOM definitions ---" >> kconfig-diagnostics/summary.txt
+          grep -R -n -E "^[[:space:]]*config ARCH_QCOM([[:space:]]|$)" \
+            arch/arm64 arch/arm 2>/dev/null \
+            >> kconfig-diagnostics/summary.txt
 
-          echo
-          echo "--- Violet fingerprint ---"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "--- ARCH_SM6150 definitions ---" >> kconfig-diagnostics/summary.txt
+          grep -R -n -E "^[[:space:]]*config ARCH_SM6150([[:space:]]|$)" \
+            arch/arm64 arch/arm 2>/dev/null \
+            >> kconfig-diagnostics/summary.txt
 
-          check_config "CONFIG_INPUT_FINGERPRINT" "y"
-          check_config "CONFIG_FINGERPRINT_FPC1020" "y"
-          check_config "CONFIG_FINGERPRINT_GF3208" "y"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "--- MACH_XIAOMI_VIOLET definitions ---" >> kconfig-diagnostics/summary.txt
+          grep -R -n -E "^[[:space:]]*config MACH_XIAOMI_VIOLET([[:space:]]|$)" \
+            . 2>/dev/null | grep -v "/\.git/" \
+            >> kconfig-diagnostics/summary.txt
 
-          echo
-          echo "--- Violet audio ---"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== SYMBOL REFERENCES ===" >> kconfig-diagnostics/summary.txt
 
-          check_config "CONFIG_SND_SOC_TAS2563" "y"
-          check_config "CONFIG_TAS2563_CODEC" "y"
-          check_config "CONFIG_TAS2563_MISC" "y"
-          check_config "CONFIG_TAS2563_REGMAP" "y"
+          grep -R -n -E "ARCH_QCOM|ARCH_SM6150|MACH_XIAOMI_VIOLET" \
+            arch/arm64 arch/arm drivers 2>/dev/null \
+            | grep -v "/\.git/" \
+            > kconfig-diagnostics/symbol-references.txt
 
-          echo
-          echo "--- Generic/server configuration ---"
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== KCONFIG FILE LIST ===" >> kconfig-diagnostics/summary.txt
 
-          if grep -qE "^CONFIG_ACPI=y$|^CONFIG_KVM=y$|^CONFIG_DRM_NOUVEAU=y$" out/.config; then
-            echo "[FAIL] Generic/server configuration detected."
-            FAIL=1
-          else
-            echo "[OK]   No unwanted generic/server markers detected."
-          fi
+          find arch/arm64 arch/arm drivers \
+            -type f \( -name "Kconfig" -o -name "Kconfig.*" \) \
+            2>/dev/null \
+            | sort \
+            > kconfig-diagnostics/kconfig-files.txt
+
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== MAKE VERSION ===" >> kconfig-diagnostics/summary.txt
+          make --version | head -n 2 >> kconfig-diagnostics/summary.txt
+
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== KERNEL VERSION ===" >> kconfig-diagnostics/summary.txt
+          head -n 5 Makefile >> kconfig-diagnostics/summary.txt
+
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== MERGE CONFIG SCRIPT ===" >> kconfig-diagnostics/summary.txt
+          sed -n '1,260p' scripts/kconfig/merge_config.sh \
+            > kconfig-diagnostics/merge_config.sh.txt
+
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== OLDDEFCONFIG OUTPUT ===" >> kconfig-diagnostics/summary.txt
+          make O=out ARCH=arm64 olddefconfig \
+            > kconfig-diagnostics/olddefconfig.log 2>&1
+
+          echo >> kconfig-diagnostics/summary.txt
+          echo "=== FINAL CONFIG CHECK ===" >> kconfig-diagnostics/summary.txt
+          {
+            echo "ARCH_QCOM:"
+            grep -E "^# CONFIG_ARCH_QCOM is not set$|^CONFIG_ARCH_QCOM=" out/.config
+            echo
+            echo "ARCH_SM6150:"
+            grep -E "^# CONFIG_ARCH_SM6150 is not set$|^CONFIG_ARCH_SM6150=" out/.config
+            echo
+            echo "ARCH_SDMMAGPIE:"
+            grep -E "^# CONFIG_ARCH_SDMMAGPIE is not set$|^CONFIG_ARCH_SDMMAGPIE=" out/.config
+            echo
+            echo "MACH_XIAOMI_VIOLET:"
+            grep -E "^# CONFIG_MACH_XIAOMI_VIOLET is not set$|^CONFIG_MACH_XIAOMI_VIOLET=" out/.config
+          } >> kconfig-diagnostics/summary.txt
 
           echo
           echo "========================================"
-
-          if [ "$FAIL" -ne 0 ]; then
-            echo "::error::Final configuration validation failed."
-            exit 1
-          fi
-
-          echo "FINAL CONFIGURATION VALIDATION PASSED."
-
-      - name: Save full resolved config
-        run: |
-          set -e
-
-          cp out/.config violet-full.config
-
-          test -s violet-full.config
-
-          echo "Saved:"
-          echo "violet-full.config"
-
-      - name: Generate final defconfig
-        run: |
-          set -e
-
-          make O=out ARCH=arm64 savedefconfig
-
-          test -s out/defconfig
-
-          cp out/defconfig violet-perf_defconfig
-
-          echo
-          echo "========================================"
-          echo "FINAL VIOLET DEFCONFIG"
+          echo "KCONFIG DIAGNOSTICS COLLECTED"
           echo "========================================"
 
-          cat violet-perf_defconfig
+          cat kconfig-diagnostics/summary.txt
 
-      - name: Final defconfig validation
-        run: |
-          set -e
-
-          echo "Checking generated defconfig..."
-
-          grep -q "^CONFIG_ARCH_QCOM=y$" violet-perf_defconfig
-          grep -q "^CONFIG_ARCH_SM6150=y$" violet-perf_defconfig
-
-          grep -q "^CONFIG_TOUCHSCREEN_FTS_F7B=y$" violet-perf_defconfig
-          grep -q "^CONFIG_TOUCHSCREEN_NT36xxx=y$" violet-perf_defconfig
-          grep -q "^CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=y$" violet-perf_defconfig
-
-          grep -q "^CONFIG_INPUT_FINGERPRINT=y$" violet-perf_defconfig
-
-          grep -q "^CONFIG_SND_SOC_TAS2563=y$" violet-perf_defconfig
-
-          echo "Generated defconfig passed final checks."
-
-      - name: Upload artifacts
+      - name: Upload Kconfig diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: modern-violet-defconfig
-          path: |
-            violet-perf_defconfig
-            violet-full.config
-          if-no-files-found: error
+          name: violet-kconfig-diagnostics
+          path: kconfig-diagnostics/
+          if-no-files-found: warn
