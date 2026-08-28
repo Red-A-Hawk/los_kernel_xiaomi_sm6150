@@ -1,0 +1,24 @@
+name: Diagnose Violet DTS Memory References
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Diagnose Violet memory references
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
+          echo "========================================"
+          ...
