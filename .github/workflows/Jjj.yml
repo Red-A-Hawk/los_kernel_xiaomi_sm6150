@@ -15,16 +15,16 @@
           echo "=== ALL disp_rdump_memory REFERENCES ==="
           grep -Rni "disp_rdump_memory" \
             arch/arm64/boot/dts/qcom/ \
-            --include='*.dts' \
-            --include='*.dtsi' \
+            --include="*.dts" \
+            --include="*.dtsi" \
             2>/dev/null || true
 
           echo
           echo "=== ALL RDUMP REFERENCES ==="
           grep -RniE "rdump|disp.*memory|memory.*disp" \
             arch/arm64/boot/dts/qcom/ \
-            --include='*.dts' \
-            --include='*.dtsi' \
+            --include="*.dts" \
+            --include="*.dtsi" \
             2>/dev/null || true
 
           echo
@@ -34,11 +34,11 @@
             2>/dev/null || true
 
           echo
-          echo "=== VIOLET DTSI INCLUDES ==="
+          echo "=== VIOLET DIRECTORY INCLUDES ==="
           grep -Rni "#include" \
             arch/arm64/boot/dts/qcom/xiaomi/violet/ \
-            --include='*.dts' \
-            --include='*.dtsi' \
+            --include="*.dts" \
+            --include="*.dtsi" \
             2>/dev/null || true
 
           echo
