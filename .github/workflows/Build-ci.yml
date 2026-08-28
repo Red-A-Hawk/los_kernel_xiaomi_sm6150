@@ -1,10 +1,10 @@
-name: Generate Modern Violet Defconfig (Kconfig Analysis)
+name: Violet Kconfig Forensic Analyzer
 
 on:
   workflow_dispatch:
 
 jobs:
-  generate:
+  forensic:
     runs-on: ubuntu-22.04
 
     steps:
@@ -34,40 +34,212 @@ jobs:
             gcc-arm-linux-gnueabi \
             python3
 
-      - name: Verify required files
+      - name: Prepare forensic workspace
+        run: |
+          set -e
+
+          rm -rf out forensic
+          mkdir -p out forensic
+
+      - name: Verify kernel configuration files
         run: |
           set -e
 
           test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
           test -f arch/arm64/configs/vendor/violet.config
-          test -x scripts/kconfig/merge_config.sh
+          test -f scripts/kconfig/merge_config.sh
 
-          echo "Required files found."
+          echo "Required kernel configuration files exist."
 
-      - name: Generate base configuration
+      - name: Record kernel and Kconfig environment
+        run: |
+          set +e
+
+          {
+            echo "========================================"
+            echo "KERNEL KCONFIG FORENSIC REPORT"
+            echo "========================================"
+            echo
+
+            echo "DATE:"
+            date -u
+
+            echo
+            echo "GIT COMMIT:"
+            git rev-parse HEAD
+
+            echo
+            echo "GIT BRANCH:"
+            git branch --show-current
+
+            echo
+            echo "KERNEL VERSION:"
+            grep -E '^VERSION|^PATCHLEVEL|^SUBLEVEL|^EXTRAVERSION' Makefile
+
+            echo
+            echo "ARCH:"
+            echo "arm64"
+
+            echo
+            echo "KCONFIG CONFIG:"
+            echo "${KCONFIG_CONFIG:-.config}"
+
+            echo
+            echo "========================================"
+            echo "MERGE SCRIPT"
+            echo "========================================"
+
+            grep -n \
+              -E 'ALLTARGET=|KCONFIG_ALLCONFIG=|alldefconfig|allnoconfig|requested|ACTUAL_VAL' \
+              scripts/kconfig/merge_config.sh
+
+          } > forensic/00-environment.txt
+
+      - name: Record exact source configs
         run: |
           set -e
 
-          rm -rf out
-          mkdir -p out
+          cp arch/arm64/configs/vendor/sdmsteppe-perf_defconfig \
+            forensic/01-sdmsteppe-perf_defconfig
 
-          make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
+          cp arch/arm64/configs/vendor/violet.config \
+            forensic/02-violet.config
+
+      - name: Extract Violet requested symbols
+        run: |
+          set +e
+
+          {
+            echo "========================================"
+            echo "SYMBOLS REQUESTED BY VIOLET.FRAGMENT"
+            echo "========================================"
+            echo
+
+            grep -E \
+              '^CONFIG_(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET|MACH_XIAOMI_TUCANA|MMC_SDHCI_MSM)' \
+              arch/arm64/configs/vendor/violet.config
+
+            echo
+            echo "========================================"
+            echo "ALL CONFIG SYMBOLS IN VIOLET.FRAGMENT"
+            echo "========================================"
+
+            grep -E \
+              '^(CONFIG_[A-Za-z0-9_]+)=|^# CONFIG_[A-Za-z0-9_]+ is not set' \
+              arch/arm64/configs/vendor/violet.config
+
+          } > forensic/03-violet-requested-symbols.txt
+
+      - name: Inspect exact Kconfig definitions
+        run: |
+          set +e
+
+          extract_block() {
+            FILE="$1"
+            SYMBOL="$2"
+
+            echo
+            echo "----------------------------------------"
+            echo "FILE: $FILE"
+            echo "SYMBOL: $SYMBOL"
+            echo "----------------------------------------"
+
+            awk -v sym="$SYMBOL" '
+              $0 ~ "^[[:space:]]*(config|menuconfig)[[:space:]]+" sym "([[:space:]]|$)" {
+                found=1
+                start=NR
+                print NR ":" $0
+                next
+              }
+
+              found && NR > start {
+                if ($0 ~ /^[[:space:]]*(config|menuconfig|choice|endchoice|menu|endmenu)[[:space:]]+/ &&
+                    $0 !~ "^[[:space:]]+(config|menuconfig)[[:space:]]+" sym "([[:space:]]|$)") {
+                  exit
+                }
+
+                if ($0 ~ /^[^[:space:]]/ && $0 !~ /^$/) {
+                  exit
+                }
+
+                print NR ":" $0
+              }
+            ' "$FILE"
+          }
+
+          {
+            echo "========================================"
+            echo "EXACT KCONFIG DEFINITIONS"
+            echo "========================================"
+
+            extract_block arch/arm64/Kconfig.platforms ARCH_QCOM
+            extract_block arch/arm64/Kconfig.platforms ARCH_SM6150
+            extract_block arch/arm64/Kconfig MACH_XIAOMI_VIOLET
+            extract_block arch/arm64/Kconfig MACH_XIAOMI_TUCANA
+            extract_block drivers/mmc/host/Kconfig MMC_SDHCI_MSM
+
+            echo
+            echo "========================================"
+            echo "ALL REFERENCES TO TARGET SYMBOLS"
+            echo "========================================"
+
+            grep -R -n \
+              -E \
+              'ARCH_QCOM|ARCH_SM6150|MACH_XIAOMI_VIOLET|MACH_XIAOMI_TUCANA|MMC_SDHCI_MSM' \
+              arch/arm64 \
+              drivers/mmc \
+              drivers/gpu \
+              drivers/media \
+              drivers/input \
+              drivers/sound \
+              2>/dev/null \
+              | grep -v '/.git/' \
+              | head -n 2000
+
+          } > forensic/04-kconfig-definitions.txt
+
+      - name: Generate untouched base configuration
+        run: |
+          set -e
+
+          rm -rf out/*
+          
+          make O=out ARCH=arm64 \
+            vendor/sdmsteppe-perf_defconfig
 
           test -s out/.config
 
-          echo "Base configuration generated."
+          cp out/.config forensic/05-base-generated.config
 
-      - name: Save base configuration
+      - name: Record base symbol state
         run: |
-          mkdir -p analysis
+          set +e
 
-          cp out/.config analysis/base.config
-          cp arch/arm64/configs/vendor/sdmsteppe-perf_defconfig \
-            analysis/sdmsteppe-perf_defconfig
-          cp arch/arm64/configs/vendor/violet.config \
-            analysis/violet.config
+          {
+            echo "========================================"
+            echo "BASE CONFIG SYMBOL STATE"
+            echo "========================================"
 
-      - name: Merge Violet fragment and capture complete log
+            for SYMBOL in \
+              CONFIG_ARCH_QCOM \
+              CONFIG_ARCH_SM6150 \
+              CONFIG_ARCH_SDMMAGPIE \
+              CONFIG_MACH_XIAOMI_VIOLET \
+              CONFIG_MACH_XIAOMI_TUCANA \
+              CONFIG_MMC_SDHCI_MSM
+            do
+              echo
+              echo "[$SYMBOL]"
+
+              grep -E \
+                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                out/.config \
+                || echo "SYMBOL NOT PRESENT"
+            done
+
+          } > forensic/06-base-symbol-state.txt
+
+      - name: Merge Violet fragment with complete log
         run: |
           set +e
 
@@ -75,186 +247,292 @@ jobs:
             -O out \
             out/.config \
             arch/arm64/configs/vendor/violet.config \
-            2>&1 | tee analysis/merge-config.log
+            > forensic/07-merge-config.log 2>&1
 
-          MERGE_STATUS=${PIPESTATUS[0]}
+          MERGE_STATUS=$?
 
-          echo
+          echo "$MERGE_STATUS" > forensic/08-merge-exit-code.txt
+
           echo "merge_config.sh exit code: $MERGE_STATUS"
 
-          if [ "$MERGE_STATUS" -ne 0 ]; then
-            echo "merge_config.sh failed."
+          if [ ! -s out/.config ]; then
+            echo "ERROR: .config was not produced by merge_config.sh" \
+              > forensic/08-merge-result.txt
           else
-            echo "merge_config.sh completed."
+            echo "merge_config.sh produced .config successfully." \
+              > forensic/08-merge-result.txt
+            cp out/.config forensic/09-after-merge.config
           fi
 
-          test -s out/.config
-
-      - name: Capture configuration after merge
-        if: always()
+      - name: Analyze merge requested versus actual values
         run: |
           set +e
-
-          cp out/.config analysis/after-merge.config 2>/dev/null || true
-
-          echo "=== TARGET SYMBOLS AFTER MERGE ===" \
-            > analysis/target-symbols-after-merge.txt
-
-          for symbol in \
-            CONFIG_ARCH_QCOM \
-            CONFIG_ARCH_SM6150 \
-            CONFIG_ARCH_SDMMAGPIE \
-            CONFIG_MACH_XIAOMI_VIOLET
-          do
-            echo >> analysis/target-symbols-after-merge.txt
-            echo "[$symbol]" >> analysis/target-symbols-after-merge.txt
-
-            grep -E \
-              "^${symbol}=|^# ${symbol} is not set" \
-              out/.config \
-              >> analysis/target-symbols-after-merge.txt
-          done
-
-      - name: Resolve final configuration
-        run: |
-          set -e
-
-          make O=out ARCH=arm64 olddefconfig
-
-          test -s out/.config
-
-          echo "Final configuration resolved."
-
-      - name: Capture Kconfig resolution
-        if: always()
-        run: |
-          set +e
-
-          cp out/.config analysis/final.config
 
           {
             echo "========================================"
-            echo "FINAL TARGET SYMBOLS"
+            echo "MERGE REQUESTED VS ACTUAL"
             echo "========================================"
+            echo
 
-            for symbol in \
+            for SYMBOL in \
               CONFIG_ARCH_QCOM \
               CONFIG_ARCH_SM6150 \
               CONFIG_ARCH_SDMMAGPIE \
-              CONFIG_MACH_XIAOMI_VIOLET
+              CONFIG_MACH_XIAOMI_VIOLET \
+              CONFIG_MACH_XIAOMI_TUCANA \
+              CONFIG_MMC_SDHCI_MSM
             do
-              echo
-              echo "[$symbol]"
+
+              echo "----------------------------------------"
+              echo "$SYMBOL"
+              echo "----------------------------------------"
+
+              echo "Requested from violet.config:"
 
               grep -E \
-                "^${symbol}=|^# ${symbol} is not set" \
-                out/.config
+                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                arch/arm64/configs/vendor/violet.config \
+                || echo "NOT REQUESTED"
+
+              echo
+              echo "Value in base .config:"
+
+              grep -E \
+                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                forensic/05-base-generated.config \
+                || echo "NOT PRESENT"
+
+              echo
+              echo "Value after merge:"
+
+              grep -E \
+                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                out/.config \
+                || echo "NOT PRESENT"
+
+              echo
             done
 
-            echo
-            echo "========================================"
-            echo "QCOM RELATED SYMBOLS"
-            echo "========================================"
+          } > forensic/10-merge-symbol-analysis.txt
 
-            grep -E \
-              "^CONFIG_(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|QCOM|MSM|SM6150)" \
-              out/.config
+      - name: Run Kconfig resolution
+        run: |
+          set +e
 
-          } > analysis/final-symbols.txt
+          make O=out ARCH=arm64 olddefconfig \
+            > forensic/11-olddefconfig.log 2>&1
 
-      - name: Inspect Kconfig definitions
-        if: always()
+          RESOLVE_STATUS=$?
+
+          echo "$RESOLVE_STATUS" > forensic/12-olddefconfig-exit-code.txt
+
+          echo "olddefconfig exit code: $RESOLVE_STATUS"
+
+          if [ -s out/.config ]; then
+            cp out/.config forensic/13-final-resolved.config
+          fi
+
+      - name: Compare every important stage
         run: |
           set +e
 
           {
             echo "========================================"
-            echo "ARCH_QCOM DEFINITIONS"
+            echo "CONFIGURATION TIMELINE"
             echo "========================================"
-
-            grep -R -n \
-              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+ARCH_QCOM([[:space:]]|$)" \
-              arch/arm64 arch/arm drivers 2>/dev/null
-
             echo
-            echo "========================================"
-            echo "ARCH_SM6150 DEFINITIONS"
-            echo "========================================"
 
-            grep -R -n \
-              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+ARCH_SM6150([[:space:]]|$)" \
-              arch/arm64 arch/arm drivers 2>/dev/null
+            for FILE in \
+              forensic/05-base-generated.config \
+              forensic/09-after-merge.config \
+              forensic/13-final-resolved.config
+            do
 
-            echo
-            echo "========================================"
-            echo "MACH_XIAOMI_VIOLET DEFINITIONS"
-            echo "========================================"
+              echo
+              echo "========================================"
+              echo "$FILE"
+              echo "========================================"
 
-            grep -R -n \
-              -E "^[[:space:]]*(config|menuconfig)[[:space:]]+MACH_XIAOMI_VIOLET([[:space:]]|$)" \
-              . 2>/dev/null \
-              | grep -v "/.git/"
+              if [ -f "$FILE" ]; then
 
-            echo
-            echo "========================================"
-            echo "ALL TARGET REFERENCES"
-            echo "========================================"
+                for SYMBOL in \
+                  CONFIG_ARCH_QCOM \
+                  CONFIG_ARCH_SM6150 \
+                  CONFIG_ARCH_SDMMAGPIE \
+                  CONFIG_MACH_XIAOMI_VIOLET \
+                  CONFIG_MACH_XIAOMI_TUCANA \
+                  CONFIG_MMC_SDHCI_MSM
+                do
 
-            grep -R -n \
-              -E "ARCH_QCOM|ARCH_SM6150|MACH_XIAOMI_VIOLET" \
-              arch/arm64 arch/arm drivers 2>/dev/null \
-              | grep -v "/.git/"
+                  echo
+                  echo "[$SYMBOL]"
 
-          } > analysis/kconfig-definitions.txt
+                  grep -E \
+                    "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                    "$FILE" \
+                    || echo "NOT PRESENT"
 
-      - name: Generate final files
+                done
+
+              else
+                echo "FILE NOT AVAILABLE"
+              fi
+
+            done
+
+          } > forensic/14-configuration-timeline.txt
+
+      - name: Find all missing Violet requests
         run: |
-          set -e
+          set +e
 
-          cp out/.config violet-full.config
+          {
+            echo "========================================"
+            echo "REQUESTED SYMBOLS MISSING FROM FINAL CONFIG"
+            echo "========================================"
+            echo
 
-          make O=out ARCH=arm64 savedefconfig
+            while read -r LINE
+            do
+              case "$LINE" in
+                CONFIG_*=*)
+                  SYMBOL="${LINE%%=*}"
+                  REQUESTED="$LINE"
+                  ;;
+                "# CONFIG_"*" is not set")
+                  SYMBOL=$(echo "$LINE" | sed 's/^# //;s/ is not set$//')
+                  REQUESTED="$LINE"
+                  ;;
+                *)
+                  continue
+                  ;;
+              esac
 
-          test -s out/defconfig
+              ACTUAL=$(grep -E \
+                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+                forensic/13-final-resolved.config 2>/dev/null \
+                || true)
 
-          cp out/defconfig violet-perf_defconfig
+              if [ "$REQUESTED" != "$ACTUAL" ]; then
+                echo "----------------------------------------"
+                echo "SYMBOL: $SYMBOL"
+                echo "REQUESTED: $REQUESTED"
+                echo "ACTUAL: ${ACTUAL:-NOT PRESENT}"
+              fi
 
-      - name: Show final result
+            done < arch/arm64/configs/vendor/violet.config
+
+          } > forensic/15-missing-final-values.txt
+
+      - name: Generate final forensic summary
         run: |
-          echo "========================================"
-          echo "FINAL FILES"
-          echo "========================================"
+          set +e
 
-          echo
-          echo "violet-full.config:"
-          wc -l violet-full.config
+          {
+            echo "############################################################"
+            echo "# VIOLET KCONFIG FORENSIC SUMMARY"
+            echo "############################################################"
+            echo
 
-          echo
-          echo "violet-perf_defconfig:"
-          wc -l violet-perf_defconfig
+            echo "This report does NOT modify the kernel source tree."
+            echo "It only analyzes Kconfig behavior."
+            echo
 
-          echo
-          echo "========================================"
-          echo "TARGET SYMBOLS"
-          echo "========================================"
+            echo "============================================================"
+            echo "1. KERNEL VERSION"
+            echo "============================================================"
 
-          grep -E \
-            "^CONFIG_ARCH_QCOM=|^# CONFIG_ARCH_QCOM is not set|^CONFIG_ARCH_SM6150=|^# CONFIG_ARCH_SM6150 is not set|^CONFIG_MACH_XIAOMI_VIOLET=|^# CONFIG_MACH_XIAOMI_VIOLET is not set" \
-            violet-full.config || true
+            grep -E \
+              '^VERSION|^PATCHLEVEL|^SUBLEVEL|^EXTRAVERSION' \
+              Makefile
 
-      - name: Upload generated configs
+            echo
+            echo "============================================================"
+            echo "2. BASE DEFCONFIG"
+            echo "============================================================"
+
+            echo "vendor/sdmsteppe-perf_defconfig"
+
+            echo
+            echo "============================================================"
+            echo "3. BASE SYMBOLS"
+            echo "============================================================"
+
+            cat forensic/06-base-symbol-state.txt
+
+            echo
+            echo "============================================================"
+            echo "4. MERGE RESULT"
+            echo "============================================================"
+
+            echo "merge_config.sh exit code:"
+            cat forensic/08-merge-exit-code.txt
+
+            echo
+            cat forensic/08-merge-result.txt
+
+            echo
+            echo "============================================================"
+            echo "5. MERGE SYMBOL ANALYSIS"
+            echo "============================================================"
+
+            cat forensic/10-merge-symbol-analysis.txt
+
+            echo
+            echo "============================================================"
+            echo "6. KCONFIG RESOLUTION"
+            echo "============================================================"
+
+            echo "olddefconfig exit code:"
+            cat forensic/12-olddefconfig-exit-code.txt
+
+            echo
+            echo "============================================================"
+            echo "7. CONFIGURATION TIMELINE"
+            echo "============================================================"
+
+            cat forensic/14-configuration-timeline.txt
+
+            echo
+            echo "============================================================"
+            echo "8. FINAL MISSING REQUESTS"
+            echo "============================================================"
+
+            cat forensic/15-missing-final-values.txt
+
+            echo
+            echo "============================================================"
+            echo "9. EXACT KCONFIG DEFINITIONS"
+            echo "============================================================"
+
+            cat forensic/04-kconfig-definitions.txt
+
+            echo
+            echo "============================================================"
+            echo "10. INTERPRETATION"
+            echo "============================================================"
+
+            echo "The important question is WHERE a symbol disappears:"
+            echo
+            echo "BASE -> AFTER MERGE -> FINAL RESOLUTION"
+            echo
+            echo "If a symbol exists in BASE but disappears AFTER MERGE,"
+            echo "the merge/Kconfig alldefconfig stage is responsible."
+            echo
+            echo "If a symbol exists AFTER MERGE but disappears in FINAL,"
+            echo "olddefconfig dependency resolution is responsible."
+            echo
+            echo "If a symbol is never present in BASE and cannot survive"
+            echo "the Violet fragment, inspect its Kconfig dependencies."
+            echo
+
+          } > forensic/00-FINAL-REPORT.txt
+
+      - name: Create single forensic artifact
         uses: actions/upload-artifact@v4
-        with:
-          name: modern-violet-defconfig
-          path: |
-            violet-full.config
-            violet-perf_defconfig
-          if-no-files-found: error
-
-      - name: Upload Kconfig analysis
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: violet-kconfig-analysis
-          path: analysis/
+          name: violet-kconfig-forensic
+          path: forensic/
           if-no-files-found: warn
+          retention-days: 7
