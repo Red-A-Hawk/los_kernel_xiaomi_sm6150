@@ -12,14 +12,12 @@ jobs:
 
     steps:
 
-    # 1. Checkout kernel source
     - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
         ref: 16
         fetch-depth: 1
 
-    # 2. Install dependencies
     - name: Install dependencies
       run: |
         set -e
@@ -45,7 +43,6 @@ jobs:
           python3 \
           openjdk-17-jre-headless
 
-    # 3. Setup ZyCromerZ Clang 16.0.6
     - name: Setup Clang
       run: |
         set -e
@@ -63,20 +60,12 @@ jobs:
 
         mkdir -p clang
 
-        echo
-        echo "========================================"
-        echo "EXTRACTING CLANG"
-        echo "========================================"
-
         tar -xzf "$CLANG_ARCHIVE" -C clang
 
         test -x clang/bin/clang
 
         echo "$PWD/clang/bin" >> "$GITHUB_PATH"
 
-        echo "Clang setup completed."
-
-    # 4. Verify toolchain
     - name: Verify toolchain
       run: |
         set -e
@@ -104,7 +93,6 @@ jobs:
         which dtc
         dtc --version
 
-    # 5. Export build environment
     - name: Export build environment
       run: |
         echo "ARCH=arm64" >> "$GITHUB_ENV"
@@ -116,13 +104,12 @@ jobs:
         echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
 
-    # 6. Inspect actual Violet DTS target
     - name: Detect Violet DTS
       run: |
         set +e
 
         echo "========================================"
-        echo "VIOLET DTS TARGET"
+        echo "DETECTING VIOLET DTS TARGET"
         echo "========================================"
 
         echo
@@ -142,87 +129,83 @@ jobs:
           | sort
 
         echo
-        echo "========================================"
-        echo "VIOLET REFERENCES"
-        echo "========================================"
+        echo "Searching for violet-sm6150 references:"
 
         grep -R -n \
-          -i "violet" \
-          arch/arm64/boot/dts \
-          2>/dev/null \
-          | head -500
-
-        echo
-        echo "========================================"
-        echo "violet-sm6150.dtsi INCLUDE"
-        echo "========================================"
-
-        grep -R -n \
-          '#include.*violet-sm6150.dtsi' \
+          "violet-sm6150" \
           arch/arm64/boot/dts \
           2>/dev/null \
           || true
 
-    # 7. Load defconfig
     - name: Load defconfig
       run: |
         set -e
 
         make O=out vendor/violet-perf_defconfig
 
-    # 8. Validate Violet memory labels
-    - name: Validate Violet memory labels
+    - name: Validate memory labels
       run: |
         set -e
 
         FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
 
         echo "========================================"
-        echo "VALIDATING MEMORY LABELS"
+        echo "MEMORY LABEL DEFINITIONS"
         echo "========================================"
 
-        test -f "$FILE"
+        grep -R -nE \
+          "^[[:space:]]*[A-Za-z0-9_]+:" \
+          arch/arm64/boot/dts/qcom \
+          2>/dev/null \
+          | grep -E \
+          "reserved_memory|qcom_seecom|qcom_smcinvoke|pil_modem_mem|pil_video_mem|wlan_msa_mem|pil_cdsp_mem|pil_adsp_mem|pil_ipa_fw_mem|pil_ipa_gsi_mem|pil_gpu_mem|dfps_data_memory|disp_rdump_memory" \
+          || true
 
         echo
-        echo "Referenced labels:"
-        grep -n '^&' "$FILE"
+        echo "========================================"
+        echo "MEMORY LABEL REFERENCES"
+        echo "========================================"
+
+        grep -nE \
+          "^[[:space:]]*&[A-Za-z0-9_]+" \
+          "$FILE" \
+          || true
 
         echo
         echo "========================================"
-        echo "CHECKING LABEL DEFINITIONS"
+        echo "CHECKING LABELS"
         echo "========================================"
 
-        labels=(
-          qcom_seecom
-          qcom_smcinvoke
-          pil_modem_mem
-          pil_video_mem
-          wlan_msa_mem
-          pil_cdsp_mem
-          pil_adsp_mem
-          pil_ipa_fw_mem
-          pil_ipa_gsi_mem
-          pil_gpu_mem
-          dfps_data_memory
-          disp_rdump_memory
-          reserved_memory
-        )
+        labels="
+        qcom_seecom
+        qcom_smcinvoke
+        pil_modem_mem
+        pil_video_mem
+        wlan_msa_mem
+        pil_cdsp_mem
+        pil_adsp_mem
+        pil_ipa_fw_mem
+        pil_ipa_gsi_mem
+        pil_gpu_mem
+        dfps_data_memory
+        disp_rdump_memory
+        reserved_memory
+        "
 
-        missing=0
+        for label in $labels; do
+          if grep -R -qE \
+            "^[[:space:]]*${label}:" \
+            arch/arm64/boot/dts/qcom; then
 
-        for label in "${labels[@]}"; do
-          if grep -R -qE "(^|[[:space:]])${label}:" arch/arm64/boot/dts/qcom; then
-            echo "FOUND    : $label"
+            echo "FOUND   : $label"
+
           else
-            echo "MISSING  : $label"
-            missing=$((missing + 1))
+
+            echo "MISSING : $label"
+
           fi
         done
 
-        echo
-        echo "Missing labels: $missing"
-
-    # 9. Disable only unsupported disp_rdump_memory override
     - name: Fix unsupported disp_rdump_memory
       run: |
         set -e
@@ -233,58 +216,33 @@ jobs:
         echo "CHECKING disp_rdump_memory"
         echo "========================================"
 
-        if grep -R -qE "(^|[[:space:]])disp_rdump_memory:" arch/arm64/boot/dts/qcom; then
+        if grep -R -qE \
+          "^[[:space:]]*disp_rdump_memory:" \
+          arch/arm64/boot/dts/qcom; then
 
           echo "disp_rdump_memory exists."
-          echo "Keeping original override."
+          echo "Keeping override."
 
         else
 
-          echo "disp_rdump_memory does NOT exist."
-          echo "Removing only its unsupported override."
+          echo "disp_rdump_memory does not exist."
+          echo "Removing unsupported override."
 
-          python3 - "$FILE" <<'PY'
-import sys
+          sed -i \
+            '/^[[:space:]]*&disp_rdump_memory[[:space:]]*{/,/^[[:space:]]*};[[:space:]]*$/d' \
+            "$FILE"
 
-path = sys.argv[1]
-
-with open(path, "r", encoding="utf-8") as f:
-    data = f.read()
-
-old = '''&disp_rdump_memory{
-    reg = <0x0 0x9d100000 0x0 0x01000000>;
-};
-'''
-
-old2 = '''&disp_rdump_memory {
-    reg = <0x0 0x9d100000 0x0 0x01000000>;
-};
-'''
-
-if old in data:
-    data = data.replace(old, "")
-elif old2 in data:
-    data = data.replace(old2, "")
-else:
-    print("WARNING: disp_rdump_memory block was not found.")
-    sys.exit(0)
-
-with open(path, "w", encoding="utf-8") as f:
-    f.write(data)
-
-print("disp_rdump_memory override removed.")
-PY
+          echo "Override removed."
 
         fi
 
         echo
         echo "========================================"
-        echo "FINAL MEMORY DTSI"
+        echo "FINAL MEMORY FILE"
         echo "========================================"
 
-        nl -ba "$FILE" | sed -n '1,220p'
+        cat "$FILE"
 
-    # 10. Build Device Trees
     - name: Build Device Trees
       run: |
         set +e
@@ -304,30 +262,21 @@ PY
 
         echo
         echo "========================================"
-        echo "DTB RETURN CODE: $DTS_RESULT"
+        echo "DTS RETURN CODE: $DTS_RESULT"
         echo "========================================"
 
         echo
         echo "========================================"
-        echo "IMPORTANT ERRORS"
+        echo "DTS ERRORS"
         echo "========================================"
 
-        grep -n -E \
-          "Error:|error:|ERROR:|syntax error|FATAL ERROR|Label or path|No rule to make target" \
+        grep -nE \
+          "Error:|error:|FATAL ERROR|Label or path|No rule to make target|syntax error" \
           dts-error.log \
-          2>/dev/null \
           || true
-
-        echo
-        echo "========================================"
-        echo "DTS LOG"
-        echo "========================================"
-
-        cat dts-error.log
 
         exit "$DTS_RESULT"
 
-    # 11. Build kernel
     - name: Build kernel
       run: |
         set -e
@@ -337,16 +286,18 @@ PY
         echo "========================================"
 
         make O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
           -j$(nproc) \
           2>&1 | tee build.log
 
-    # 12. Verify kernel output
     - name: Check build output
       run: |
         set -e
 
         echo "========================================"
-        echo "KERNEL OUTPUT"
+        echo "CHECKING KERNEL"
         echo "========================================"
 
         test -f out/arch/arm64/boot/Image.gz
@@ -355,7 +306,7 @@ PY
 
         echo
         echo "========================================"
-        echo "DTB OUTPUT"
+        echo "DTB FILES"
         echo "========================================"
 
         find out/arch/arm64/boot/dts \
@@ -365,18 +316,6 @@ PY
           2>/dev/null \
           | sort
 
-        echo
-        echo "========================================"
-        echo "DTBO"
-        echo "========================================"
-
-        if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          echo "dtbo.img found."
-        else
-          echo "dtbo.img not found."
-        fi
-
-    # 13. Package AnyKernel3
     - name: Package AnyKernel3
       run: |
         set -e
@@ -403,14 +342,12 @@ PY
           ../Kernel-violet.zip \
           *
 
-    # 14. Upload kernel
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet
         path: Kernel-violet.zip
 
-    # 15. Upload build log
     - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
@@ -418,7 +355,6 @@ PY
         name: build-log
         path: build.log
 
-    # 16. Upload DTS diagnostic
     - name: Upload DTS diagnostics
       if: always()
       uses: actions/upload-artifact@v4
