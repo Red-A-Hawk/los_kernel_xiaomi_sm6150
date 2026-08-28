@@ -1,10 +1,10 @@
-name: Diagnose Violet DTS Memory References
+name: Diagnose Violet DTS Memory
 
- on:
- workflow_dispatch:
+on:
+workflow_dispatch:
 
- jobs:
- diagnose:
+jobs:
+diagnose:
 runs-on: ubuntu-22.04
 
 steps:
@@ -14,126 +14,89 @@ steps:
       ref: 16
       fetch-depth: 1
 
-  - name: Diagnose Violet memory references
+  - name: Run diagnostic
     run: |
       set +e
 
       echo "========================================"
-      echo "VIOLET DTS MEMORY REFERENCE DIAGNOSTIC"
+      echo "VIOLET DTS MEMORY DIAGNOSTIC"
       echo "========================================"
 
       SM="arch/arm64/boot/dts/qcom/sm6150.dtsi"
-      VIOLET="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
+      VM="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
       DTS="arch/arm64/boot/dts/qcom/violet-sm6150.dts"
 
       echo
-      echo "[1] disp_rdump_memory DEFINITIONS"
+      echo "[1] DTS INCLUDE CHAIN"
       echo "========================================"
-
-      git grep -n "disp_rdump_memory:" -- \
-        '*.dts' '*.dtsi' || true
+      grep -n '#include' "$DTS"
 
       echo
-      echo "[2] disp_rdump_memory REFERENCES"
+      echo "[2] DISP RDUMP DEFINITIONS"
       echo "========================================"
-
-      git grep -n "&disp_rdump_memory" -- \
-        '*.dts' '*.dtsi' || true
+      git grep -n 'disp_rdump_memory:' -- '*.dts' '*.dtsi'
 
       echo
-      echo "[3] DFPS DEFINITIONS / REFERENCES"
+      echo "[3] DISP RDUMP REFERENCES"
       echo "========================================"
-
-      git grep -n "dfps_data_memory:" -- \
-        '*.dts' '*.dtsi' || true
-
-      git grep -n "&dfps_data_memory" -- \
-        '*.dts' '*.dtsi' || true
+      git grep -n '&disp_rdump_memory' -- '*.dts' '*.dtsi'
 
       echo
-      echo "[4] VIOLET INCLUDE CHAIN"
+      echo "[4] DFPS DEFINITIONS"
       echo "========================================"
-
-      grep -n '#include' "$DTS" || true
+      git grep -n 'dfps_data_memory:' -- '*.dts' '*.dtsi'
 
       echo
-      echo "[5] VIOLET MEMORY FILE"
+      echo "[5] DFPS REFERENCES"
       echo "========================================"
-
-      nl -ba "$VIOLET" || true
+      git grep -n '&dfps_data_memory' -- '*.dts' '*.dtsi'
 
       echo
-      echo "[6] SM6150 MEMORY DEFINITIONS"
+      echo "[6] VIOLET MEMORY FILE"
       echo "========================================"
-
-      grep -n -E \
-        'reserved_memory:|qseecom_mem:|cont_splash_memory:|dfps_data_memory:|linux,cma|adsp_mem:|sdsp_mem:' \
-        "$SM" || true
+      nl -ba "$VM"
 
       echo
-      echo "[7] ADDRESS RANGE CHECK"
+      echo "[7] SM6150 MEMORY NODES"
+      echo "========================================"
+      nl -ba "$SM" | sed -n '490,650p'
+
+      echo
+      echo "[8] ADDRESS CHECK"
       echo "========================================"
 
       python3 - <<'PY'
-      regions = [
-          ("SM6150 cont_splash", 0x9c000000, 0x0f00000),
-          ("SM6150 dfps",         0x9cf00000, 0x0100000),
-          ("Violet dfps",         0x9d000000, 0x0100000),
-          ("Violet disp_rdump",   0x9d100000, 0x01000000),
-          ("SM6150 qseecom",      0x9e400000, 0x01400000),
-      ]
+      disp_start=0x9d100000
+      disp_size=0x01000000
+      disp_end=disp_start+disp_size
 
-      print("NAME                  START       END         SIZE")
-      print("------------------------------------------------------")
+      qsee_start=0x9e400000
+      qsee_size=0x01400000
+      qsee_end=qsee_start+qsee_size
 
-      for name, start, size in regions:
-          end = start + size
-          print(f"{name:21} 0x{start:08x} 0x{end:08x} 0x{size:x}")
+      print("Violet disp_rdump:")
+      print("START:", hex(disp_start))
+      print("END:  ", hex(disp_end))
+      print("SIZE: ", hex(disp_size))
 
       print()
-      print("OVERLAP CHECK")
-      print("------------------------------------------------------")
-
-      for i in range(len(regions)):
-          n1, s1, z1 = regions[i]
-          e1 = s1 + z1
-
-          for j in range(i + 1, len(regions)):
-              n2, s2, z2 = regions[j]
-              e2 = s2 + z2
-
-              if s1 < e2 and s2 < e1:
-                  print(f"OVERLAP: {n1} <-> {n2}")
-              else:
-                  print(f"OK:      {n1} / {n2}")
+      print("SM6150 qseecom:")
+      print("START:", hex(qsee_start))
+      print("END:  ", hex(qsee_end))
+      print("SIZE: ", hex(qsee_size))
 
       print()
-      print("KEY GAP")
-      print("------------------------------------------------------")
 
-      disp_end = 0x9d100000 + 0x01000000
-      qsee_start = 0x9e400000
-
-      print(f"disp_rdump END : 0x{disp_end:08x}")
-      print(f"qseecom START  : 0x{qsee_start:08x}")
-      print(f"GAP            : 0x{qsee_start - disp_end:x}")
-      print(f"GAP MiB        : {(qsee_start - disp_end) / 0x100000:.1f}")
-
+      if disp_start < qsee_end and qsee_start < disp_end:
+          print("RESULT: OVERLAP DETECTED")
+      else:
+          gap=qsee_start-disp_end
+          print("RESULT: NO OVERLAP")
+          print("GAP:", hex(gap))
+          print("GAP MiB:", gap/0x100000)
       PY
 
       echo
-      echo "[8] SUMMARY"
       echo "========================================"
-
-      if git grep -q "disp_rdump_memory:" -- \
-        arch/arm64/boot/dts/qcom/sm6150.dtsi \
-        arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi; then
-        echo "disp_rdump_memory: DEFINED"
-      else
-        echo "disp_rdump_memory: NOT DEFINED IN SM6150/VIOLET FILES"
-      fi
-
-      echo
-      echo "Diagnostic complete."
+      echo "DIAGNOSTIC COMPLETE"
       echo "========================================"
-      exit 0
