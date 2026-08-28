@@ -1,4 +1,4 @@
-name: Compare SM6150 Atoll Violet Memory
+name: Check Violet Memory Address Conflicts
 
 on:
   workflow_dispatch:
@@ -15,98 +15,109 @@ jobs:
           ref: 16
           fetch-depth: 1
 
-      - name: Compare memory definitions
+      - name: Scan memory address conflicts
         run: |
           set -e
 
-          REPORT="memory_comparison_report.txt"
+          REPORT="violet_memory_conflict_report.txt"
 
           {
             echo "========================================"
-            echo "SM6150 / ATOLL / VIOLET MEMORY COMPARE"
+            echo "VIOLET MEMORY ADDRESS CONFLICT SCAN"
             echo "========================================"
             echo
             echo "COMMIT: $(git rev-parse HEAD)"
             echo
 
             echo "========================================"
-            echo "[1] SM6150.DTSI"
+            echo "[1] TARGET ADDRESSES"
             echo "========================================"
 
-            nl -ba arch/arm64/boot/dts/qcom/sm6150.dtsi | sed -n '570,645p'
-
-            echo
-
-            echo "========================================"
-            echo "[2] ATOLL.DTSI"
-            echo "========================================"
-
-            nl -ba arch/arm64/boot/dts/qcom/atoll.dtsi | sed -n '565,620p'
-
-            echo
-
-            echo "========================================"
-            echo "[3] VIOLET MEMORY DTSI"
-            echo "========================================"
-
-            nl -ba \
-              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
-              | sed -n '1,100p'
-
-            echo
-
-            echo "========================================"
-            echo "[4] MEMORY SYMBOL COMPARISON"
-            echo "========================================"
-
-            for symbol in \
-              qseecom_ta_mem \
-              sp_mem \
-              secure_display_memory \
-              cont_splash_memory \
-              dfps_data_memory \
-              disp_rdump_memory
+            for addr in \
+              0x9c000000 \
+              0x9cf00000 \
+              0x9d000000 \
+              0x9d100000 \
+              0x9e000000 \
+              0x9e100000 \
+              0x9e400000
             do
               echo
-              echo "----- $symbol -----"
+              echo "----- ADDRESS: $addr -----"
 
-              echo "SM6150:"
-              git grep -n "$symbol" -- \
-                arch/arm64/boot/dts/qcom/sm6150.dtsi || true
-
-              echo "ATOLL:"
-              git grep -n "$symbol" -- \
-                arch/arm64/boot/dts/qcom/atoll.dtsi || true
-
-              echo "VIOLET:"
-              git grep -n "$symbol" -- \
-                arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi || true
+              git grep -ni "$addr" -- \
+                '*.dts' '*.dtsi' || true
             done
 
             echo
 
             echo "========================================"
-            echo "[5] MEMORY ADDRESS MAP"
+            echo "[2] RELEVANT MEMORY NODES"
             echo "========================================"
 
-            echo "SM6150 relevant addresses:"
-            git grep -n -E \
-              'cont_splash_region|dfps_data_region|disp_rdump_region|linux,cma' -- \
-              arch/arm64/boot/dts/qcom/sm6150.dtsi || true
+            git grep -niE \
+              'cont_splash_region|dfps_data_region|disp_rdump_region|qseecom_region|reserved-memory|linux,cma' -- \
+              '*.dts' '*.dtsi' || true
 
             echo
 
-            echo "ATOLL relevant addresses:"
-            git grep -n -E \
-              'cont_splash_region|dfps_data_region|disp_rdump_region|linux,cma' -- \
-              arch/arm64/boot/dts/qcom/atoll.dtsi || true
+            echo "========================================"
+            echo "[3] VIOLET MEMORY OVERRIDES"
+            echo "========================================"
+
+            nl -ba \
+              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
+              | sed -n '40,70p'
 
             echo
 
-            echo "VIOLET overrides:"
-            git grep -n -E \
-              'cont_splash|dfps_data|disp_rdump|linux,cma' -- \
-              arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi || true
+            echo "========================================"
+            echo "[4] SM6150 MEMORY MAP"
+            echo "========================================"
+
+            nl -ba \
+              arch/arm64/boot/dts/qcom/sm6150.dtsi \
+              | sed -n '580,645p'
+
+            echo
+
+            echo "========================================"
+            echo "[5] ADDRESS RANGE CHECK"
+            echo "========================================"
+
+            echo "Expected Violet disp_rdump:"
+            echo "START : 0x9d100000"
+            echo "SIZE  : 0x01000000"
+            echo "END   : 0x9e100000"
+            echo
+
+            echo "Existing SM6150 qseecom:"
+            echo "START : 0x9e400000"
+            echo "SIZE  : 0x01400000"
+            echo "END   : 0x9f800000"
+            echo
+
+            echo "Gap between disp_rdump and qseecom:"
+            echo "0x9e400000 - 0x9e100000 = 0x300000 (3 MiB)"
+            echo
+
+            echo "========================================"
+            echo "[6] DISP RDUMP DEFINITIONS"
+            echo "========================================"
+
+            git grep -ni -E \
+              'disp_rdump_memory[[:space:]]*:' -- \
+              '*.dts' '*.dtsi' || true
+
+            echo
+
+            echo "========================================"
+            echo "[7] DISP RDUMP REFERENCES"
+            echo "========================================"
+
+            git grep -ni -E \
+              '&disp_rdump_memory' -- \
+              '*.dts' '*.dtsi' || true
 
             echo
 
@@ -118,9 +129,9 @@ jobs:
 
           cat "$REPORT"
 
-      - name: Upload comparison report
+      - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: memory-comparison-report
-          path: memory_comparison_report.txt
+          name: violet-memory-conflict-report
+          path: violet_memory_conflict_report.txt
           if-no-files-found: error
