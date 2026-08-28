@@ -1,175 +1,4 @@
-name: VIOLET Joker Kconfig Safe Analysis
-
-on:
-  workflow_dispatch:
-
-jobs:
-  analyze:
-    runs-on: ubuntu-22.04
-
-    steps:
-
-      - name: Checkout VIOLET kernel
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
-
-      - name: Install dependencies
-        run: |
-          set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            bc \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            make \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            device-tree-compiler \
-            curl
-
-      - name: Verify toolchain
-        run: |
-          set -e
-
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          echo "========================================"
-          echo "TOOLCHAIN"
-          echo "========================================"
-
-          echo "ARCH=$ARCH"
-          echo "CROSS_COMPILE=$CROSS_COMPILE"
-
-          "$CROSS_COMPILE"gcc --version | head -n 1
-          "$CROSS_COMPILE"ld --version | head -n 1
-
-      - name: Verify sources
-        run: |
-          set -e
-
-          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-          test -f arch/arm64/configs/vendor/violet.config
-          test -f Kconfig
-
-          echo "========================================"
-          echo "SOURCES VERIFIED"
-          echo "========================================"
-
-          echo "sdmsteppe-perf_defconfig : OK"
-          echo "violet.config             : OK"
-          echo "Kconfig                   : OK"
-
-          VIOLET_COUNT=$(
-            grep -E \
-              '^(CONFIG_[A-Za-z0-9_]+)=|^# CONFIG_[A-Za-z0-9_]+ is not set' \
-              arch/arm64/configs/vendor/violet.config \
-              | wc -l
-          )
-
-          echo
-          echo "VIOLET SETTINGS FOUND:"
-          echo "$VIOLET_COUNT"
-
-      - name: Download Joker defconfig
-        run: |
-          set -e
-
-          mkdir -p joker
-
-          curl -L \
-            --fail \
-            --retry 3 \
-            -o joker/violet-perf_defconfig \
-            "https://raw.githubusercontent.com/Joker-V2/kernel_xiaomi_violet/sixteen/arch/arm64/configs/vendor/violet-perf_defconfig"
-
-          test -s joker/violet-perf_defconfig
-
-          echo "========================================"
-          echo "JOKER SOURCE"
-          echo "========================================"
-
-          wc -l joker/violet-perf_defconfig
-
-      - name: Prepare directories
-        run: |
-          set -e
-
-          rm -rf out reports
-
-          mkdir -p out
-          mkdir -p reports
-
-      - name: Generate VIOLET base configuration
-        run: |
-          set -e
-
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          echo "========================================"
-          echo "BASE KCONFIG"
-          echo "========================================"
-
-          make O=out vendor/sdmsteppe-perf_defconfig
-
-          cp out/.config out/base.config
-
-          echo
-          echo "BASE CONFIG GENERATED"
-          wc -l out/base.config
-
-      - name: Merge VIOLET configuration
-        run: |
-          set -e
-
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          echo "========================================"
-          echo "VIOLET MERGE"
-          echo "========================================"
-
-          ./scripts/kconfig/merge_config.sh \
-            -O out \
-            out/base.config \
-            arch/arm64/configs/vendor/violet.config \
-            > reports/violet_merge.log 2>&1
-
-          make O=out olddefconfig \
-            > reports/violet_kconfig.log 2>&1
-
-          cp out/.config out/violet.config
-
-          echo "VIOLET CONFIGURATION READY"
-          wc -l out/violet.config
-
-      - name: Extract Joker settings
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "EXTRACTING JOKER SETTINGS"
-          echo "========================================"
-
-          grep -E \
-            '^(CONFIG_[A-Za-z0-9_]+)=|^# CONFIG_[A-Za-z0-9_]+ is not set' \
-            joker/violet-perf_defconfig \
-            | sort -u \
-            > reports/01_joker_all.txt
-
-          JOKER_COUNT=$(wc -l < reports/01_joker_all.txt)
-
-          echo "Joker settings:"
-          echo "$JOKER_COUNT"
-
-      - name: Analyze Joker settings
+      - name: Analyze Joker configuration
         shell: bash
         run: |
           set -e
@@ -194,32 +23,25 @@ jobs:
 
           while IFS= read -r LINE
           do
+            SYMBOL=$(printf '%s\n' "$LINE" | sed -n \
+              -E 's/^(CONFIG_[A-Za-z0-9_]+)=.*/\1/p')
 
-            SYMBOL=""
+            if [ -z "$SYMBOL" ]; then
+              SYMBOL=$(printf '%s\n' "$LINE" | sed -n \
+                -E 's/^# (CONFIG_[A-Za-z0-9_]+) is not set$/\1/p')
+            fi
 
-            if [[ "$LINE" =~ ^(CONFIG_[A-Za-z0-9_]+)= ]]
-            then
-              SYMBOL="${BASH_REMATCH[1]}"
-
-            elif [[ "$LINE" =~ ^#\ (CONFIG_[A-Za-z0-9_]+)\ is\ not\ set$ ]]
-            then
-              SYMBOL="${BASH_REMATCH[1]}"
-
-            else
+            if [ -z "$SYMBOL" ]; then
               continue
             fi
 
             TOTAL=$((TOTAL + 1))
 
-            CURRENT=$(
-              grep -E \
-                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
-                out/violet.config \
-                | head -n 1 || true
-            )
+            CURRENT=$(grep -E \
+              "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+              out/violet.config | head -n 1 || true)
 
-            if [[ "$CURRENT" == "$LINE" ]]
-            then
+            if [ "$CURRENT" = "$LINE" ]; then
               echo "$LINE" >> reports/02_already_present.txt
               PRESENT=$((PRESENT + 1))
               continue
@@ -230,22 +52,18 @@ jobs:
 
             cp out/violet.config out/test/.config
 
-            printf '%s\n' "$LINE" > out/test/joker_single.config
-
-            MERGE_LOG="/tmp/joker_merge.log"
-            KCONFIG_LOG="/tmp/joker_kconfig.log"
+            printf '%s\n' "$LINE" > out/test/joker.config
 
             if ! ./scripts/kconfig/merge_config.sh \
               -O out/test \
               out/test/.config \
-              out/test/joker_single.config \
-              > "$MERGE_LOG" 2>&1
+              out/test/joker.config \
+              > /tmp/joker_merge.log 2>&1
             then
-
               {
                 echo "REQUESTED: $LINE"
                 echo "RESULT: MERGE FAILED"
-                cat "$MERGE_LOG"
+                cat /tmp/joker_merge.log
                 echo
               } >> reports/06_dependency_conflicts.txt
 
@@ -254,13 +72,12 @@ jobs:
             fi
 
             if ! make O=out/test olddefconfig \
-              > "$KCONFIG_LOG" 2>&1
+              > /tmp/joker_kconfig.log 2>&1
             then
-
               {
                 echo "REQUESTED: $LINE"
                 echo "RESULT: KCONFIG FAILED"
-                cat "$KCONFIG_LOG"
+                cat /tmp/joker_kconfig.log
                 echo
               } >> reports/06_dependency_conflicts.txt
 
@@ -268,27 +85,22 @@ jobs:
               continue
             fi
 
-            RESOLVED=$(
-              grep -E \
-                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
-                out/test/.config \
-                | head -n 1 || true
-            )
+            RESULT=$(grep -E \
+              "^${SYMBOL}=|^# ${SYMBOL} is not set" \
+              out/test/.config | head -n 1 || true)
 
-            if [[ "$RESOLVED" == "$LINE" ]]
-            then
+            if [ "$RESULT" = "$LINE" ]; then
 
               echo "$LINE" >> reports/03_missing_but_supported.txt
               echo "$LINE" >> reports/07_final_candidates.txt
 
               MISSING=$((MISSING + 1))
 
-            elif [[ -n "$RESOLVED" ]]
-            then
+            elif [ -n "$RESULT" ]; then
 
               {
                 echo "REQUESTED: $LINE"
-                echo "RESOLVED:  $RESOLVED"
+                echo "RESOLVED: $RESULT"
                 echo
               } >> reports/04_changed_by_kconfig.txt
 
@@ -306,184 +118,17 @@ jobs:
 
           echo
           echo "========================================"
-          echo "ANALYSIS COMPLETE"
+          echo "FINAL JOKER ANALYSIS"
           echo "========================================"
 
           echo "Total Joker settings       : $TOTAL"
           echo "Already present            : $PRESENT"
-          echo "Missing but supported      : $MISSING"
+          echo "Missing but Kconfig accepts: $MISSING"
           echo "Changed by Kconfig         : $CHANGED"
           echo "Not supported              : $UNSUPPORTED"
           echo "Dependency conflicts       : $CONFLICTS"
 
-      - name: Final candidate validation
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "FINAL CANDIDATE VALIDATION"
-          echo "========================================"
-
-          rm -rf out/final
-          mkdir -p out/final
-
-          cp out/violet.config out/final/.config
-
-          if [[ -s reports/07_final_candidates.txt ]]
-          then
-
-            ./scripts/kconfig/merge_config.sh \
-              -O out/final \
-              out/final/.config \
-              reports/07_final_candidates.txt \
-              > reports/final_merge.log 2>&1
-
-          fi
-
-          make O=out/final olddefconfig \
-            > reports/final_kconfig.log 2>&1
-
-          : > reports/final_failed.txt
-
-          PASSED=0
-          FAILED=0
-
-          while IFS= read -r LINE
-          do
-
-            SYMBOL=""
-
-            if [[ "$LINE" =~ ^(CONFIG_[A-Za-z0-9_]+)= ]]
-            then
-              SYMBOL="${BASH_REMATCH[1]}"
-
-            elif [[ "$LINE" =~ ^#\ (CONFIG_[A-Za-z0-9_]+)\ is\ not\ set$ ]]
-            then
-              SYMBOL="${BASH_REMATCH[1]}"
-
-            else
-              continue
-            fi
-
-            ACTUAL=$(
-              grep -E \
-                "^${SYMBOL}=|^# ${SYMBOL} is not set" \
-                out/final/.config \
-                | head -n 1 || true
-            )
-
-            if [[ "$ACTUAL" == "$LINE" ]]
-            then
-              PASSED=$((PASSED + 1))
-            else
-
-              {
-                echo "REQUESTED: $LINE"
-                echo "ACTUAL:   ${ACTUAL:-NOT PRESENT}"
-                echo
-              } >> reports/final_failed.txt
-
-              FAILED=$((FAILED + 1))
-            fi
-
-          done < reports/07_final_candidates.txt
-
-          echo "Candidate settings : $((PASSED + FAILED))"
-          echo "Passed              : $PASSED"
-          echo "Failed              : $FAILED"
-
-          if [[ "$FAILED" -eq 0 ]]
-          then
-            echo
-            echo "ALL CANDIDATES SURVIVED KCONFIG"
-          else
-            echo
-            echo "WARNING: SOME CANDIDATES CHANGED"
-          fi
-
-      - name: Generate summary
-        shell: bash
-        run: |
-          set -e
-
-          TOTAL=$(wc -l < reports/01_joker_all.txt)
-          PRESENT=$(wc -l < reports/02_already_present.txt)
-          MISSING=$(wc -l < reports/03_missing_but_supported.txt)
-          CHANGED=$(grep -c '^REQUESTED:' reports/04_changed_by_kconfig.txt || true)
-          UNSUPPORTED=$(wc -l < reports/05_not_supported.txt)
-          CONFLICTS=$(grep -c '^REQUESTED:' reports/06_dependency_conflicts.txt || true)
-          CANDIDATES=$(wc -l < reports/07_final_candidates.txt)
-
-          cat > reports/08_summary.txt <<EOF
-========================================
-VIOLET JOKER KCONFIG ANALYSIS
-========================================
-
-Architecture:
-arm64
-
-Cross compiler:
-aarch64-linux-gnu-
-
-Base:
-sdmsteppe-perf_defconfig
-
-VIOLET:
-arch/arm64/configs/vendor/violet.config
-
-JOKER:
-Joker-V2/kernel_xiaomi_violet
-branch: sixteen
-
-Kernel build:
-NOT PERFORMED
-
-Analysis:
-KCONFIG ONLY
-
-========================================
-RESULTS
-========================================
-
-Joker settings analyzed : $TOTAL
-Already present          : $PRESENT
-Missing but supported    : $MISSING
-Changed by Kconfig       : $CHANGED
-Not supported            : $UNSUPPORTED
-Dependency conflicts     : $CONFLICTS
-Final candidates         : $CANDIDATES
-
-========================================
-EOF
-
-          cat reports/08_summary.txt
-
-      - name: Verify reports
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "REPORT VERIFICATION"
-          echo "========================================"
-
-          test -s reports/01_joker_all.txt
-          test -f reports/02_already_present.txt
-          test -f reports/03_missing_but_supported.txt
-          test -f reports/04_changed_by_kconfig.txt
-          test -f reports/05_not_supported.txt
-          test -f reports/06_dependency_conflicts.txt
-          test -f reports/07_final_candidates.txt
-          test -f reports/08_summary.txt
-
-          echo "ALL REPORTS VERIFIED"
-
           echo
-          ls -lh reports/
-
-      - name: Upload reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-joker-kconfig-analysis
-          path: reports/
-          if-no-files-found: error
+          echo "========================================"
+          echo "ANALYSIS COMPLETE"
+          echo "========================================"
