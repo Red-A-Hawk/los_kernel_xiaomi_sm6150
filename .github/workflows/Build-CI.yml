@@ -1,4 +1,4 @@
-name: VIOLET Deep Audit - 296 Joker Candidates
+name: VIOLET Deep Audit - Joker 296
 
 on:
   workflow_dispatch:
@@ -18,9 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
-
           sudo apt-get update
-
           sudo apt-get install -y \
             bc \
             bison \
@@ -31,722 +29,415 @@ jobs:
             gcc-aarch64-linux-gnu \
             binutils-aarch64-linux-gnu \
             git \
+            wget \
             python3
 
-      - name: Verify kernel tree
+      - name: Prepare reports
         run: |
           set -e
+          rm -rf audit
+          mkdir -p audit/reports
+          mkdir -p audit/joker
 
-          echo "========================================"
-          echo "VERIFYING KERNEL TREE"
-          echo "========================================"
-
-          test -f Kconfig
-          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-          test -f arch/arm64/configs/vendor/violet.config
-          test -d drivers
-          test -d arch
-          test -d kernel
-          test -d fs
-          test -d sound
-
-          echo "Kernel tree : OK"
-          echo "Kconfig     : OK"
-          echo "Architecture: arm64"
-          echo "Branch      : 16"
-
-      - name: Download Joker defconfig
-        run: |
-          set -e
-
-          mkdir -p joker
-          mkdir -p reports
-
-          curl -L \
-            --fail \
-            --silent \
-            --show-error \
-            -o joker/violet-perf_defconfig \
+          wget -q \
+            -O audit/joker/violet-perf_defconfig \
             "https://raw.githubusercontent.com/Joker-V2/kernel_xiaomi_violet/sixteen/arch/arm64/configs/vendor/violet-perf_defconfig"
 
-          test -s joker/violet-perf_defconfig
+          test -s audit/joker/violet-perf_defconfig
 
-          echo "Joker defconfig: OK"
-          wc -l joker/violet-perf_defconfig
+      - name: Syntax validation
+        run: |
+          set -e
 
-      - name: Generate VIOLET configuration
+          echo "========================================"
+          echo "SYNTAX VALIDATION"
+          echo "========================================"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          f = Path("audit/joker/violet-perf_defconfig")
+
+          total = 0
+          bad = 0
+
+          for n, raw in enumerate(f.read_text(errors="replace").splitlines(), 1):
+              line = raw.strip()
+
+              if not line:
+                  continue
+
+              if line.startswith("# CONFIG_"):
+                  if not re.fullmatch(r"# CONFIG_[A-Za-z0-9_]+ is not set", line):
+                      print(f"BAD:{n}:{raw}")
+                      bad += 1
+                  else:
+                      total += 1
+                  continue
+
+              if line.startswith("CONFIG_"):
+                  if "=" not in line:
+                      print(f"BAD:{n}:{raw}")
+                      bad += 1
+                  else:
+                      name, value = line.split("=", 1)
+
+                      if not re.fullmatch(r"CONFIG_[A-Za-z0-9_]+", name):
+                          print(f"BAD:{n}:{raw}")
+                          bad += 1
+                      elif value == "":
+                          print(f"BAD:{n}:{raw}")
+                          bad += 1
+                      else:
+                          total += 1
+
+          print("")
+          print("Valid settings :", total)
+          print("Syntax errors  :", bad)
+
+          if bad:
+              sys.exit(1)
+          PY
+
+          echo "Syntax: OK"
+
+      - name: Extract the 296 candidates
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          src = Path("audit/joker/violet-perf_defconfig")
+          out = Path("audit/reports/01_all_296.txt")
+
+          lines = []
+
+          for raw in src.read_text(errors="replace").splitlines():
+              s = raw.strip()
+
+              if re.match(r"^CONFIG_[A-Za-z0-9_]+=", s):
+                  lines.append(s)
+
+              elif re.match(r"^# CONFIG_[A-Za-z0-9_]+ is not set$", s):
+                  lines.append(s)
+
+          seen = set()
+          final = []
+
+          for x in lines:
+              if x not in seen:
+                  seen.add(x)
+                  final.append(x)
+
+          out.write_text("\n".join(final) + "\n")
+
+          print("Candidate settings:", len(final))
+          PY
+
+      - name: Build Kconfig symbol database
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "BUILDING KCONFIG DATABASE"
+          echo "========================================"
+
+          : > audit/reports/kconfig_database.txt
+
+          grep -RhsE \
+            '^[[:space:]]*(config|menuconfig)[[:space:]]+[A-Za-z0-9_]+' \
+            --include='Kconfig' \
+            --include='Kconfig.*' \
+            . \
+            2>/dev/null \
+            | sort -u \
+            > audit/reports/kconfig_database.txt
+
+          wc -l audit/reports/kconfig_database.txt
+
+      - name: Deep source tree analysis
+        run: |
+          set -e
+
+          : > audit/reports/02_defined_in_kconfig.txt
+          : > audit/reports/03_source_presence.txt
+          : > audit/reports/04_dependency_analysis.txt
+          : > audit/reports/05_safe_candidates.txt
+          : > audit/reports/06_rejected.txt
+
+          while IFS= read -r request; do
+
+              [ -z "$request" ] && continue
+
+              case "$request" in
+
+                  CONFIG_*=*)
+                      symbol="${request%%=*}"
+                      ;;
+
+                  "# CONFIG_"*" is not set")
+                      symbol="${request#\# }"
+                      symbol="${symbol% is not set}"
+                      ;;
+
+                  *)
+                      continue
+                      ;;
+
+              esac
+
+              name="${symbol#CONFIG_}"
+
+              echo "========================================"
+              echo "SYMBOL: $symbol"
+              echo "REQUEST: $request"
+              echo "========================================"
+
+              config_hits="$(
+                  grep -RIl \
+                    --exclude-dir=.git \
+                    --exclude='*.o' \
+                    --exclude='*.ko' \
+                    --exclude='*.a' \
+                    --exclude='*.cmd' \
+                    --exclude='*.d' \
+                    -E "^[[:space:]]*(config|menuconfig)[[:space:]]+$name([[:space:]]|$)" \
+                    . 2>/dev/null \
+                    | head -n 50 || true
+              )"
+
+              if [ -n "$config_hits" ]; then
+
+                  {
+                      echo "========================================"
+                      echo "SYMBOL: $symbol"
+                      echo "REQUEST: $request"
+                      echo "STATUS: DEFINED IN KCONFIG"
+                      echo
+                      echo "$config_hits"
+                      echo
+                  } >> audit/reports/02_defined_in_kconfig.txt
+
+              else
+
+                  {
+                      echo "========================================"
+                      echo "SYMBOL: $symbol"
+                      echo "REQUEST: $request"
+                      echo "STATUS: NOT DEFINED IN KCONFIG"
+                      echo "========================================"
+                      echo
+                  } >> audit/reports/06_rejected.txt
+
+                  continue
+              fi
+
+              source_hits="$(
+                  grep -RIn \
+                    --exclude-dir=.git \
+                    --exclude='*.o' \
+                    --exclude='*.ko' \
+                    --exclude='*.a' \
+                    --exclude='*.cmd' \
+                    --exclude='*.d' \
+                    -E "\b(CONFIG_${name}|IS_ENABLED\(CONFIG_${name}\)|IS_REACHABLE\(CONFIG_${name}\))\b" \
+                    . 2>/dev/null \
+                    | head -n 100 || true
+              )"
+
+              {
+                  echo "========================================"
+                  echo "SYMBOL: $symbol"
+                  echo "REQUEST: $request"
+                  echo "========================================"
+
+                  if [ -n "$source_hits" ]; then
+                      echo "SOURCE REFERENCES: FOUND"
+                      echo
+                      echo "$source_hits"
+                  else
+                      echo "SOURCE REFERENCES: NONE FOUND"
+                  fi
+
+                  echo
+              } >> audit/reports/03_source_presence.txt
+
+              dep_hits="$(
+                  grep -RIn \
+                    --exclude-dir=.git \
+                    --include='Kconfig' \
+                    --include='Kconfig.*' \
+                    -E "depends on .*${name}|select .*${name}|imply .*${name}" \
+                    . 2>/dev/null \
+                    | head -n 100 || true
+              )"
+
+              {
+                  echo "========================================"
+                  echo "SYMBOL: $symbol"
+                  echo "REQUEST: $request"
+                  echo "========================================"
+
+                  if [ -n "$dep_hits" ]; then
+                      echo "DEPENDENCY / SELECT / IMPLY:"
+                      echo
+                      echo "$dep_hits"
+                  else
+                      echo "DEPENDENCY REFERENCES: NONE FOUND"
+                  fi
+
+                  echo
+              } >> audit/reports/04_dependency_analysis.txt
+
+              source_count=0
+              dep_count=0
+
+              if [ -n "$source_hits" ]; then
+                  source_count=1
+              fi
+
+              if [ -n "$dep_hits" ]; then
+                  dep_count=1
+              fi
+
+              if [ "$source_count" -eq 1 ]; then
+
+                  {
+                      echo "$request"
+                  } >> audit/reports/05_safe_candidates.txt
+
+              else
+
+                  {
+                      echo "========================================"
+                      echo "SYMBOL: $symbol"
+                      echo "REQUEST: $request"
+                      echo "REASON: Kconfig exists but no source reference detected"
+                      echo "========================================"
+                      echo
+                  } >> audit/reports/06_rejected.txt
+
+              fi
+
+          done < audit/reports/01_all_296.txt
+
+      - name: Run Kconfig resolution test
         run: |
           set -e
 
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          rm -rf out
-          mkdir -p out
+          rm -rf audit/out
+          mkdir -p audit/out
 
-          echo "========================================"
-          echo "GENERATING BASE VIOLET CONFIG"
-          echo "========================================"
+          make O=audit/out vendor/sdmsteppe-perf_defconfig \
+            > audit/reports/kconfig_base.log 2>&1
 
-          make O=out vendor/sdmsteppe-perf_defconfig
-
-          cp out/.config out/base.config
+          cp audit/out/.config audit/out/base.config
 
           ./scripts/kconfig/merge_config.sh \
-            -O out \
-            out/base.config \
-            arch/arm64/configs/vendor/violet.config
+            -O audit/out \
+            audit/out/base.config \
+            audit/joker/violet-perf_defconfig \
+            > audit/reports/kconfig_merge.log 2>&1 || true
 
-          make O=out olddefconfig
+          test -f audit/out/.config
 
-          cp out/.config out/violet.resolved.config
+          make O=audit/out olddefconfig \
+            > audit/reports/kconfig_resolve.log 2>&1
 
-          echo
-          echo "Resolved VIOLET config:"
-          wc -l out/violet.resolved.config
+          cp audit/out/.config audit/out/resolved.config
 
-      - name: Prepare exactly 296 candidates
+          echo "Kconfig resolution completed."
+
+      - name: Final candidate verification
         run: |
           set -e
 
-          echo "========================================"
-          echo "PREPARING JOKER CANDIDATES"
-          echo "========================================"
+          tmp="audit/reports/safe.tmp"
+          final="audit/reports/05_safe_candidates.txt"
 
-          python3 <<'PY'
-          import re
-          from pathlib import Path
+          : > "$tmp"
 
-          src = Path("joker/violet-perf_defconfig")
-          out = Path("reports/01_candidates_296.txt")
+          while IFS= read -r request; do
 
-          symbols = {}
+              [ -z "$request" ] && continue
 
-          for line in src.read_text(errors="ignore").splitlines():
-              line = line.strip()
-
-              m = re.match(r'^(CONFIG_[A-Za-z0-9_]+)=(.*)$', line)
-              if m:
-                  symbols[m.group(1)] = line
-                  continue
-
-              m = re.match(r'^# (CONFIG_[A-Za-z0-9_]+) is not set$', line)
-              if m:
-                  symbols[m.group(1)] = line
-
-          current = {}
-
-          for line in Path("out/violet.resolved.config").read_text(errors="ignore").splitlines():
-              line = line.strip()
-
-              m = re.match(r'^(CONFIG_[A-Za-z0-9_]+)=(.*)$', line)
-              if m:
-                  current[m.group(1)] = line
-                  continue
-
-              m = re.match(r'^# (CONFIG_[A-Za-z0-9_]+) is not set$', line)
-              if m:
-                  current[m.group(1)] = line
-
-          candidates = []
-
-          for sym, request in symbols.items():
-              if sym not in current or current[sym] != request:
-                  candidates.append((sym, request))
-
-          candidates.sort()
-
-          for sym, request in candidates:
-              out.write_text(
-                  "\n".join(f"{sym}|{request}" for sym, request in candidates)
-                  + ("\n" if candidates else "")
-              )
-
-          print("Candidate count:", len(candidates))
-
-          if len(candidates) != 296:
-              print("WARNING: expected 296 candidates")
-              print("Actual:", len(candidates))
-          PY
-
-          wc -l reports/01_candidates_296.txt
-
-      - name: Deep source tree analysis
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "DEEP SOURCE TREE ANALYSIS"
-          echo "========================================"
-
-          python3 <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          ROOT = Path(".").resolve()
-          CANDIDATES = Path("reports/01_candidates_296.txt")
-
-          reports = {
-              "02_symbol_definitions.txt": [],
-              "03_dependencies_and_selects.txt": [],
-              "04_source_references.txt": [],
-              "05_platform_relevance.txt": [],
-              "06_generic_candidates.txt": [],
-              "07_final_audit.txt": [],
-          }
-
-          lines = CANDIDATES.read_text(errors="ignore").splitlines()
-
-          candidates = []
-
-          for line in lines:
-              if "|" not in line:
-                  continue
-
-              sym, request = line.split("|", 1)
-              candidates.append((sym, request))
-
-          source_ext = {
-              ".c",
-              ".h",
-              ".S",
-              ".s",
-              ".dts",
-              ".dtsi",
-              ".dtsc",
-              ".cpp",
-              ".cc",
-              ".Kconfig",
-          }
-
-          skip_dirs = {
-              ".git",
-              "out",
-              "joker",
-              "reports",
-              "__pycache__",
-          }
-
-          files = []
-
-          for p in ROOT.rglob("*"):
-              if not p.is_file():
-                  continue
-
-              if any(part in skip_dirs for part in p.parts):
-                  continue
-
-              if p.suffix in source_ext or p.name == "Kconfig":
-                  files.append(p)
-
-          print("Source files scanned:", len(files))
-
-          def read_file(path):
-              try:
-                  return path.read_text(
-                      encoding="utf-8",
-                      errors="ignore"
-                  )
-              except Exception:
-                  return ""
-
-          cache = {}
-
-          for p in files:
-              cache[p] = read_file(p)
-
-          def is_platform_path(path):
-              s = str(path).lower()
-
-              keys = [
-                  "sm6150",
-                  "sdmsteppe",
-                  "violet",
-                  "xiaomi",
-                  "qcom",
-                  "qualcomm",
-                  "msm",
-                  "sdm",
-                  "sm6",
-                  "techpack",
-                  "soundwire",
-                  "wcd",
-                  "adreno",
-                  "ufs",
-                  "mmc",
-                  "f2fs",
-                  "erofs",
-                  "touchscreen",
-                  "camera",
-                  "display",
-                  "thermal",
-              ]
-
-              return any(k in s for k in keys)
-
-          def symbol_value(text, sym):
-              patterns = [
-                  rf'^{re.escape(sym)}=(.*)$',
-                  rf'^# {re.escape(sym)} is not set$',
-              ]
-
-              for pattern in patterns:
-                  m = re.search(pattern, text, re.MULTILINE)
-                  if m:
-                      return m.group(0)
-
-              return None
-
-          for sym, request in candidates:
-
-              definition_hits = []
-              dependency_hits = []
-              reference_hits = []
-              platform_hits = []
-
-              for path, text in cache.items():
-
-                  if not text:
+              case "$request" in
+                  CONFIG_*=*)
+                      symbol="${request%%=*}"
+                      ;;
+                  "# CONFIG_"*" is not set")
+                      symbol="${request#\# }"
+                      symbol="${symbol% is not set}"
+                      ;;
+                  *)
                       continue
+                      ;;
+              esac
 
-                  rel = str(path.relative_to(ROOT))
+              if grep -q -F "$request" audit/out/resolved.config; then
+                  echo "$request" >> "$tmp"
+              fi
 
-                  definition_pattern = (
-                      rf'(^|\n)\s*(config|menuconfig)\s+'
-                      rf'{re.escape(sym.replace("CONFIG_", ""))}\b'
-                  )
+          done < audit/reports/01_all_296.txt
 
-                  if re.search(
-                      definition_pattern,
-                      text,
-                      re.IGNORECASE
-                  ):
-                      definition_hits.append(rel)
+          sort -u "$tmp" > "$final"
+          rm -f "$tmp"
 
-                      start_positions = [
-                          m.start()
-                          for m in re.finditer(
-                              definition_pattern,
-                              text,
-                              re.IGNORECASE
-                          )
-                      ]
-
-                      for pos in start_positions:
-                          chunk = text[pos:pos + 5000]
-
-                          for dep in re.findall(
-                              r'^\s*depends on .+$',
-                              chunk,
-                              re.MULTILINE
-                          ):
-                              dependency_hits.append(
-                                  f"{rel}: {dep.strip()}"
-                              )
-
-                          for sel in re.findall(
-                              r'^\s*select .+$',
-                              chunk,
-                              re.MULTILINE
-                          ):
-                              dependency_hits.append(
-                                  f"{rel}: {sel.strip()}"
-                              )
-
-                  if re.search(
-                      rf'\b{re.escape(sym)}\b',
-                      text
-                  ):
-                      reference_hits.append(rel)
-
-                      if is_platform_path(path):
-                          platform_hits.append(rel)
-
-              definition_hits = sorted(set(definition_hits))
-              dependency_hits = sorted(set(dependency_hits))
-              reference_hits = sorted(set(reference_hits))
-              platform_hits = sorted(set(platform_hits))
-
-              if definition_hits:
-                  status = "DEFINED_IN_KCONFIG"
-              else:
-                  status = "NO_KCONFIG_DEFINITION_FOUND"
-
-              if platform_hits:
-                  relevance = "VIOLET_OR_QCOM_RELEVANT"
-              elif reference_hits:
-                  relevance = "GENERIC_SOURCE_REFERENCE"
-              else:
-                  relevance = "NO_SOURCE_REFERENCE_FOUND"
-
-              record = []
-
-              record.append("========================================")
-              record.append(f"SYMBOL: {sym}")
-              record.append(f"REQUEST: {request}")
-              record.append(f"KCONFIG_STATUS: {status}")
-              record.append(f"SOURCE_RELEVANCE: {relevance}")
-              record.append("")
-
-              record.append("KCONFIG DEFINITIONS:")
-              if definition_hits:
-                  record.extend(
-                      f"  {x}" for x in definition_hits
-                  )
-              else:
-                  record.append("  NONE")
-
-              record.append("")
-              record.append("DEPENDENCIES / SELECTS:")
-
-              if dependency_hits:
-                  record.extend(
-                      f"  {x}" for x in dependency_hits
-                  )
-              else:
-                  record.append("  NONE FOUND")
-
-              record.append("")
-              record.append("SOURCE REFERENCES:")
-
-              if reference_hits:
-                  record.extend(
-                      f"  {x}" for x in reference_hits[:100]
-                  )
-
-                  if len(reference_hits) > 100:
-                      record.append(
-                          f"  ... {len(reference_hits)-100} more"
-                      )
-              else:
-                  record.append("  NONE")
-
-              record.append("")
-              record.append("PLATFORM RELEVANT REFERENCES:")
-
-              if platform_hits:
-                  record.extend(
-                      f"  {x}" for x in platform_hits[:100]
-                  )
-              else:
-                  record.append("  NONE")
-
-              record.append("")
-
-              text = "\n".join(record)
-
-              reports["02_symbol_definitions.txt"].append(
-                  text
-              )
-
-              reports["03_dependencies_and_selects.txt"].append(
-                  "\n".join([
-                      f"SYMBOL: {sym}",
-                      f"REQUEST: {request}",
-                      "DEPENDENCIES / SELECTS:",
-                      *(
-                          dependency_hits
-                          if dependency_hits
-                          else ["NONE"]
-                      ),
-                      ""
-                  ])
-              )
-
-              reports["04_source_references.txt"].append(
-                  "\n".join([
-                      f"SYMBOL: {sym}",
-                      f"REQUEST: {request}",
-                      "SOURCE REFERENCES:",
-                      *(
-                          reference_hits
-                          if reference_hits
-                          else ["NONE"]
-                      ),
-                      ""
-                  ])
-              )
-
-              reports["05_platform_relevance.txt"].append(
-                  "\n".join([
-                      f"SYMBOL: {sym}",
-                      f"REQUEST: {request}",
-                      f"RESULT: {relevance}",
-                      "PLATFORM REFERENCES:",
-                      *(
-                          platform_hits
-                          if platform_hits
-                          else ["NONE"]
-                      ),
-                      ""
-                  ])
-              )
-
-              if (
-                  not platform_hits
-                  and reference_hits
-              ):
-                  reports["06_generic_candidates.txt"].append(
-                      "\n".join([
-                          f"SYMBOL: {sym}",
-                          f"REQUEST: {request}",
-                          "CLASSIFICATION: GENERIC",
-                          "SOURCE REFERENCES:",
-                          *reference_hits,
-                          ""
-                      ])
-                  )
-
-              score = 0
-
-              if definition_hits:
-                  score += 3
-
-              if reference_hits:
-                  score += 2
-
-              if platform_hits:
-                  score += 4
-
-              if dependency_hits:
-                  score += 1
-
-              if platform_hits:
-                  recommendation = "HIGH_RELEVANCE"
-              elif definition_hits and reference_hits:
-                  recommendation = "MEDIUM_RELEVANCE"
-              elif definition_hits:
-                  recommendation = "LOW_RELEVANCE"
-              else:
-                  recommendation = "DO_NOT_ADD_YET"
-
-              reports["07_final_audit.txt"].append(
-                  "\n".join([
-                      "========================================",
-                      f"SYMBOL: {sym}",
-                      f"REQUEST: {request}",
-                      f"SCORE: {score}",
-                      f"RECOMMENDATION: {recommendation}",
-                      f"KCONFIG_DEFINITION: {'YES' if definition_hits else 'NO'}",
-                      f"SOURCE_REFERENCE: {'YES' if reference_hits else 'NO'}",
-                      f"PLATFORM_REFERENCE: {'YES' if platform_hits else 'NO'}",
-                      f"DEPENDENCY_DATA: {'YES' if dependency_hits else 'NO'}",
-                      ""
-                  ])
-              )
-
-          for name, data in reports.items():
-              Path("reports", name).write_text(
-                  "\n".join(data),
-                  encoding="utf-8"
-              )
-
-          print("Deep audit completed.")
-          PY
-
-      - name: Extract final high relevance list
+      - name: Generate summary
         run: |
           set -e
 
-          echo "========================================"
-          echo "FINAL HIGH RELEVANCE CANDIDATES"
-          echo "========================================"
+          total=$(grep -c '^' audit/reports/01_all_296.txt || true)
+          defined=$(grep -c '^SYMBOL:' audit/reports/02_defined_in_kconfig.txt || true)
+          source_refs=$(grep -c '^SOURCE REFERENCES: FOUND' audit/reports/03_source_presence.txt || true)
+          candidates=$(grep -c '^CONFIG_' audit/reports/05_safe_candidates.txt || true)
+          rejected=$(grep -c '^SYMBOL:' audit/reports/06_rejected.txt || true)
 
-          python3 <<'PY'
-          import re
-          from pathlib import Path
+          {
+              echo "========================================"
+              echo "VIOLET DEEP JOKER AUDIT"
+              echo "========================================"
+              echo
+              echo "Joker settings       : $total"
+              echo "Defined in Kconfig   : $defined"
+              echo "Source references    : $source_refs"
+              echo "Final candidates     : $candidates"
+              echo "Rejected             : $rejected"
+              echo
+              echo "========================================"
+              echo "ANALYSIS"
+              echo "========================================"
+              echo
+              echo "Syntax validation    : PASSED"
+              echo "Kconfig resolution   : PERFORMED"
+              echo "Source tree scan     : PERFORMED"
+              echo "Dependency scan      : PERFORMED"
+              echo "Kernel build         : NOT PERFORMED"
+              echo
+              echo "violet.config        : NOT MODIFIED"
+              echo
+              echo "========================================"
+          } > audit/reports/07_summary.txt
 
-          src = Path("reports/07_final_audit.txt")
-          out = Path("reports/high_relevance_candidates.config")
+          cat audit/reports/07_summary.txt
 
-          blocks = src.read_text(errors="ignore").split(
-              "========================================"
-          )
-
-          result = []
-
-          for block in blocks:
-              m = re.search(
-                  r'SYMBOL:\s*(CONFIG_[A-Za-z0-9_]+)',
-                  block
-              )
-
-              r = re.search(
-                  r'REQUEST:\s*(.+)',
-                  block
-              )
-
-              rec = re.search(
-                  r'RECOMMENDATION:\s*(\S+)',
-                  block
-              )
-
-              if not m or not r or not rec:
-                  continue
-
-              if rec.group(1) != "HIGH_RELEVANCE":
-                  continue
-
-              result.append(
-                  r.group(1) + "=" + r.group(2).strip()
-                  if not r.group(2).strip().startswith("#")
-                  else r.group(2).strip()
-              )
-
-          result = sorted(set(result))
-
-          out.write_text(
-              "\n".join(result) + ("\n" if result else ""),
-              encoding="utf-8"
-          )
-
-          print("High relevance:", len(result))
-          print(out.read_text())
-          PY
-
-      - name: Create summary
-        run: |
-          set -e
-
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-
-          text = Path(
-              "reports/07_final_audit.txt"
-          ).read_text(errors="ignore")
-
-          high = len(
-              re.findall(
-                  r'RECOMMENDATION:\s*HIGH_RELEVANCE',
-                  text
-              )
-          )
-
-          medium = len(
-              re.findall(
-                  r'RECOMMENDATION:\s*MEDIUM_RELEVANCE',
-                  text
-              )
-          )
-
-          low = len(
-              re.findall(
-                  r'RECOMMENDATION:\s*LOW_RELEVANCE',
-                  text
-              )
-          )
-
-          reject = len(
-              re.findall(
-                  r'RECOMMENDATION:\s*DO_NOT_ADD_YET',
-                  text
-              )
-          )
-
-          defined = len(
-              re.findall(
-                  r'KCONFIG_DEFINITION:\s*YES',
-                  text
-              )
-          )
-
-          source = len(
-              re.findall(
-                  r'SOURCE_REFERENCE:\s*YES',
-                  text
-              )
-          )
-
-          platform = len(
-              re.findall(
-                  r'PLATFORM_REFERENCE:\s*YES',
-                  text
-              )
-          )
-
-          summary = f"""
-========================================
-VIOLET DEEP JOKER AUDIT
-========================================
-
-Candidates analyzed : 296
-
-Kconfig defined     : {defined}
-Source referenced   : {source}
-Platform referenced : {platform}
-
-========================================
-CLASSIFICATION
-========================================
-
-HIGH_RELEVANCE       : {high}
-MEDIUM_RELEVANCE     : {medium}
-LOW_RELEVANCE        : {low}
-DO_NOT_ADD_YET       : {reject}
-
-========================================
-METHOD
-========================================
-
-Full VIOLET source tree scanned.
-
-Kconfig definitions checked.
-depends on checked.
-select checked.
-Source references checked.
-Qualcomm / SM6150 / VIOLET relevance checked.
-
-Kernel build:
-NOT PERFORMED
-
-VIOLET config:
-NOT MODIFIED
-
-This is source-tree and Kconfig analysis only.
-"""
-
-          Path(
-              "reports/summary.txt"
-          ).write_text(
-              summary.strip() + "\n",
-              encoding="utf-8"
-          )
-
-          print(summary)
-          PY
-
-      - name: Final report
-        run: |
-          set -e
-
-          echo
-          echo "========================================"
-          echo "DEEP 296 AUDIT COMPLETED"
-          echo "========================================"
-
-          cat reports/summary.txt
-
-          echo
-          echo "========================================"
-          echo "GENERATED FILES"
-          echo "========================================"
-
-          ls -lh reports/
-
-      - name: Upload seven analysis files
+      - name: Upload seven reports
         uses: actions/upload-artifact@v4
         with:
-          name: violet-deep-296-audit
+          name: violet-joker-deep-audit
           path: |
-            reports/01_candidates_296.txt
-            reports/02_symbol_definitions.txt
-            reports/03_dependencies_and_selects.txt
-            reports/04_source_references.txt
-            reports/05_platform_relevance.txt
-            reports/06_generic_candidates.txt
-            reports/07_final_audit.txt
-            reports/high_relevance_candidates.config
-            reports/summary.txt
+            audit/reports/01_all_296.txt
+            audit/reports/02_defined_in_kconfig.txt
+            audit/reports/03_source_presence.txt
+            audit/reports/04_dependency_analysis.txt
+            audit/reports/05_safe_candidates.txt
+            audit/reports/06_rejected.txt
+            audit/reports/07_summary.txt
           if-no-files-found: error
