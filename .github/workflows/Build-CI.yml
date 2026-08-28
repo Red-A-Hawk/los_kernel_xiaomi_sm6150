@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout VIOLET kernel
         uses: actions/checkout@v4
         with:
@@ -408,7 +407,7 @@ jobs:
           conflicts="$(grep -c '^REQUESTED:' reports/06_dependency_conflicts.txt || true)"
           candidates="$(wc -l < reports/07_final_candidates.txt)"
 
-          cat > reports/08_summary.txt <<EOF
+          cat > reports/08_summary.txt <<'EOF'
 ========================================
 VIOLET JOKER KCONFIG ANALYSIS
 ========================================
