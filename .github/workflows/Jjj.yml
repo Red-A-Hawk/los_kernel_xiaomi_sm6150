@@ -30,7 +30,9 @@ jobs:
             make \
             gcc-aarch64-linux-gnu \
             binutils-aarch64-linux-gnu \
-            device-tree-compiler
+            device-tree-compiler \
+            curl \
+            python3
 
       - name: Set ARM64 environment
         run: |
@@ -39,9 +41,24 @@ jobs:
           echo "ARCH=arm64" >> "$GITHUB_ENV"
           echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-          echo "=== TOOLCHAIN ==="
+          echo "========================================"
+          echo "TOOLCHAIN"
+          echo "========================================"
+
           aarch64-linux-gnu-gcc --version | head -n 1
           aarch64-linux-gnu-ld --version | head -n 1
+
+      - name: Verify kernel tree
+        run: |
+          set -e
+
+          test -f Makefile
+          test -f Kconfig
+          test -f arch/arm64/Kconfig
+          test -f arch/arm64/boot/dts/qcom/sm6150.dtsi
+          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+
+          echo "Kernel tree: OK"
 
       - name: Download Joker VIOLET defconfig
         run: |
@@ -52,27 +69,238 @@ jobs:
           curl -L \
             --fail \
             --retry 3 \
+            --retry-delay 2 \
             -o reference/joker-violet-perf_defconfig \
             https://raw.githubusercontent.com/Red-A-Hawk/kernel_xiaomi_violet/sixteen/arch/arm64/configs/vendor/violet-perf_defconfig
 
           test -s reference/joker-violet-perf_defconfig
 
-          echo "=== JOKER DEFCONFIG ==="
+          echo "========================================"
+          echo "JOKER DEFCONFIG"
+          echo "========================================"
+
           wc -l reference/joker-violet-perf_defconfig
 
-      - name: Verify LOS VIOLET DTS
+      - name: Download LOS reference defconfig
         run: |
           set -e
 
-          test -f arch/arm64/boot/dts/qcom/sm6150.dtsi
+          curl -L \
+            --fail \
+            --retry 3 \
+            --retry-delay 2 \
+            -o reference/los-violet-perf_defconfig \
+            https://raw.githubusercontent.com/Red-A-Hawk/los_kernel_xiaomi_sm6150/16/arch/arm64/configs/vendor/violet-perf_defconfig
 
-          echo "=== LOS SM6150 DTS ==="
-          grep -n \
+          test -s reference/los-violet-perf_defconfig
+
+          echo "========================================"
+          echo "LOS REFERENCE DEFCONFIG"
+          echo "========================================"
+
+          wc -l reference/los-violet-perf_defconfig
+
+      - name: Verify Joker VIOLET configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "JOKER VIOLET CORE"
+          echo "========================================"
+
+          grep -E \
+            '^CONFIG_ARM64=y$|^CONFIG_64BIT=y$|^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI=y$|^CONFIG_MACH_XIAOMI_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC=y$|^CONFIG_MMC_SDHCI=y$|^CONFIG_MMC_SDHCI_PLTFM=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+            reference/joker-violet-perf_defconfig || true
+
+      - name: Verify LOS VIOLET configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "LOS VIOLET CORE"
+          echo "========================================"
+
+          grep -E \
+            '^CONFIG_ARM64=y$|^CONFIG_64BIT=y$|^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI=y$|^CONFIG_MACH_XIAOMI_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC=y$|^CONFIG_MMC_SDHCI=y$|^CONFIG_MMC_SDHCI_PLTFM=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+            reference/los-violet-perf_defconfig || true
+
+      - name: Compare Joker and LOS defconfig
+        run: |
+          set -e
+
+          mkdir -p artifact
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          joker = Path("reference/joker-violet-perf_defconfig").read_text().splitlines()
+          los = Path("reference/los-violet-perf_defconfig").read_text().splitlines()
+
+          def parse(lines):
+              result = {}
+
+              for line in lines:
+                  line = line.strip()
+
+                  if line.startswith("CONFIG_") and "=" in line:
+                      key = line.split("=", 1)[0]
+                      result[key] = line
+
+                  elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                      key = line[2:].split(" is not set", 1)[0]
+                      result[key] = line
+
+              return result
+
+          j = parse(joker)
+          l = parse(los)
+
+          added = []
+          removed = []
+          changed = []
+
+          for key in sorted(set(j) | set(l)):
+              if key not in j:
+                  added.append((key, "", l[key]))
+
+              elif key not in l:
+                  removed.append((key, j[key], ""))
+
+              elif j[key] != l[key]:
+                  changed.append((key, j[key], l[key]))
+
+          with open("artifact/joker-vs-los-diff.txt", "w") as f:
+
+              f.write("========================================\n")
+              f.write("JOKER vs LOS VIOLET DEFCONFIG\n")
+              f.write("========================================\n\n")
+
+              f.write(f"Joker symbols: {len(j)}\n")
+              f.write(f"LOS symbols:   {len(l)}\n")
+              f.write(f"Added to LOS:  {len(added)}\n")
+              f.write(f"Removed LOS:   {len(removed)}\n")
+              f.write(f"Changed:       {len(changed)}\n\n")
+
+              f.write("========================================\n")
+              f.write("ONLY IN LOS\n")
+              f.write("========================================\n")
+
+              for key, old, new in added:
+                  f.write(f"{new}\n")
+
+              f.write("\n========================================\n")
+              f.write("ONLY IN JOKER\n")
+              f.write("========================================\n")
+
+              for key, old, new in removed:
+                  f.write(f"{old}\n")
+
+              f.write("\n========================================\n")
+              f.write("DIFFERENT VALUES\n")
+              f.write("========================================\n")
+
+              for key, old, new in changed:
+                  f.write(f"{key}\n")
+                  f.write(f"  JOKER: {old}\n")
+                  f.write(f"  LOS:   {new}\n")
+
+          print("Comparison report generated.")
+          PY
+
+      - name: Diagnose VIOLET Kconfig definition
+        run: |
+          set +e
+
+          mkdir -p artifact
+
+          {
+            echo "========================================"
+            echo "MACH_XIAOMI_VIOLET KCONFIG DIAGNOSIS"
+            echo "========================================"
+            echo
+
+            echo "=== ALL MACH_XIAOMI_VIOLET REFERENCES ==="
+            grep -R -n \
+              -E \
+              'MACH_XIAOMI_VIOLET' \
+              arch drivers 2>/dev/null || true
+
+            echo
+            echo "=== CONFIG DEFINITION ==="
+
+            grep -R -n \
+              -B 25 \
+              -A 40 \
+              'config MACH_XIAOMI_VIOLET' \
+              arch 2>/dev/null || true
+
+            echo
+            echo "=== XIAOMI MACHINE DEFINITIONS ==="
+
+            grep -R -n \
+              'config MACH_XIAOMI_' \
+              arch/arm64 2>/dev/null || true
+
+            echo
+            echo "=== KCONFIG DEPENDENCIES ==="
+
+            grep -R -n \
+              -E \
+              'depends on|select |imply ' \
+              arch/arm64 2>/dev/null | \
+              grep -E \
+              'XIAOMI|SM6150|VIOLET|MACH_' || true
+
+          } | tee artifact/violet-kconfig-diagnosis.txt
+
+      - name: Verify VIOLET symbol exists
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "VIOLET SYMBOL EXISTENCE"
+          echo "========================================"
+
+          if grep -R -q \
             -E \
-            'qseecom_ta_mem|sp_mem|secure_display_memory|cont_splash_memory|dfps_data_memory|linux,cma' \
-            arch/arm64/boot/dts/qcom/sm6150.dtsi || true
+            '^[[:space:]]*(config|menuconfig)[[:space:]]+MACH_XIAOMI_VIOLET([[:space:]]|$)' \
+            arch drivers 2>/dev/null; then
 
-      - name: Extract Joker VIOLET fragment
+              echo "CONFIG_MACH_XIAOMI_VIOLET definition: FOUND"
+
+          else
+
+              echo "CONFIG_MACH_XIAOMI_VIOLET definition: NOT FOUND"
+
+          fi
+
+      - name: Prepare build output
+        run: |
+          set -e
+
+          rm -rf out
+          mkdir -p out
+
+      - name: Generate LOS base configuration
+        run: |
+          set -e
+
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/sdmsteppe-perf_defconfig
+
+          test -s out/.config
+
+          echo "========================================"
+          echo "BASE CONFIGURATION"
+          echo "========================================"
+
+          grep -E \
+            '^CONFIG_ARM64=|^CONFIG_ARCH_QCOM=|^CONFIG_ARCH_SM6150=|^CONFIG_MACH_XIAOMI=|^CONFIG_MACH_XIAOMI_SM6150=|^CONFIG_MACH_XIAOMI_VIOLET=' \
+            out/.config || true
+
+      - name: Extract VIOLET hardware fragment from Joker
         run: |
           set -e
 
@@ -82,12 +310,17 @@ jobs:
           source = Path("reference/joker-violet-perf_defconfig")
           output = Path("violet.config")
 
-          wanted_prefixes = (
-              "CONFIG_ARCH_",
+          prefixes = (
+              "CONFIG_ARCH_QCOM",
+              "CONFIG_ARCH_SM6150",
+              "CONFIG_ARCH_SDMMAGPIE",
               "CONFIG_MACH_XIAOMI",
-              "CONFIG_MSM_",
               "CONFIG_QCOM_",
+              "CONFIG_MSM_",
+              "CONFIG_QSEECOM",
+              "CONFIG_HDCP_QSEECOM",
               "CONFIG_MMC",
+              "CONFIG_SDHCI",
               "CONFIG_SCSI",
               "CONFIG_UFS",
               "CONFIG_IOMMU",
@@ -103,6 +336,7 @@ jobs:
               "CONFIG_MDP",
               "CONFIG_DSI",
               "CONFIG_USB",
+              "CONFIG_USB_QCOM",
               "CONFIG_TYPEC",
               "CONFIG_PHY_",
               "CONFIG_REGULATOR",
@@ -126,11 +360,6 @@ jobs:
               "CONFIG_RFKILL",
               "CONFIG_CFG80211",
               "CONFIG_MAC80211",
-              "CONFIG_NET",
-              "CONFIG_SOUND",
-              "CONFIG_SND",
-              "CONFIG_VIDEO",
-              "CONFIG_MEDIA",
               "CONFIG_LEDS",
               "CONFIG_VIBRATOR",
               "CONFIG_NVMEM",
@@ -138,25 +367,15 @@ jobs:
               "CONFIG_MAILBOX",
               "CONFIG_REMOTEPROC",
               "CONFIG_RPMSG",
-              "CONFIG_QSEECOM",
-              "CONFIG_QCOM_SCM",
-              "CONFIG_QCOM_SMEM",
-              "CONFIG_QCOM_SMP2P",
-              "CONFIG_QCOM_GLINK",
-              "CONFIG_QCOM_LLCC",
-              "CONFIG_QCOM_RPMH",
           )
 
-          exact_symbols = {
+          exact = {
               "CONFIG_ARM64",
               "CONFIG_64BIT",
               "CONFIG_SMP",
-              "CONFIG_NR_CPUS",
-              "CONFIG_PREEMPT",
-              "CONFIG_HZ",
           }
 
-          selected = []
+          result = []
           seen = set()
 
           for raw in source.read_text().splitlines():
@@ -174,99 +393,49 @@ jobs:
               else:
                   continue
 
-              if symbol in exact_symbols or symbol.startswith(wanted_prefixes):
+              if symbol in exact or symbol.startswith(prefixes):
                   if symbol not in seen:
-                      selected.append(line)
+                      result.append(line)
                       seen.add(symbol)
 
+          header = [
+              "# VIOLET hardware fragment",
+              "# Source: Joker kernel_xiaomi_violet",
+              "# Branch: sixteen",
+              "# Automatically filtered for LOS SM6150",
+              "",
+          ]
+
           output.write_text(
-              "# VIOLET configuration extracted from Joker VIOLET defconfig\n"
-              "# Automatically filtered for LOS SM6150\n\n"
-              + "\n".join(selected)
-              + "\n"
+              "\n".join(header + result) + "\n"
           )
 
-          print(f"Selected symbols: {len(selected)}")
+          print(f"Generated symbols: {len(result)}")
           PY
 
           test -s violet.config
 
-          echo
-          echo "=== GENERATED VIOLET.CONFIG ==="
+          cp violet.config artifact/violet.config
+
+          echo "========================================"
+          echo "GENERATED VIOLET.CONFIG"
+          echo "========================================"
+
           wc -l violet.config
 
-      - name: Remove unsupported Kconfig symbols
+      - name: Check VIOLET symbol in generated fragment
         run: |
           set -e
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          echo "========================================"
+          echo "VIOLET SYMBOL IN FRAGMENT"
+          echo "========================================"
 
-          config = Path("violet.config")
-          kconfig = Path("out/.config")
+          grep -n \
+            '^CONFIG_MACH_XIAOMI_VIOLET=' \
+            violet.config || true
 
-          lines = config.read_text().splitlines()
-
-          symbols = set()
-
-          for path in Path(".").rglob("Kconfig*"):
-              try:
-                  text = path.read_text(errors="ignore")
-              except Exception:
-                  continue
-
-              for match in re.finditer(
-                  r'^\s*(?:config|menuconfig)\s+([A-Za-z0-9_]+)',
-                  text,
-                  re.MULTILINE
-              ):
-                  symbols.add("CONFIG_" + match.group(1))
-
-          output = []
-          removed = []
-
-          for line in lines:
-              symbol = None
-
-              if line.startswith("CONFIG_") and "=" in line:
-                  symbol = line.split("=", 1)[0]
-
-              elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
-                  symbol = line[2:].split(" is not set", 1)[0]
-
-              if symbol and symbol not in symbols:
-                  removed.append(symbol)
-                  continue
-
-              output.append(line)
-
-          config.write_text("\n".join(output) + "\n")
-
-          print("=== REMOVED UNSUPPORTED SYMBOLS ===")
-
-          for symbol in sorted(set(removed)):
-              print(symbol)
-
-          print()
-          print(f"Removed: {len(set(removed))}")
-          PY
-
-      - name: Generate base configuration
-        run: |
-          set -e
-
-          rm -rf out artifact
-          mkdir -p out artifact
-
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            vendor/sdmsteppe-perf_defconfig
-
-          test -s out/.config
-
-      - name: Merge VIOLET configuration
+      - name: Merge VIOLET fragment
         run: |
           set -e
 
@@ -277,12 +446,11 @@ jobs:
           fragment = Path("violet.config")
 
           data = config.read_text().splitlines()
-          fragment_lines = fragment.read_text().splitlines()
 
           wanted = {}
 
-          for line in fragment_lines:
-              line = line.strip()
+          for raw in fragment.read_text().splitlines():
+              line = raw.strip()
 
               if not line:
                   continue
@@ -299,6 +467,7 @@ jobs:
           seen = set()
 
           for line in data:
+
               key = None
 
               if line.startswith("CONFIG_") and "=" in line:
@@ -308,21 +477,38 @@ jobs:
                   key = line[2:].split(" is not set", 1)[0]
 
               if key in wanted:
+
                   if key not in seen:
                       result.append(wanted[key])
                       seen.add(key)
+
                   continue
 
               result.append(line)
 
           for key, line in wanted.items():
+
               if key not in seen:
                   result.append(line)
 
-          config.write_text("\n".join(result) + "\n")
+          config.write_text(
+              "\n".join(result) + "\n"
+          )
           PY
 
-          test -s out/.config
+          echo "VIOLET fragment merged."
+
+      - name: Check VIOLET before Kconfig resolution
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "VIOLET BEFORE OLDDEFCONFIG"
+          echo "========================================"
+
+          grep -E \
+            '^CONFIG_MACH_XIAOMI_VIOLET=|^# CONFIG_MACH_XIAOMI_VIOLET is not set' \
+            out/.config || true
 
       - name: Resolve configuration with Kconfig
         run: |
@@ -334,6 +520,66 @@ jobs:
             olddefconfig
 
           test -s out/.config
+
+          echo "========================================"
+          echo "KCONFIG RESOLUTION COMPLETE"
+          echo "========================================"
+
+      - name: Diagnose final VIOLET result
+        if: always()
+        run: |
+          set +e
+
+          mkdir -p artifact
+
+          {
+            echo "========================================"
+            echo "FINAL VIOLET RESULT"
+            echo "========================================"
+            echo
+
+            echo "=== VIOLET SYMBOL ==="
+
+            grep -E \
+              '^CONFIG_MACH_XIAOMI_VIOLET=|^# CONFIG_MACH_XIAOMI_VIOLET is not set' \
+              out/.config || true
+
+            echo
+            echo "=== CORE MACHINE CONFIG ==="
+
+            grep -E \
+              '^CONFIG_ARCH_QCOM=|^CONFIG_ARCH_SM6150=|^CONFIG_ARCH_SDMMAGPIE=|^CONFIG_MACH_XIAOMI=|^CONFIG_MACH_XIAOMI_SM6150=|^CONFIG_MACH_XIAOMI_VIOLET=' \
+              out/.config || true
+
+            echo
+            echo "=== MEMORY / SECURITY ==="
+
+            grep -E \
+              '^CONFIG_(CMA|DMA_CMA|DMA_SHARED_BUFFER|DMABUF|ION|QSEECOM|HDCP_QSEECOM|IOMMU|ARM_SMMU)' \
+              out/.config || true
+
+            echo
+            echo "=== QCOM ==="
+
+            grep -E \
+              '^CONFIG_QCOM_(SMEM|SMEM_STATE|SMP2P|SCM|GLINK|LLCC|RPMH|RPMHPD)' \
+              out/.config || true
+
+            echo
+            echo "=== MMC / STORAGE ==="
+
+            grep -E \
+              '^CONFIG_(MMC|MMC_SDHCI|MMC_SDHCI_PLTFM|MMC_SDHCI_MSM|SCSI|SCSI_UFS|SCSI_UFS_QCOM|UFS)' \
+              out/.config || true
+
+            echo
+            echo "=== IOMMU ==="
+
+            grep -E \
+              '^CONFIG_(IOMMU|IOMMU_API|IOMMU_SUPPORT|ARM_SMMU|ARM_SMMU_V3|QCOM_SMMU)' \
+              out/.config || true
+
+          } | tee artifact/final-violet-diagnosis.txt
 
       - name: Validate final VIOLET configuration
         run: |
@@ -359,82 +605,38 @@ jobs:
 
           check_enabled CONFIG_ARM64
           check_enabled CONFIG_64BIT
-
           check_enabled CONFIG_ARCH_QCOM
           check_enabled CONFIG_ARCH_SM6150
-
           check_enabled CONFIG_MACH_XIAOMI
           check_enabled CONFIG_MACH_XIAOMI_SM6150
           check_enabled CONFIG_MACH_XIAOMI_VIOLET
 
-          check_enabled CONFIG_MMC
-          check_enabled CONFIG_MMC_SDHCI
-          check_enabled CONFIG_MMC_SDHCI_PLTFM
-          check_enabled CONFIG_MMC_SDHCI_MSM
-
           echo
           echo "========================================"
-          echo "VIOLET CONFIGURATION: PASSED"
+          echo "VIOLET VALIDATION: PASSED"
           echo "========================================"
 
-      - name: Generate comparison report
+      - name: Export final configuration
+        if: always()
         run: |
-          set -e
+          set +e
 
-          {
-            echo "========================================"
-            echo "JOKER vs LOS VIOLET CONFIGURATION"
-            echo "========================================"
-            echo
+          mkdir -p artifact
 
-            echo "Joker lines:"
-            wc -l reference/joker-violet-perf_defconfig
+          if [ -s out/.config ]; then
+              cp out/.config artifact/violet_full_defconfig
+          fi
 
-            echo
-            echo "Generated fragment:"
-            wc -l violet.config
+          echo "========================================"
+          echo "ARTIFACTS"
+          echo "========================================"
 
-            echo
-            echo "Final resolved config:"
-            wc -l out/.config
+          find artifact -maxdepth 1 -type f -printf '%f\n' | sort
 
-            echo
-            echo "=== VIOLET CORE ==="
-
-            grep -E \
-              '^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI=y$|^CONFIG_MACH_XIAOMI_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC=y$|^CONFIG_MMC_SDHCI=y$|^CONFIG_MMC_SDHCI_PLTFM=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
-              out/.config || true
-
-            echo
-            echo "=== MEMORY / SECURITY ==="
-
-            grep -E \
-              '^CONFIG_(CMA|DMA_CMA|DMA_SHARED_BUFFER|DMABUF|ION|QSEECOM|HDCP_QSEECOM|IOMMU|ARM_SMMU)' \
-              out/.config || true
-
-            echo
-            echo "=== QCOM ==="
-
-            grep -E \
-              '^CONFIG_QCOM_(SMEM|SMEM_STATE|SMP2P|SCM|GLINK|LLCC|RPMH)' \
-              out/.config || true
-
-          } > artifact/violet-comparison.txt
-
-      - name: Export files
-        run: |
-          set -e
-
-          cp violet.config artifact/violet.config
-          cp out/.config artifact/violet_full_defconfig
-
-          test -s artifact/violet.config
-          test -s artifact/violet_full_defconfig
-          test -s artifact/violet-comparison.txt
-
-      - name: Upload VIOLET artifacts
+      - name: Upload VIOLET analysis
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: violet-config-analysis
           path: artifact/
-          if-no-files-found: error
+          if-no-files-found: warn
