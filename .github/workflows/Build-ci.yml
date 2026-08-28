@@ -1,4 +1,4 @@
-name: Generate Modern Violet Defconfig (Fixed)
+name: Generate Modern Violet Defconfig (Kconfig Debug)
 
 on:
   workflow_dispatch:
@@ -32,18 +32,16 @@ jobs:
             gcc-arm-linux-gnueabi \
             python3
 
-      - name: Verify required kernel configs
+      - name: Verify required configs
         run: |
           set -e
 
           test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
           test -f arch/arm64/configs/vendor/violet.config
 
-          echo "Found:"
-          echo "  vendor/sdmsteppe-perf_defconfig"
-          echo "  vendor/violet.config"
+          echo "Required configuration files found."
 
-      - name: Generate Qualcomm SM6150 base configuration
+      - name: Generate base configuration
         run: |
           set -e
 
@@ -53,8 +51,6 @@ jobs:
           make O=out ARCH=arm64 vendor/sdmsteppe-perf_defconfig
 
           test -s out/.config
-
-          echo "Base configuration generated successfully."
 
       - name: Merge Violet configuration
         run: |
@@ -67,9 +63,7 @@ jobs:
 
           test -s out/.config
 
-          echo "Violet configuration merged successfully."
-
-      - name: Resolve final configuration
+      - name: Resolve configuration
         run: |
           set -e
 
@@ -77,9 +71,97 @@ jobs:
 
           test -s out/.config
 
-          echo "Final configuration resolved successfully."
+      - name: Kconfig Debug Report
+        if: always()
+        run: |
+          set +e
 
-      - name: Save full Violet configuration
+          mkdir -p kconfig-debug
+
+          REPORT="kconfig-debug/kconfig-debug.txt"
+
+          echo "========================================" > "$REPORT"
+          echo "VIOLET KCONFIG DEBUG REPORT" >> "$REPORT"
+          echo "========================================" >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== KERNEL VERSION ===" >> "$REPORT"
+          head -n 10 Makefile >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== BASE DEFCONFIG ===" >> "$REPORT"
+          cat arch/arm64/configs/vendor/sdmsteppe-perf_defconfig >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== VIOLET FRAGMENT ===" >> "$REPORT"
+          cat arch/arm64/configs/vendor/violet.config >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== FINAL VALUES ===" >> "$REPORT"
+
+          for symbol in \
+            CONFIG_ARCH_QCOM \
+            CONFIG_ARCH_SM6150 \
+            CONFIG_ARCH_SDMMAGPIE \
+            CONFIG_MACH_XIAOMI_VIOLET
+          do
+            echo >> "$REPORT"
+            echo "--- $symbol ---" >> "$REPORT"
+            grep -E "^${symbol}=|^# ${symbol} is not set" \
+              out/.config >> "$REPORT"
+          done
+
+          echo >> "$REPORT"
+          echo "=== ALL CONFIG DEFINITIONS ===" >> "$REPORT"
+
+          grep -R -n -E \
+            "^[[:space:]]*(config|menuconfig)[[:space:]]+(ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET)([[:space:]]|$)" \
+            arch/arm64 arch/arm drivers 2>/dev/null \
+            >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== ALL REFERENCES TO TARGET SYMBOLS ===" >> "$REPORT"
+
+          grep -R -n -E \
+            "ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET" \
+            arch/arm64 arch/arm drivers 2>/dev/null \
+            | grep -v "/.git/" \
+            >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== KCONFIG FILES ===" >> "$REPORT"
+
+          find arch/arm64 arch/arm drivers \
+            -type f \( -name "Kconfig" -o -name "Kconfig.*" \) \
+            2>/dev/null \
+            | sort \
+            > kconfig-debug/kconfig-files.txt
+
+          echo >> "$REPORT"
+          echo "=== MERGE CONFIG LOGIC ===" >> "$REPORT"
+
+          sed -n '1,260p' scripts/kconfig/merge_config.sh \
+            > kconfig-debug/merge_config.sh.txt
+
+          echo >> "$REPORT"
+          echo "=== FINAL FULL CONFIG ===" >> "$REPORT"
+
+          cp out/.config kconfig-debug/final.config
+
+          echo >> "$REPORT"
+          echo "=== SYMBOL SEARCH IN FINAL CONFIG ===" >> "$REPORT"
+
+          grep -n -E \
+            "ARCH_QCOM|ARCH_SM6150|ARCH_SDMMAGPIE|MACH_XIAOMI_VIOLET" \
+            out/.config \
+            >> "$REPORT"
+
+          echo >> "$REPORT"
+          echo "=== KCONFIG DEBUG COMPLETE ===" >> "$REPORT"
+
+          cat "$REPORT"
+
+      - name: Save full configuration
         run: |
           set -e
 
@@ -87,10 +169,7 @@ jobs:
 
           test -s violet-full.config
 
-          echo "Created:"
-          echo "  violet-full.config"
-
-      - name: Generate Violet perf defconfig
+      - name: Generate final defconfig
         run: |
           set -e
 
@@ -100,38 +179,13 @@ jobs:
 
           cp out/defconfig violet-perf_defconfig
 
-          test -s violet-perf_defconfig
-
-          echo "Created:"
-          echo "  violet-perf_defconfig"
-
-      - name: Show generated defconfig
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "GENERATED VIOLET PERF DEFCONFIG"
-          echo "========================================"
-
-          cat violet-perf_defconfig
-
-          echo
-          echo "========================================"
-          echo "LINE COUNTS"
-          echo "========================================"
-
-          echo "violet-perf_defconfig:"
-          wc -l violet-perf_defconfig
-
-          echo
-          echo "violet-full.config:"
-          wc -l violet-full.config
-
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: modern-violet-defconfig
+          name: modern-violet-defconfig-debug
           path: |
             violet-perf_defconfig
             violet-full.config
+            kconfig-debug/
           if-no-files-found: error
