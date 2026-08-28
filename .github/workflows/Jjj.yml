@@ -1,4 +1,4 @@
-name: Deep Analyze Device Tree Memory
+name: Analyze SM6150 Reserved Memory
 
 on:
   workflow_dispatch:
@@ -15,188 +15,30 @@ jobs:
           ref: 16
           fetch-depth: 1
 
-      - name: Deep Device Tree Memory Analysis
+      - name: Show SM6150 memory definitions
         run: |
           set -e
 
-          REPORT="device_tree_memory_report.txt"
+          FILE="arch/arm64/boot/dts/qcom/sm6150.dtsi"
 
-          {
-            echo "========================================"
-            echo "DEEP DEVICE TREE MEMORY ANALYSIS"
-            echo "========================================"
-            echo
-            echo "COMMIT: $(git rev-parse HEAD)"
-            echo
+          echo "========================================"
+          echo "SM6150 RESERVED MEMORY"
+          echo "========================================"
 
-            echo "========================================"
-            echo "[1] TARGET MEMORY SYMBOLS"
-            echo "========================================"
+          nl -ba "$FILE" | sed -n '530,650p'
 
-            for symbol in \
-              disp_rdump_memory \
-              qseecom_ta_mem \
-              sp_mem \
-              secure_display_memory \
-              cont_splash_memory \
-              dfps_data_memory \
-              linux,cma
-            do
-              echo
-              echo "----- SYMBOL: $symbol -----"
-              git grep -n -E "$symbol" -- \
-                '*.dts' '*.dtsi' || true
-            done
+          echo
+          echo "========================================"
+          echo "DISP RDUMP SEARCH"
+          echo "========================================"
 
-            echo
+          git grep -n "disp_rdump" -- \
+            '*.dts' '*.dtsi' || true
 
-            echo "========================================"
-            echo "[2] EXACT LABEL DEFINITIONS"
-            echo "========================================"
+          echo
+          echo "========================================"
+          echo "DFPS SEARCH"
+          echo "========================================"
 
-            git grep -n -E \
-              '(disp_rdump_memory|qseecom_ta_mem|sp_mem|secure_display_memory|cont_splash_memory|dfps_data_memory)[[:space:]]*:' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[3] DTS NODE REFERENCES"
-            echo "========================================"
-
-            git grep -n -E \
-              '&(disp_rdump_memory|qseecom_ta_mem|sp_mem|secure_display_memory|cont_splash_memory|dfps_data_memory)([[:space:];,}]|$)' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[4] VIOLET MEMORY DTSI"
-            echo "========================================"
-
-            FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
-
-            if [ -f "$FILE" ]; then
-              echo "FILE: $FILE"
-              echo
-              nl -ba "$FILE" | sed -n '1,160p'
-            else
-              echo "NOT FOUND: $FILE"
-            fi
-
-            echo
-
-            echo "========================================"
-            echo "[5] VIOLET DTS FILE"
-            echo "========================================"
-
-            VIOLET="arch/arm64/boot/dts/qcom/violet-sm6150.dts"
-
-            if [ -f "$VIOLET" ]; then
-              echo "FILE: $VIOLET"
-              echo
-              nl -ba "$VIOLET" | sed -n '1,160p'
-            else
-              echo "NOT FOUND: $VIOLET"
-            fi
-
-            echo
-
-            echo "========================================"
-            echo "[6] MEMORY DTSI INCLUDE REFERENCES"
-            echo "========================================"
-
-            git grep -n \
-              'violet-sm6150-memory.dtsi' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[7] ALL VIOLET INCLUDES"
-            echo "========================================"
-
-            git grep -n \
-              '#include' -- \
-              'arch/arm64/boot/dts/qcom/xiaomi/violet/*.dts' \
-              'arch/arm64/boot/dts/qcom/xiaomi/violet/*.dtsi' \
-              'arch/arm64/boot/dts/qcom/violet-sm6150.dts' \
-              'arch/arm64/boot/dts/qcom/*.dts' \
-              'arch/arm64/boot/dts/qcom/*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[8] ALL RESERVED-MEMORY NODES"
-            echo "========================================"
-
-            git grep -n -E \
-              'reserved-memory|shared-dma-pool|no-map|reusable' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[9] RELATED DISPLAY MEMORY"
-            echo "========================================"
-
-            git grep -n -E \
-              '(disp|display|dfps|splash|rdump).*(mem|memory)|((mem|memory).*(disp|display|dfps|splash|rdump))' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[10] LABEL/PATH REFERENCES USING &"
-            echo "========================================"
-
-            git grep -n -E \
-              '&[A-Za-z0-9_,.-]*(rdump|display|disp|dfps|splash|mem|memory)[A-Za-z0-9_,.-]*' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "[11] POSSIBLE DUPLICATE DEFINITIONS"
-            echo "========================================"
-
-            for symbol in \
-              disp_rdump_memory \
-              qseecom_ta_mem \
-              sp_mem \
-              secure_display_memory \
-              cont_splash_memory \
-              dfps_data_memory
-            do
-              COUNT=$(git grep -h -E "^.*${symbol}[[:space:]]*:" -- \
-                '*.dts' '*.dtsi' 2>/dev/null | wc -l)
-
-              echo "$symbol definitions: $COUNT"
-            done
-
-            echo
-
-            echo "========================================"
-            echo "[12] FILES REFERENCING MEMORY SYMBOLS"
-            echo "========================================"
-
-            git grep -l -E \
-              'disp_rdump_memory|qseecom_ta_mem|sp_mem|secure_display_memory|cont_splash_memory|dfps_data_memory|linux,cma' -- \
-              '*.dts' '*.dtsi' || true
-
-            echo
-
-            echo "========================================"
-            echo "END OF REPORT"
-            echo "========================================"
-
-          } > "$REPORT"
-
-          cat "$REPORT"
-
-      - name: Upload report
-        uses: actions/upload-artifact@v4
-        with:
-          name: device-tree-memory-analysis
-          path: device_tree_memory_report.txt
-          if-no-files-found: error
+          git grep -n "dfps_data_memory" -- \
+            '*.dts' '*.dtsi' || true
