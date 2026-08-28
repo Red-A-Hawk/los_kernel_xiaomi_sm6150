@@ -238,10 +238,11 @@ jobs:
           rm -rf verify
           mkdir -p verify
 
+          cp violet-perf_defconfig verify/.config
+
           make \
             O=verify \
             ARCH=arm64 \
-            KCONFIG_CONFIG="$GITHUB_WORKSPACE/violet-perf_defconfig" \
             olddefconfig
 
           test -f verify/.config
@@ -269,6 +270,41 @@ jobs:
             '^CONFIG_.*TAS2563.*=' \
             verify/.config || true
 
+          echo
+          echo "=== CONFIG SIZE ==="
+
+          wc -l verify/.config
+
+      - name: Compare generated config
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CONFIG COMPARISON"
+          echo "========================================"
+
+          make \
+            O=verify \
+            ARCH=arm64 \
+            savedefconfig
+
+          echo
+          echo "Comparing generated defconfig with reconstructed defconfig..."
+
+          diff -u \
+            violet-perf_defconfig \
+            verify/defconfig \
+            > defconfig.diff || true
+
+          if [ -s defconfig.diff ]; then
+            echo
+            echo "Differences found:"
+            cat defconfig.diff
+          else
+            echo
+            echo "Defconfig is stable."
+          fi
+
       - name: Upload modern Violet defconfig
         uses: actions/upload-artifact@v4
         with:
@@ -289,3 +325,10 @@ jobs:
           name: violet-verification-config
           path: verify/.config
           if-no-files-found: error
+
+      - name: Upload config comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: violet-defconfig-comparison
+          path: defconfig.diff
+          if-no-files-found: warn
