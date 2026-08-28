@@ -1,10 +1,10 @@
 name: Diagnose Violet DTS Memory References
 
-on:
-workflow_dispatch:
+ on:
+ workflow_dispatch:
 
-jobs:
-diagnose:
+ jobs:
+ diagnose:
 runs-on: ubuntu-22.04
 
 steps:
