@@ -61,22 +61,31 @@ jobs:
 
         echo "$PWD/clang/bin" >> "$GITHUB_PATH"
 
-    # 4. Verify Clang and LLD
+    # 4. Verify toolchain
     - name: Verify Clang toolchain
       run: |
         set -e
 
-        echo "=== CLANG ==="
+        echo "========================================"
+        echo "CLANG"
+        echo "========================================"
+
         which clang
         clang --version
 
         echo
-        echo "=== LLD ==="
+        echo "========================================"
+        echo "LLD"
+        echo "========================================"
+
         which ld.lld
         ld.lld --version
 
         echo
-        echo "=== DTC ==="
+        echo "========================================"
+        echo "DTC"
+        echo "========================================"
+
         which dtc
         dtc --version
 
@@ -109,28 +118,22 @@ jobs:
         echo "========================================"
 
         echo
-        echo "=== KERNEL TREE ==="
-        pwd
-
-        echo
         echo "=== violet-sm6150.dtsi ==="
-        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi ]; then
-          nl -ba \
-            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
-            | sed -n '1,120p'
-        else
-          echo "FILE NOT FOUND"
-        fi
+        nl -ba \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
+          | sed -n '1,120p'
 
         echo
         echo "=== violet-sm6150-memory.dtsi ==="
-        if [ -f arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi ]; then
-          nl -ba \
-            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
-            | sed -n '1,160p'
-        else
-          echo "FILE NOT FOUND"
-        fi
+        nl -ba \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi \
+          | sed -n '1,160p'
+
+        echo
+        echo "=== INCLUDED FILES ==="
+        grep -n \
+          '^#include' \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
 
         echo
         echo "=== reserved_memory DEFINITIONS ==="
@@ -142,44 +145,51 @@ jobs:
           | head -250
 
         echo
-        echo "=== MEMORY NODE DEFINITIONS ==="
+        echo "=== MEMORY LABELS ==="
         grep -R -n \
           -E "pil_modem_mem|pil_video_mem|wlan_msa_mem|pil_cdsp_mem|pil_adsp_mem|pil_ipa_fw_mem|pil_ipa_gsi_mem|pil_gpu_mem|dfps_data_memory|disp_rdump_memory" \
           arch/arm64/boot/dts/qcom 2>/dev/null \
           | head -250
 
         echo
-        echo "=== CHECK INCLUDED FILES ==="
-        grep -n \
-          '^#include' \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
+        echo "=== CHECK FILES ==="
+
+        for file in \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi \
+          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
+        do
+          if [ -f "$file" ]; then
+            echo "FOUND: $file"
+          else
+            echo "MISSING: $file"
+          fi
+        done
 
         echo
-        echo "=== DTS COMPILATION TEST ==="
+        echo "========================================"
+        echo "DTS COMPILATION TEST"
+        echo "========================================"
 
         make O=out \
           ARCH=arm64 \
           LLVM=1 \
           LLVM_IAS=1 \
-          arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtb
+          qcom/xiaomi/violet/violet-sm6150.dtb \
+          2>&1 | tee dts-error.log
 
-        DTS_RESULT=$?
+        DTS_RESULT=${PIPESTATUS[0]}
 
         echo
         echo "========================================"
         echo "DTS RETURN CODE: $DTS_RESULT"
         echo "========================================"
 
-        if [ "$DTS_RESULT" -ne 0 ]; then
-          echo
-          echo "DTS COMPILATION FAILED"
-          echo "The full error above is the important part."
-        else
-          echo
-          echo "DTS COMPILATION PASSED"
-        fi
+        echo
+        echo "=== DTS ERROR LOG ==="
 
-        exit 0
+        cat dts-error.log
+
+        exit "$DTS_RESULT"
 
     # 8. Build kernel
     - name: Build kernel
@@ -193,7 +203,9 @@ jobs:
       run: |
         set -e
 
-        echo "=== CHECKING KERNEL ==="
+        echo "========================================"
+        echo "KERNEL OUTPUT"
+        echo "========================================"
 
         test -f out/arch/arm64/boot/Image.gz
 
@@ -247,13 +259,13 @@ jobs:
         name: build-log
         path: build.log
 
-    # 13. Upload DTS debug information
-    - name: Upload DTS debug
+    # 13. Upload DTS debug log
+    - name: Upload DTS debug log
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: violet-dts-debug
         path: |
-          /tmp/violet-preprocessed.dts
+          dts-error.log
           arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150.dtsi
           arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
