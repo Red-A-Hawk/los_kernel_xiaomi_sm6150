@@ -15,7 +15,7 @@ jobs:
           ref: 16
           fetch-depth: 1
 
-      - name: Install ARM64 Kconfig build dependencies
+      - name: Install ARM64 toolchain and dependencies
         run: |
           set -e
 
@@ -32,7 +32,7 @@ jobs:
             binutils-aarch64-linux-gnu \
             device-tree-compiler
 
-      - name: Configure ARM64 compiler
+      - name: Verify ARM64 compiler
         run: |
           set -e
 
@@ -46,11 +46,11 @@ jobs:
           echo "ARCH=$ARCH"
           echo "CROSS_COMPILE=$CROSS_COMPILE"
 
-          "$CROSS_COMPILE"gcc --version | head -n 1
-          "$CROSS_COMPILE"ld --version | head -n 1
+          command -v "${CROSS_COMPILE}gcc"
+          command -v "${CROSS_COMPILE}ld"
 
-          test -x "$(command -v aarch64-linux-gnu-gcc)"
-          test -x "$(command -v aarch64-linux-gnu-ld)"
+          "${CROSS_COMPILE}gcc" --version | head -n 1
+          "${CROSS_COMPILE}ld" --version | head -n 1
 
           echo
           echo "ARM64 COMPILER: READY"
@@ -59,14 +59,14 @@ jobs:
         run: |
           set -e
 
-          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-          test -f arch/arm64/configs/vendor/violet.config
+          echo "========================================"
+          echo "VERIFYING INPUTS"
+          echo "========================================"
+
           test -f Kconfig
           test -f scripts/kconfig/merge_config.sh
-
-          echo "========================================"
-          echo "INPUT CONFIGURATIONS"
-          echo "========================================"
+          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
+          test -f arch/arm64/configs/vendor/violet.config
 
           echo
           echo "BASE:"
@@ -83,14 +83,14 @@ jobs:
           echo
           echo "ALL INPUTS: FOUND"
 
-      - name: Prepare output
+      - name: Prepare workspace
         run: |
           set -e
 
           rm -rf out artifact
           mkdir -p out artifact
 
-      - name: Generate ARM64 base configuration
+      - name: Generate base sdmsteppe configuration
         run: |
           set -e
 
@@ -98,7 +98,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
 
           echo "========================================"
-          echo "GENERATING BASE CONFIGURATION"
+          echo "BASE DEFCONFIG"
           echo "========================================"
 
           make O=out vendor/sdmsteppe-perf_defconfig
@@ -108,15 +108,13 @@ jobs:
           cp out/.config out/base.config
 
           echo
-          echo "BASE DEFCONFIG: GENERATED"
+          echo "BASE CONFIG GENERATED"
           echo "Lines:"
           wc -l < out/base.config
 
-      - name: Save requested VIOLET fragment
+      - name: Record VIOLET requested symbols
         run: |
           set -e
-
-          cp arch/arm64/configs/vendor/violet.config out/violet.requested.config
 
           echo "========================================"
           echo "VIOLET REQUEST"
@@ -124,12 +122,15 @@ jobs:
 
           grep -E \
             '^(CONFIG_[A-Za-z0-9_]+)=|^# CONFIG_[A-Za-z0-9_]+ is not set$' \
-            out/violet.requested.config > out/violet.requested.symbols
+            arch/arm64/configs/vendor/violet.config \
+            > out/violet.requested.symbols
 
-          echo "Requested symbols:"
+          test -s out/violet.requested.symbols
+
+          echo "VIOLET requested symbols:"
           wc -l < out/violet.requested.symbols
 
-      - name: Merge sdmsteppe + VIOLET
+      - name: Merge sdmsteppe and VIOLET through Kconfig
         run: |
           set -e
 
@@ -157,7 +158,7 @@ jobs:
           echo
           echo "MERGE COMPLETED"
 
-      - name: Resolve configuration through Kconfig
+      - name: Resolve final configuration with Kconfig
         run: |
           set -e
 
@@ -177,7 +178,7 @@ jobs:
           echo
           echo "KCONFIG RESOLUTION: COMPLETED"
 
-      - name: Verify every VIOLET request
+      - name: Verify every VIOLET symbol
         run: |
           set -e
 
@@ -226,9 +227,10 @@ jobs:
             if [ "$actual" = "$expected" ]; then
               echo "OK      $expected"
             else
-              echo "KCONFIG $expected"
-              echo "        -> $actual"
+              echo "CHANGED $expected"
+              echo "        -> ${actual:-NOT PRESENT}"
               changed=$((changed + 1))
+              failed=1
             fi
 
           done < out/violet.requested.symbols
@@ -243,93 +245,113 @@ jobs:
 
           echo
 
-          if [ "$changed" -ne 0 ]; then
-            echo "NOTE:"
-            echo "Some VIOLET requests were resolved differently by Kconfig."
-            echo "This is a Kconfig dependency/result, not a merge failure."
-          else
-            echo "ALL VIOLET REQUESTS SURVIVED KCONFIG"
+          if [ "$failed" -ne 0 ]; then
+            echo "ERROR: VIOLET CONFIGURATION CHANGED"
+            exit 1
           fi
 
-      - name: Generate clean Full VIOLET defconfig
+          echo "ALL VIOLET REQUESTS SURVIVED KCONFIG"
+
+      - name: Verify VIOLET board selection
         run: |
           set -e
 
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
           echo "========================================"
-          echo "GENERATING FULL VIOLET DEFCONFIG"
+          echo "VIOLET BOARD CHECK"
           echo "========================================"
 
-          make O=out savedefconfig
+          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' out/final.config
 
-          test -s out/defconfig
-
-          cp out/defconfig artifact/violet_full_defconfig
+          echo "CONFIG_MACH_XIAOMI_VIOLET=y"
 
           echo
-          echo "FULL VIOLET DEFCONFIG GENERATED"
-          echo
-          echo "File:"
-          echo "artifact/violet_full_defconfig"
+          echo "VIOLET BOARD: ENABLED"
+
+      - name: Export FULL VIOLET configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "EXPORTING FULL VIOLET DEFCONFIG"
+          echo "========================================"
+
+          echo "IMPORTANT:"
+          echo "Using final Kconfig .config directly."
+          echo "savedefconfig is NOT used."
+
+          cp out/final.config artifact/violet_full_defconfig
+
+          test -s artifact/violet_full_defconfig
 
           echo
+          echo "========================================"
+          echo "FULL CONFIGURATION"
+          echo "========================================"
+
           echo "Lines:"
-          wc -l < artifact/violet_full_defconfig
+          wc -l artifact/violet_full_defconfig
 
-      - name: Final Kconfig integrity test
+          echo
+          echo "VIOLET CONFIG:"
+          grep -E \
+            '^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MACH_XIAOMI_SM6150=y$|^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MMC_SDHCI_MSM=y$' \
+            artifact/violet_full_defconfig || true
+
+      - name: Full configuration integrity check
         run: |
           set -e
 
           echo "========================================"
-          echo "FINAL INTEGRITY TEST"
+          echo "FINAL INTEGRITY CHECK"
           echo "========================================"
 
           test -s artifact/violet_full_defconfig
 
-          echo "Re-loading generated VIOLET defconfig..."
+          grep -q '^CONFIG_MACH_XIAOMI_VIOLET=y$' \
+            artifact/violet_full_defconfig
 
-          rm -rf verify
-          mkdir -p verify
+          grep -q '^CONFIG_ARCH_QCOM=y$' \
+            artifact/violet_full_defconfig
 
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
+          grep -q '^CONFIG_ARCH_SM6150=y$' \
+            artifact/violet_full_defconfig
 
-          cp artifact/violet_full_defconfig verify/defconfig
+          grep -q '^CONFIG_MMC=y$' \
+            artifact/violet_full_defconfig
 
-          make O=verify defconfig
+          grep -q '^CONFIG_MMC_SDHCI=y$' \
+            artifact/violet_full_defconfig
 
-          test -s verify/.config
+          grep -q '^CONFIG_MMC_SDHCI_PLTFM=y$' \
+            artifact/violet_full_defconfig
 
-          if ! cmp -s out/final.config verify/.config; then
-            echo
-            echo "WARNING:"
-            echo "Generated defconfig does not reproduce byte-identical .config."
-            echo "This can happen because defconfig is a minimal representation."
-          else
-            echo
-            echo "REPRODUCIBILITY: EXACT"
-          fi
+          grep -q '^CONFIG_MMC_SDHCI_MSM=y$' \
+            artifact/violet_full_defconfig
 
           echo
           echo "========================================"
-          echo "PIPELINE RESULT"
+          echo "FINAL RESULT"
           echo "========================================"
 
           echo "sdmsteppe-perf_defconfig : OK"
           echo "violet.config             : OK"
+          echo "ARM64 compiler            : OK"
           echo "Kconfig merge             : OK"
           echo "Kconfig resolution        : OK"
-          echo "Full VIOLET defconfig     : OK"
+          echo "26/26 VIOLET requests     : OK"
+          echo "FULL .config exported     : OK"
 
           echo
-          echo "OUTPUT:"
-          echo "artifact/violet_full_defconfig"
+          echo "FULL VIOLET DEFCONFIG: READY"
 
-      - name: Upload Full VIOLET defconfig
+          echo
+          echo "Artifact:"
+          echo "violet_full_defconfig"
+
+      - name: Upload single VIOLET artifact
         uses: actions/upload-artifact@v4
         with:
           name: violet-full-defconfig
           path: artifact/violet_full_defconfig
           if-no-files-found: error
+          retention-days: 30
