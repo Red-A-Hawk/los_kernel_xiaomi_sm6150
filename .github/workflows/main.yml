@@ -23,11 +23,6 @@ jobs:
             git bc bison flex libssl-dev libelf-dev libncurses-dev \
             build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
 
-      # ============================================================
-      # الخطوة الحاسمة الجديدة: نطبع محتوى مجلدات الكونفيغ فعليًا
-      # بدل الافتراض. هذا يكشف أي defconfig كامل موجود فعلاً،
-      # وأي fragments (.config) موجودة لجهاز violet.
-      # ============================================================
       - name: List all available kernel configs (DIAGNOSTIC)
         run: |
           echo "========================================"
@@ -43,7 +38,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "ANY FILE CONTAINING 'violet' (full recursive search)"
+          echo "ANY FILE CONTAINING 'violet'"
           echo "========================================"
           find . -iname "*violet*" -type f 2>/dev/null | grep -v "\.git" || echo "none found"
 
@@ -51,74 +46,213 @@ jobs:
         id: pick_base
         run: |
           set -e
-          # الترتيب: أولاً نفضّل defconfig كامل خاص بالجهاز نفسه إن وُجد
-          # (بعض الأجهزة مثل sweet عندها defconfig كامل مدموج مسبقًا).
-          # violet ليس له defconfig كامل خاص به في هذه الشجرة الحديثة —
-          # فنستخدم القاعدة المشتركة لعائلة شريحة sm6150 كلها، والتي
-          # اسمها الداخلي عند Qualcomm هو "sdmsteppe" (وليس sm6150).
-          if [ -f arch/arm64/configs/vendor/violet-perf_defconfig ]; then
-            echo "BASE=vendor/violet-perf_defconfig" >> $GITHUB_OUTPUT
-            echo "Found full device defconfig: vendor/violet-perf_defconfig"
-          elif [ -f arch/arm64/configs/vendor/violet_defconfig ]; then
-            echo "BASE=vendor/violet_defconfig" >> $GITHUB_OUTPUT
-            echo "Found full device defconfig: vendor/violet_defconfig"
-          elif [ -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig ]; then
-            echo "BASE=vendor/sdmsteppe-perf_defconfig" >> $GITHUB_OUTPUT
-            echo "No per-device defconfig for violet; using shared sm6150 platform base: vendor/sdmsteppe-perf_defconfig"
+
+          # Always start from the shared Qualcomm/SM6150 platform base.
+          # Do NOT reuse a previously generated violet-perf_defconfig.
+          if [ -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig ]; then
+            echo "BASE=vendor/sdmsteppe-perf_defconfig" >> "$GITHUB_OUTPUT"
+            echo "Using shared Qualcomm SM6150 platform base:"
+            echo "vendor/sdmsteppe-perf_defconfig"
           else
-            echo "::error::Neither a violet-specific defconfig nor sdmsteppe-perf_defconfig was found."
-            echo "::error::Inspect the diagnostic listing above and pick the correct base manually."
+            echo "::error::vendor/sdmsteppe-perf_defconfig was not found."
             exit 1
           fi
 
-      - name: Generate base configuration from the correct device defconfig
+      - name: Verify Violet fragment exists
         run: |
           set -e
+
+          if [ ! -f arch/arm64/configs/vendor/violet.config ]; then
+            echo "::error::arch/arm64/configs/vendor/violet.config was not found."
+            exit 1
+          fi
+
+          echo "Found Violet fragment:"
+          echo "arch/arm64/configs/vendor/violet.config"
+
+          echo
+          echo "Violet fragment:"
+          cat arch/arm64/configs/vendor/violet.config
+
+      - name: Generate base configuration
+        run: |
+          set -e
+
           rm -rf out
           mkdir -p out
-          make O=out ARCH=arm64 ${{ steps.pick_base.outputs.BASE }}
-          test -f out/.config
-          echo "Base config generated from ${{ steps.pick_base.outputs.BASE }}"
 
-      - name: Merge latest Violet fragment on top (picks up newest updates)
+          make O=out ARCH=arm64 ${{ steps.pick_base.outputs.BASE }}
+
+          test -f out/.config
+
+          echo
+          echo "Base configuration generated successfully."
+
+      - name: Verify base configuration
         run: |
           set -e
-          if [ -f arch/arm64/configs/vendor/violet.config ]; then
-            ./scripts/kconfig/merge_config.sh -O out out/.config arch/arm64/configs/vendor/violet.config
-          else
-            echo "No violet.config fragment found, skipping merge."
-          fi
+
+          echo "Checking base platform configuration..."
+
+          grep -q "^CONFIG_ARCH_QCOM=y$" out/.config
+          grep -q "^CONFIG_ARCH_SM6150=y$" out/.config
+
+          echo "OK: Qualcomm platform base detected."
+          echo
+          grep -E "^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_ARCH_SDMMAGPIE=y$" out/.config || true
+
+      - name: Merge Violet fragment
+        run: |
+          set -e
+
+          ./scripts/kconfig/merge_config.sh \
+            -O out \
+            out/.config \
+            arch/arm64/configs/vendor/violet.config
+
+          test -f out/.config
+
+          echo
+          echo "Violet fragment merged."
 
       - name: Resolve configuration
         run: |
           set -e
+
           make O=out ARCH=arm64 olddefconfig
+
           test -f out/.config
 
-      - name: Sanity check - must be Qualcomm/QCOM based, not generic ARM64
+          echo "Configuration resolved successfully."
+
+      - name: Validate final Violet configuration
         run: |
           set -e
-          echo "Checking for QCOM platform markers (should be present):"
-          grep -E "^CONFIG_QCOM_SCM=y|^CONFIG_ARCH_QCOM" out/.config || \
-            (echo "::error::Resulting config has NO Qualcomm markers - wrong base was used!" && exit 1)
+
+          echo "========================================"
+          echo "FINAL VIOLET CONFIG VALIDATION"
+          echo "========================================"
+
+          FAIL=0
+
+          check_config() {
+            NAME="$1"
+            EXPECTED="$2"
+
+            if grep -q "^${NAME}=${EXPECTED}$" out/.config; then
+              echo "[OK]   ${NAME}=${EXPECTED}"
+            else
+              echo "[FAIL] ${NAME} expected ${EXPECTED}"
+              FAIL=1
+            fi
+          }
 
           echo
-          echo "Checking for generic/server markers (should be ABSENT):"
-          if grep -qE "^CONFIG_ACPI=y|^CONFIG_KVM=y|^CONFIG_DRM_NOUVEAU" out/.config; then
-            echo "::error::Resulting config contains generic ARM64/server options - wrong base was used!"
+          echo "--- Qualcomm / SM6150 ---"
+
+          check_config "CONFIG_ARCH_QCOM" "y"
+          check_config "CONFIG_ARCH_SM6150" "y"
+
+          echo
+          echo "--- Violet device ---"
+
+          if grep -q "^CONFIG_MACH_XIAOMI_VIOLET=y$" out/.config; then
+            echo "[OK]   CONFIG_MACH_XIAOMI_VIOLET=y"
+          else
+            echo "[WARN] CONFIG_MACH_XIAOMI_VIOLET is not present after Kconfig resolution."
+            echo "       This may mean the symbol is unavailable or renamed in this tree."
+          fi
+
+          echo
+          echo "--- Violet touchscreen ---"
+
+          check_config "CONFIG_TOUCHSCREEN_FTS_F7B" "y"
+          check_config "CONFIG_TOUCHSCREEN_NT36xxx" "y"
+          check_config "CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE" "y"
+          check_config "CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE_GAMEMODE" "y"
+          check_config "CONFIG_TOUCHSCREEN_NVT_F7B" "y"
+
+          echo
+          echo "--- Violet fingerprint ---"
+
+          check_config "CONFIG_INPUT_FINGERPRINT" "y"
+          check_config "CONFIG_FINGERPRINT_FPC1020" "y"
+          check_config "CONFIG_FINGERPRINT_GF3208" "y"
+
+          echo
+          echo "--- Violet audio ---"
+
+          check_config "CONFIG_SND_SOC_TAS2563" "y"
+          check_config "CONFIG_TAS2563_CODEC" "y"
+          check_config "CONFIG_TAS2563_MISC" "y"
+          check_config "CONFIG_TAS2563_REGMAP" "y"
+
+          echo
+          echo "--- Generic/server configuration ---"
+
+          if grep -qE "^CONFIG_ACPI=y$|^CONFIG_KVM=y$|^CONFIG_DRM_NOUVEAU=y$" out/.config; then
+            echo "[FAIL] Generic/server configuration detected."
+            FAIL=1
+          else
+            echo "[OK]   No unwanted generic/server markers detected."
+          fi
+
+          echo
+          echo "========================================"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::Final configuration validation failed."
             exit 1
           fi
-          echo "OK: config looks like a genuine Qualcomm sm6150 config."
+
+          echo "FINAL CONFIGURATION VALIDATION PASSED."
 
       - name: Save full resolved config
-        run: cp out/.config violet-full.config
+        run: |
+          set -e
+
+          cp out/.config violet-full.config
+
+          test -s violet-full.config
+
+          echo "Saved:"
+          echo "violet-full.config"
 
       - name: Generate final defconfig
         run: |
           set -e
+
           make O=out ARCH=arm64 savedefconfig
+
+          test -s out/defconfig
+
           cp out/defconfig violet-perf_defconfig
+
+          echo
+          echo "========================================"
+          echo "FINAL VIOLET DEFCONFIG"
+          echo "========================================"
+
           cat violet-perf_defconfig
+
+      - name: Final defconfig validation
+        run: |
+          set -e
+
+          echo "Checking generated defconfig..."
+
+          grep -q "^CONFIG_ARCH_QCOM=y$" violet-perf_defconfig
+          grep -q "^CONFIG_ARCH_SM6150=y$" violet-perf_defconfig
+
+          grep -q "^CONFIG_TOUCHSCREEN_FTS_F7B=y$" violet-perf_defconfig
+          grep -q "^CONFIG_TOUCHSCREEN_NT36xxx=y$" violet-perf_defconfig
+          grep -q "^CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=y$" violet-perf_defconfig
+
+          grep -q "^CONFIG_INPUT_FINGERPRINT=y$" violet-perf_defconfig
+
+          grep -q "^CONFIG_SND_SOC_TAS2563=y$" violet-perf_defconfig
+
+          echo "Generated defconfig passed final checks."
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
