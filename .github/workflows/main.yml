@@ -51,17 +51,23 @@ jobs:
         id: pick_base
         run: |
           set -e
-          # نفضّل ملف defconfig الكامل الخاص بالجهاز إن وُجد
+          # الترتيب: أولاً نفضّل defconfig كامل خاص بالجهاز نفسه إن وُجد
+          # (بعض الأجهزة مثل sweet عندها defconfig كامل مدموج مسبقًا).
+          # violet ليس له defconfig كامل خاص به في هذه الشجرة الحديثة —
+          # فنستخدم القاعدة المشتركة لعائلة شريحة sm6150 كلها، والتي
+          # اسمها الداخلي عند Qualcomm هو "sdmsteppe" (وليس sm6150).
           if [ -f arch/arm64/configs/vendor/violet-perf_defconfig ]; then
             echo "BASE=vendor/violet-perf_defconfig" >> $GITHUB_OUTPUT
             echo "Found full device defconfig: vendor/violet-perf_defconfig"
           elif [ -f arch/arm64/configs/vendor/violet_defconfig ]; then
             echo "BASE=vendor/violet_defconfig" >> $GITHUB_OUTPUT
             echo "Found full device defconfig: vendor/violet_defconfig"
+          elif [ -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig ]; then
+            echo "BASE=vendor/sdmsteppe-perf_defconfig" >> $GITHUB_OUTPUT
+            echo "No per-device defconfig for violet; using shared sm6150 platform base: vendor/sdmsteppe-perf_defconfig"
           else
-            echo "::error::No full violet defconfig found. Only a fragment (violet.config) exists."
-            echo "::error::You must inspect the diagnostic listing above and pick the correct"
-            echo "::error::platform-wide base defconfig manually (it will NOT be arch/arm64/configs/defconfig)."
+            echo "::error::Neither a violet-specific defconfig nor sdmsteppe-perf_defconfig was found."
+            echo "::error::Inspect the diagnostic listing above and pick the correct base manually."
             exit 1
           fi
 
@@ -122,4 +128,3 @@ jobs:
             violet-perf_defconfig
             violet-full.config
           if-no-files-found: error
-          
