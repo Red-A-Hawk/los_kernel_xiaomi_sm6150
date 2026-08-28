@@ -1,355 +1,47 @@
-name: Generate Full VIOLET Defconfig - Debug Kconfig
-
-on:
-  workflow_dispatch:
-
-jobs:
-  generate:
-    runs-on: ubuntu-22.04
-
-    steps:
-
-      - name: Checkout kernel
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
-
-      - name: Install AArch64 toolchain
-        run: |
-          set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            bc \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            make \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            device-tree-compiler
-
-      - name: Set ARM64 environment
-        run: |
-          set -e
-
-          echo "ARCH=arm64" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
-
-          echo "========================================"
-          echo "TOOLCHAIN"
-          echo "========================================"
-
-          aarch64-linux-gnu-gcc --version | head -n 1
-          aarch64-linux-gnu-ld --version | head -n 1
-
-      - name: Verify VIOLET files
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "VERIFY VIOLET FILES"
-          echo "========================================"
-
-          test -f arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-          test -f arch/arm64/configs/vendor/violet.config
-
-          echo
-          echo "Base defconfig:"
-          ls -lh arch/arm64/configs/vendor/sdmsteppe-perf_defconfig
-
-          echo
-          echo "VIOLET fragment:"
-          ls -lh arch/arm64/configs/vendor/violet.config
-
-          echo
-          echo "=== VIOLET FRAGMENT ==="
-          cat arch/arm64/configs/vendor/violet.config
-
-      - name: Prepare output
-        run: |
-          set -e
-
-          rm -rf out artifact
-          mkdir -p out artifact
-
-      - name: Generate ARM64 base configuration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "GENERATING BASE CONFIGURATION"
-          echo "========================================"
-
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            vendor/sdmsteppe-perf_defconfig
-
-          test -s out/.config
-
-          echo
-          echo "Base configuration generated:"
-          wc -l out/.config
-
-      - name: Backup base configuration
-        run: |
-          set -e
-
-          cp out/.config out/base.config
-
-          test -s out/base.config
-
-      - name: Check VIOLET symbols before merge
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "VIOLET SYMBOLS BEFORE MERGE"
-          echo "========================================"
-
-          echo
-          echo "=== BASE CONFIG ==="
-
-          grep -E \
-            'CONFIG_MACH_XIAOMI($|_)|CONFIG_ARCH_SM6150|CONFIG_ARCH_QCOM|CONFIG_MMC_SDHCI' \
-            out/base.config || true
-
-          echo
-          echo "=== FRAGMENT SYMBOLS ==="
-
-          grep -E \
-            '^CONFIG_MACH_XIAOMI|^CONFIG_ARCH_SM6150|^CONFIG_ARCH_QCOM|^CONFIG_MMC' \
-            arch/arm64/configs/vendor/violet.config || true
-
-      - name: Merge VIOLET configuration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "MERGING VIOLET CONFIGURATION"
-          echo "========================================"
-
-          test -x scripts/kconfig/merge_config.sh
-
-          scripts/kconfig/merge_config.sh \
-            -m \
-            -O out \
-            out/base.config \
-            arch/arm64/configs/vendor/violet.config
-
-          test -s out/.config
-
-          echo
-          echo "Configuration after merge:"
-          wc -l out/.config
-
-      - name: Resolve VIOLET with Kconfig
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "RUNNING OLDDEFCONFIG"
-          echo "========================================"
-
-          make O=out \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            olddefconfig
-
-          test -s out/.config
-
-          echo
-          echo "Final configuration:"
-          wc -l out/.config
-
-      - name: Debug VIOLET Kconfig
-        if: always()
+      - name: DEBUG disp_rdump_memory
         run: |
           set +e
 
           echo "========================================"
-          echo "VIOLET KCONFIG DEBUG"
+          echo "DISP_RDUMP_MEMORY DEBUG"
           echo "========================================"
 
           echo
-          echo "=== FINAL MACHINE CONFIG ==="
-
-          grep -E \
-            '^CONFIG_MACH_XIAOMI|^CONFIG_ARCH_SM6150|^CONFIG_ARCH_QCOM' \
-            out/.config 2>/dev/null || true
+          echo "=== TARGET FILE ==="
+          sed -n '1,100p' \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi
 
           echo
-          echo "=== FINAL MMC CONFIG ==="
-
-          grep -E \
-            '^CONFIG_MMC|^CONFIG_SDHCI' \
-            out/.config 2>/dev/null | head -100 || true
-
-          echo
-          echo "=== VIOLET SYMBOL REFERENCES ==="
-
-          grep -R \
-            -n \
-            'MACH_XIAOMI_VIOLET' \
-            arch/arm64 \
-            drivers \
-            2>/dev/null | head -200 || true
-
-          echo
-          echo "=== KCONFIG DEFINITION ==="
-
-          grep -R \
-            -n \
-            -B 10 \
-            -A 20 \
-            'config MACH_XIAOMI_VIOLET' \
-            arch/arm64 \
-            2>/dev/null | head -150 || true
-
-          echo
-          echo "=== ALL XIAOMI MACHINE OPTIONS ==="
-
-          grep -R \
-            -n \
-            -E \
-            'config MACH_XIAOMI_|MACH_XIAOMI_VIOLET' \
-            arch/arm64 \
-            2>/dev/null | head -300 || true
-
-          echo
-          echo "=== VIOLET CONFIG FRAGMENT ==="
-
-          grep -n \
-            -E \
-            'MACH_XIAOMI|ARCH_SM6150|ARCH_QCOM|MMC_SDHCI' \
-            arch/arm64/configs/vendor/violet.config \
+          echo "=== ALL disp_rdump_memory REFERENCES ==="
+          grep -Rni "disp_rdump_memory" \
+            arch/arm64/boot/dts/qcom/ \
+            --include='*.dts' \
+            --include='*.dtsi' \
             2>/dev/null || true
 
           echo
-          echo "=== MERGE CONFIG LOG ==="
-
-          find out \
-            -maxdepth 2 \
-            -type f \
-            \( -name '*.log' -o -name '*merge*' \) \
-            -print \
+          echo "=== ALL RDUMP REFERENCES ==="
+          grep -RniE "rdump|disp.*memory|memory.*disp" \
+            arch/arm64/boot/dts/qcom/ \
+            --include='*.dts' \
+            --include='*.dtsi' \
             2>/dev/null || true
 
           echo
-          echo "=== CONFIG DIFFERENCES ==="
+          echo "=== VIOLET DTS INCLUDES ==="
+          grep -n "#include" \
+            arch/arm64/boot/dts/qcom/violet-sm6150.dts \
+            2>/dev/null || true
 
-          if test -f out/base.config && test -f out/.config; then
-              diff -u out/base.config out/.config || true
-          fi
-
-      - name: Validate VIOLET
-        run: |
-          set -e
-
-          CONFIG="out/.config"
-
-          echo "========================================"
-          echo "VIOLET CONFIGURATION VALIDATION"
-          echo "========================================"
-
-          check_enabled() {
-              symbol="$1"
-
-              if ! grep -q "^${symbol}=y$" "$CONFIG"; then
-                  echo
-                  echo "ERROR: ${symbol} is not enabled"
-                  echo
-                  grep -E \
-                    "^${symbol}=|^# ${symbol} is not set" \
-                    "$CONFIG" || true
-                  echo
-                  exit 1
-              fi
-
-              echo "OK: ${symbol}=y"
-          }
-
-          check_disabled() {
-              symbol="$1"
-
-              if grep -q "^${symbol}=y$" "$CONFIG"; then
-                  echo
-                  echo "ERROR: ${symbol} unexpectedly enabled"
-                  exit 1
-              fi
-
-              echo "OK: ${symbol} is not enabled"
-          }
-
-          check_enabled CONFIG_ARM64
-          check_enabled CONFIG_64BIT
-
-          check_enabled CONFIG_ARCH_QCOM
-          check_enabled CONFIG_ARCH_SM6150
-
-          check_enabled CONFIG_MACH_XIAOMI
-          check_enabled CONFIG_MACH_XIAOMI_SM6150
-          check_enabled CONFIG_MACH_XIAOMI_VIOLET
-
-          check_enabled CONFIG_MMC
-          check_enabled CONFIG_MMC_SDHCI
-          check_enabled CONFIG_MMC_SDHCI_PLTFM
-          check_enabled CONFIG_MMC_SDHCI_MSM
-
-          check_disabled CONFIG_MACH_XIAOMI_TUCANA
-          check_disabled CONFIG_MACH_XIAOMI_SDMMAGPIE
+          echo
+          echo "=== VIOLET DTSI INCLUDES ==="
+          grep -Rni "#include" \
+            arch/arm64/boot/dts/qcom/xiaomi/violet/ \
+            --include='*.dts' \
+            --include='*.dtsi' \
+            2>/dev/null || true
 
           echo
           echo "========================================"
-          echo "VIOLET VALIDATION: PASSED"
+          echo "DEBUG COMPLETE"
           echo "========================================"
-
-      - name: Export Full VIOLET defconfig
-        if: success()
-        run: |
-          set -e
-
-          cp out/.config artifact/violet_full_defconfig
-
-          test -s artifact/violet_full_defconfig
-
-          echo "========================================"
-          echo "FULL VIOLET DEFCONFIG"
-          echo "========================================"
-
-          echo
-          echo "Lines:"
-          wc -l artifact/violet_full_defconfig
-
-          echo
-          echo "Size:"
-          du -h artifact/violet_full_defconfig
-
-          echo
-          echo "=== VIOLET CORE ==="
-
-          grep -E \
-            '^CONFIG_ARM64=y$|^CONFIG_64BIT=y$|^CONFIG_ARCH_QCOM=y$|^CONFIG_ARCH_SM6150=y$|^CONFIG_MACH_XIAOMI=y$|^CONFIG_MACH_XIAOMI_SM6150=y$|^CONFIG_MACH_XIAOMI_VIOLET=y$|^CONFIG_MMC=y$|^CONFIG_MMC_SDHCI=y$|^CONFIG_MMC_SDHCI_PLTFM=y$|^CONFIG_MMC_SDHCI_MSM=y$|^CONFIG_MACH_XIAOMI_TUCANA=y$|^CONFIG_MACH_XIAOMI_SDMMAGPIE=y$' \
-            artifact/violet_full_defconfig || true
-
-      - name: Upload Full VIOLET defconfig
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-full-defconfig
-          path: artifact/violet_full_defconfig
-          if-no-files-found: error
-
-      - name: Upload Debug Configuration
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-kconfig-debug
-          path: |
-            out/.config
-            out/base.config
-          if-no-files-found: ignore
