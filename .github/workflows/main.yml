@@ -1,4 +1,4 @@
-name: Generate Modern Violet Defconfig
+name: Generate Modern Violet Defconfig (Fixed)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
 
     steps:
 
-      - name: Checkout kernel source
+      - name: Checkout kernel
         uses: actions/checkout@v4
         with:
           ref: 16
@@ -18,221 +18,108 @@ jobs:
       - name: Install dependencies
         run: |
           set -e
+          sudo apt-get update
+          sudo apt-get install -y \
+            git bc bison flex libssl-dev libelf-dev libncurses-dev \
+            build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi python3
 
-          sudo apt update
-
-          sudo apt install -y \
-            git \
-            bc \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            libncurses-dev \
-            make \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
-            python3
-
-      - name: Check source
+      # ============================================================
+      # الخطوة الحاسمة الجديدة: نطبع محتوى مجلدات الكونفيغ فعليًا
+      # بدل الافتراض. هذا يكشف أي defconfig كامل موجود فعلاً،
+      # وأي fragments (.config) موجودة لجهاز violet.
+      # ============================================================
+      - name: List all available kernel configs (DIAGNOSTIC)
         run: |
-          set -e
-
           echo "========================================"
-          echo "SOURCE CHECK"
+          echo "ALL FILES IN arch/arm64/configs/"
           echo "========================================"
-
-          echo "Commit:"
-          git rev-parse HEAD
+          ls -la arch/arm64/configs/
 
           echo
-          echo "Branch:"
-          git branch --show-current || true
+          echo "========================================"
+          echo "ALL FILES IN arch/arm64/configs/vendor/"
+          echo "========================================"
+          ls -la arch/arm64/configs/vendor/
 
           echo
-          echo "Violet config:"
-          test -f arch/arm64/configs/vendor/violet.config
-          ls -lh arch/arm64/configs/vendor/violet.config
+          echo "========================================"
+          echo "ANY FILE CONTAINING 'violet' (full recursive search)"
+          echo "========================================"
+          find . -iname "*violet*" -type f 2>/dev/null | grep -v "\.git" || echo "none found"
 
-      - name: Clean output
+      - name: Determine correct base defconfig
+        id: pick_base
         run: |
           set -e
+          # نفضّل ملف defconfig الكامل الخاص بالجهاز إن وُجد
+          if [ -f arch/arm64/configs/vendor/violet-perf_defconfig ]; then
+            echo "BASE=vendor/violet-perf_defconfig" >> $GITHUB_OUTPUT
+            echo "Found full device defconfig: vendor/violet-perf_defconfig"
+          elif [ -f arch/arm64/configs/vendor/violet_defconfig ]; then
+            echo "BASE=vendor/violet_defconfig" >> $GITHUB_OUTPUT
+            echo "Found full device defconfig: vendor/violet_defconfig"
+          else
+            echo "::error::No full violet defconfig found. Only a fragment (violet.config) exists."
+            echo "::error::You must inspect the diagnostic listing above and pick the correct"
+            echo "::error::platform-wide base defconfig manually (it will NOT be arch/arm64/configs/defconfig)."
+            exit 1
+          fi
 
+      - name: Generate base configuration from the correct device defconfig
+        run: |
+          set -e
           rm -rf out
-          rm -rf verify
-
           mkdir -p out
-
-      - name: Generate base configuration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "BASE DEFCONFIG"
-          echo "========================================"
-
-          make \
-            O="$PWD/out" \
-            ARCH=arm64 \
-            defconfig
-
+          make O=out ARCH=arm64 ${{ steps.pick_base.outputs.BASE }}
           test -f out/.config
+          echo "Base config generated from ${{ steps.pick_base.outputs.BASE }}"
 
-      - name: Merge Violet configuration
+      - name: Merge latest Violet fragment on top (picks up newest updates)
         run: |
           set -e
-
-          echo "========================================"
-          echo "MERGING VIOLET CONFIG"
-          echo "========================================"
-
-          ./scripts/kconfig/merge_config.sh \
-            -O "$PWD/out" \
-            "$PWD/out/.config" \
-            "$PWD/arch/arm64/configs/vendor/violet.config"
+          if [ -f arch/arm64/configs/vendor/violet.config ]; then
+            ./scripts/kconfig/merge_config.sh -O out out/.config arch/arm64/configs/vendor/violet.config
+          else
+            echo "No violet.config fragment found, skipping merge."
+          fi
 
       - name: Resolve configuration
         run: |
           set -e
-
-          echo "========================================"
-          echo "OLDDEFCONFIG"
-          echo "========================================"
-
-          make \
-            O="$PWD/out" \
-            ARCH=arm64 \
-            olddefconfig
-
+          make O=out ARCH=arm64 olddefconfig
           test -f out/.config
 
-      - name: Check Violet configuration
+      - name: Sanity check - must be Qualcomm/QCOM based, not generic ARM64
         run: |
           set -e
-
-          echo "========================================"
-          echo "VIOLET CONFIGURATION"
-          echo "========================================"
-
-          echo
-          echo "--- Architecture ---"
-
-          grep -E \
-            '^CONFIG_(ARM64|ARCH_QCOM|ARCH_SM6150)=' \
-            out/.config || true
+          echo "Checking for QCOM platform markers (should be present):"
+          grep -E "^CONFIG_QCOM_SCM=y|^CONFIG_ARCH_QCOM" out/.config || \
+            (echo "::error::Resulting config has NO Qualcomm markers - wrong base was used!" && exit 1)
 
           echo
-          echo "--- Device ---"
+          echo "Checking for generic/server markers (should be ABSENT):"
+          if grep -qE "^CONFIG_ACPI=y|^CONFIG_KVM=y|^CONFIG_DRM_NOUVEAU" out/.config; then
+            echo "::error::Resulting config contains generic ARM64/server options - wrong base was used!"
+            exit 1
+          fi
+          echo "OK: config looks like a genuine Qualcomm sm6150 config."
 
-          grep -Ei \
-            'VIOLET|XIAOMI' \
-            out/.config || true
+      - name: Save full resolved config
+        run: cp out/.config violet-full.config
 
-          echo
-          echo "--- Fingerprint ---"
-
-          grep -E \
-            '^CONFIG_(INPUT_FINGERPRINT|FINGERPRINT_)' \
-            out/.config || true
-
-          echo
-          echo "--- Audio ---"
-
-          grep -E \
-            '^CONFIG_(SND_SOC_TAS2563|TAS2563_)' \
-            out/.config || true
-
-      - name: Generate modern defconfig
+      - name: Generate final defconfig
         run: |
           set -e
-
-          echo "========================================"
-          echo "SAVING MODERN DEFCONFIG"
-          echo "========================================"
-
-          make \
-            O="$PWD/out" \
-            ARCH=arm64 \
-            savedefconfig
-
-          test -f out/defconfig
-
+          make O=out ARCH=arm64 savedefconfig
           cp out/defconfig violet-perf_defconfig
+          cat violet-perf_defconfig
 
-          echo
-          echo "Generated:"
-          ls -lh violet-perf_defconfig
-
-          echo
-          echo "Lines:"
-          wc -l violet-perf_defconfig
-
-      - name: Re-test generated defconfig
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "RE-TESTING GENERATED DEFCONFIG"
-          echo "========================================"
-
-          rm -rf verify
-
-          mkdir -p verify
-
-          cp violet-perf_defconfig \
-            verify/violet-perf_defconfig
-
-          make \
-            O="$PWD/verify" \
-            ARCH=arm64 \
-            KCONFIG_CONFIG="$PWD/verify/violet-perf_defconfig" \
-            olddefconfig
-
-          test -f verify/violet-perf_defconfig
-
-          echo
-          echo "Re-test successful."
-
-      - name: Compare regenerated config
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "FINAL VALIDATION"
-          echo "========================================"
-
-          echo
-          echo "Original generated defconfig:"
-          wc -l violet-perf_defconfig
-
-          echo
-          echo "Re-tested defconfig:"
-          wc -l verify/violet-perf_defconfig
-
-          echo
-          echo "Important Violet options:"
-
-          grep -E \
-            '^CONFIG_(ARM64|ARCH_QCOM|ARCH_SM6150|INPUT_FINGERPRINT|FINGERPRINT_|SND_SOC_TAS2563|TAS2563_)' \
-            verify/violet-perf_defconfig || true
-
-      - name: Upload modern Violet defconfig
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: modern-violet-defconfig
-          path: violet-perf_defconfig
+          path: |
+            violet-perf_defconfig
+            violet-full.config
           if-no-files-found: error
-
-      - name: Upload full generated config
-        uses: actions/upload-artifact@v4
-        with:
-          name: modern-violet-full-config
-          path: out/.config
-          if-no-files-found: error
-
-      - name: Upload verification config
-        uses: actions/upload-artifact@v4
-        with:
-          name: modern-violet-verified-config
-          path: verify/violet-perf_defconfig
-          if-no-files-found: error
+          
