@@ -25,6 +25,8 @@ jobs:
         run: |
           set +e
 
+          exec > >(tee violet-dts-diagnostic.log) 2>&1
+
           echo "========================================"
           echo "VIOLET DTS DEEP MEMORY DIAGNOSTIC"
           echo "========================================"
@@ -46,7 +48,7 @@ jobs:
           echo "========================================"
 
           grep -RIl \
-            "violet-sm6150-memory.dtsi\|model.*Violet\|xiaomi,violet" \
+            "#include.*violet-sm6150-memory.dtsi\|model.*Violet\|xiaomi,violet" \
             "$VIOLET" \
             2>/dev/null | sort -u
 
@@ -245,9 +247,7 @@ jobs:
                   if a[0] < b[1] and b[0] < a[1]:
                       found = True
 
-                      print(
-                          "OVERLAP:"
-                      )
+                      print("OVERLAP:")
 
                       print(
                           f"  A: 0x{a[0]:x}-0x{a[1]:x} "
@@ -378,6 +378,43 @@ jobs:
           echo
           echo "Violet memory file:"
           [ -f "$MEMORY" ] && echo "FOUND" || echo "MISSING"
+
+          echo
+          echo "SM6150 DTS:"
+          [ -f "$SM6150" ] && echo "FOUND" || echo "MISSING"
+
+          echo
+          echo "Required labels:"
+
+          for label in $LABELS; do
+            if grep -Rqs \
+              "$label:" \
+              "$BASE" \
+              2>/dev/null; then
+              echo "OK      $label"
+            else
+              echo "MISSING $label"
+            fi
+          done
+
+          echo
+          echo "========================================"
+          echo "DIAGNOSTIC COMPLETE"
+          echo "========================================"
+
+          exit 0
+
+      - name: Upload DTS Diagnostic Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: violet-dts-diagnostic
+          path: |
+            violet-dts-diagnostic.log
+            /tmp/violet-dts-check/dtc.log
+            /tmp/violet-dts-check/violet.dtb
+          if-no-files-found: warn
+          retention-days: 7
 
           echo
           echo "SM6150 DTS:"
