@@ -1,0 +1,94 @@
+name: Generate Modern Violet Defconfig
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: hawki
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            libncurses-dev \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            python3
+
+      - name: Check kernel tree
+        run: |
+          echo "=== KERNEL ==="
+          git rev-parse --short HEAD
+
+          echo
+          echo "=== CONFIG FILES ==="
+          ls -lh arch/arm64/configs/defconfig
+          ls -lh arch/arm64/configs/vendor/violet.config
+
+          echo
+          echo "=== VIOLET CONFIG ==="
+          cat arch/arm64/configs/vendor/violet.config
+
+      - name: Generate base configuration
+        run: |
+          mkdir -p out
+
+          make O=out ARCH=arm64 defconfig
+
+      - name: Show generated base config
+        run: |
+          test -f out/.config
+          echo "Base .config generated successfully"
+          wc -l out/.config
+
+      - name: Merge Violet configuration
+        run: |
+          test -x scripts/kconfig/merge_config.sh
+
+          ./scripts/kconfig/merge_config.sh \
+            -O out \
+            out/.config \
+            arch/arm64/configs/vendor/violet.config
+
+      - name: Resolve configuration
+        run: |
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Verify Violet
+        run: |
+          echo "=== VIOLET SETTINGS ==="
+          grep -E \
+            'CONFIG_MACH_XIAOMI_VIOLET|CONFIG_ARCH_SM6150|CONFIG_ARCH_QCOM' \
+            out/.config || true
+
+      - name: Generate defconfig
+        run: |
+          make O=out ARCH=arm64 savedefconfig
+
+          test -f out/defconfig
+
+          cp out/defconfig violet-perf_defconfig
+
+          echo
+          echo "=== GENERATED DEFCONFIG ==="
+          wc -l violet-perf_defconfig
+
+      - name: Upload Violet defconfig
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-violet-defconfig
+          path: violet-perf_defconfig
