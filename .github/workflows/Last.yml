@@ -43,134 +43,21 @@ jobs:
             python3 \
             openjdk-17-jre-headless
 
-      - name: Setup Clang
-        run: |
-          set -eux
+       - name: Setup Clang
+      run: |
+        mkdir -p clang
+        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+        tar -xzf Clang-16.0.6-20260807.tar.gz -C clang
+        echo "$PWD/clang/bin" >> $GITHUB_PATH
 
-          echo "========================================"
-          echo "SETTING UP CLANG"
-          echo "========================================"
-
-          CLANG_ARCHIVE="Clang-16.0.6-20260807.tar.gz"
-          CLANG_URL="https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/${CLANG_ARCHIVE}"
-
-          echo
-          echo "Downloading:"
-          echo "$CLANG_URL"
-
-          rm -f "$CLANG_ARCHIVE"
-
-          curl -L \
-            --fail \
-            --retry 5 \
-            --retry-delay 3 \
-            -o "$CLANG_ARCHIVE" \
-            "$CLANG_URL"
-
-          echo
-          echo "========================================"
-          echo "VERIFYING ARCHIVE"
-          echo "========================================"
-
-          ls -lh "$CLANG_ARCHIVE"
-
-          test -s "$CLANG_ARCHIVE"
-
-          echo
-          echo "Archive type:"
-          file "$CLANG_ARCHIVE"
-
-          echo
-          echo "Testing gzip:"
-          gzip -t "$CLANG_ARCHIVE"
-
-          echo
-          echo "Testing tar:"
-          tar -tzf "$CLANG_ARCHIVE" >/dev/null
-
-          echo
-          echo "Archive is valid."
-
-          echo
-          echo "========================================"
-          echo "EXTRACTING CLANG"
-          echo "========================================"
-
-          rm -rf clang
-          mkdir -p clang
-
-          tar -xzf "$CLANG_ARCHIVE" -C clang
-
-          echo
-          echo "Extraction completed."
-
-          echo
-          echo "========================================"
-          echo "SEARCHING FOR CLANG"
-          echo "========================================"
-
-          find clang \
-            -type f \
-            -name clang \
-            -print
-
-          CLANG_BIN="$(find "$PWD/clang" -type f -name clang -print | head -n 1)"
-
-          if [ -z "$CLANG_BIN" ]; then
-            echo
-            echo "ERROR: clang binary was not found."
-            echo
-            echo "Extracted files:"
-            find clang -maxdepth 4 -type f | head -n 200
-            exit 1
-          fi
-
-          echo
-          echo "Clang binary:"
-          echo "$CLANG_BIN"
-
-          chmod +x "$CLANG_BIN"
-
-          CLANG_DIR="$(dirname "$CLANG_BIN")"
-
-          echo
-          echo "Clang directory:"
-          echo "$CLANG_DIR"
-
-          echo "$CLANG_DIR" >> "$GITHUB_PATH"
-
-          if [ -d "$CLANG_DIR/../bin" ]; then
-            echo "$(cd "$CLANG_DIR/../bin" && pwd)" >> "$GITHUB_PATH"
-          fi
-
-          echo
-          echo "========================================"
-          echo "VERIFYING CLANG"
-          echo "========================================"
-
-          "$CLANG_BIN" --version
-
-          echo
-          echo "========================================"
-          echo "VERIFYING LLD"
-          echo "========================================"
-
-          LLD_BIN="$(find "$PWD/clang" -type f -name ld.lld -print | head -n 1)"
-
-          if [ -n "$LLD_BIN" ]; then
-            chmod +x "$LLD_BIN"
-            echo "LLD:"
-            echo "$LLD_BIN"
-            "$LLD_BIN" --version
-          else
-            echo "WARNING: ld.lld was not found inside Clang archive."
-          fi
-
-          echo
-          echo "========================================"
-          echo "CLANG SETUP COMPLETE"
-          echo "========================================"
-
+    # 4. Verify Clang and LLD
+    - name: Verify Clang toolchain
+      run: |
+        which clang
+        clang --version
+        which ld.lld
+          
+          
       - name: Export build environment
         run: |
           echo "ARCH=arm64" >> "$GITHUB_ENV"
