@@ -763,21 +763,8 @@ jobs:
         path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
         if-no-files-found: error
 
-
     # ============================================================
-    # 16. Upload Full Active .config
-    # ============================================================
-
-    - name: Upload Full Active Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/.config
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 17. Upload Build Log
+    # 16. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
