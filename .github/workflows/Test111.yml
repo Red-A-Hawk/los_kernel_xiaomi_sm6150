@@ -537,9 +537,8 @@ jobs:
         # ========================================================
         # Save FULL final configuration
         #
-        # IMPORTANT:
-        # This is NOT savedefconfig.
-        # It is the complete active .config.
+        # This is the complete active .config.
+        # It is NOT savedefconfig.
         # ========================================================
 
         echo
@@ -617,9 +616,6 @@ jobs:
 
     # ============================================================
     # 11. Verify the exact config used for build
-    #
-    # Do NOT clean the source tree.
-    # The active out/.config remains untouched.
     # ============================================================
 
     - name: Verify Build Configuration
@@ -763,8 +759,26 @@ jobs:
         path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
         if-no-files-found: error
 
+
     # ============================================================
-    # 16. Upload Build Log
+    # 16. Upload Full Active .config
+    #
+    # IMPORTANT:
+    # .config is a hidden file.
+    # include-hidden-files is required by upload-artifact@v4.
+    # ============================================================
+
+    - name: Upload Full Active Config
+      uses: actions/upload-artifact@v4
+      with:
+        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: out/.config
+        include-hidden-files: true
+        if-no-files-found: error
+
+
+    # ============================================================
+    # 17. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
