@@ -64,46 +64,43 @@ jobs:
         echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> $GITHUB_ENV
 
     # 5. Verify toolchains
-    - name: 🔍 Verify toolchains
+    - name: Verify toolchains
       run: |
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "=== CLANG ==="
         which clang
         clang --version
 
-        echo "=== LLD ==="
         which ld.lld
         ld.lld --version
 
-        echo "=== GCC64 ==="
         ls -la "$GCC64_PATH/bin"
-
-        echo "=== GCC32 ==="
         ls -la "$GCC32_PATH/bin"
 
-    # 6. Setup NoMount BEFORE KernelSU and defconfig
+    # 6. NoMount
+    # Must happen before KernelSU and before defconfig
     - name: 🥷 Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
         curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
 
-    # 7. Setup KernelSU-Next BEFORE defconfig
+    # 7. KernelSU-Next
+    # Must happen before defconfig
     - name: 📥 Setup KernelSU-Next
       if: ${{ matrix.build_type == 'KSU' || matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
         curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" | bash -s syscall
 
-    # 8. Load violet defconfig
-    - name: ⚙️ Load violet-perf_defconfig
+    # 8. Load original violet defconfig
+    - name: Load defconfig
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         make O=out ARCH=arm64 vendor/violet-perf_defconfig
 
-    # 9. Configure Matrix
-    - name: 🔧 Configure ${{ matrix.build_type }}
+    # 9. Configure only what is required by Matrix
+    - name: Configure Matrix
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -115,41 +112,35 @@ jobs:
         case "${{ matrix.build_type }}" in
 
           Base)
-            scripts/config --disable CONFIG_KSU || true
-            scripts/config --disable CONFIG_KSU_SUSFS || true
-            scripts/config --disable CONFIG_NOMOUNT || true
+            echo "Base: original defconfig"
             ;;
 
           KSU)
-            scripts/config --enable CONFIG_KSU
-            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
-            scripts/config --disable CONFIG_KSU_SUSFS || true
-            scripts/config --disable CONFIG_NOMOUNT || true
-            scripts/config --disable CONFIG_KPROBES
+            ./scripts/config --enable CONFIG_KSU
+            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-NoMount)
-            scripts/config --enable CONFIG_KSU
-            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
-            scripts/config --disable CONFIG_KSU_SUSFS || true
-            scripts/config --enable CONFIG_NOMOUNT
-            scripts/config --disable CONFIG_KPROBES
+            ./scripts/config --enable CONFIG_KSU
+            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            ./scripts/config --enable CONFIG_NOMOUNT
+            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-SUSFS)
-            scripts/config --enable CONFIG_KSU
-            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
-            scripts/config --enable CONFIG_KSU_SUSFS
-            scripts/config --disable CONFIG_NOMOUNT || true
-            scripts/config --disable CONFIG_KPROBES
+            ./scripts/config --enable CONFIG_KSU
+            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            ./scripts/config --enable CONFIG_KSU_SUSFS
+            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-SUSFS-NoMount)
-            scripts/config --enable CONFIG_KSU
-            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
-            scripts/config --enable CONFIG_KSU_SUSFS
-            scripts/config --enable CONFIG_NOMOUNT
-            scripts/config --disable CONFIG_KPROBES
+            ./scripts/config --enable CONFIG_KSU
+            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            ./scripts/config --enable CONFIG_KSU_SUSFS
+            ./scripts/config --enable CONFIG_NOMOUNT
+            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
         esac
@@ -157,12 +148,10 @@ jobs:
         make O=out ARCH=arm64 olddefconfig
 
         echo
-        echo "========================================"
-        echo "FINAL CONFIG"
-        echo "========================================"
+        echo "=== FINAL KERNEL CONFIG ==="
 
         grep -E \
-          '^(CONFIG_KSU|CONFIG_KSU_TAMPER_SYSCALL_TABLE|CONFIG_KSU_SUSFS|CONFIG_NOMOUNT|CONFIG_KPROBES)=' \
+          '^(CONFIG_KSU|CONFIG_KSU_TAMPER_SYSCALL_TABLE|CONFIG_KSU_SUSFS|CONFIG_NOMOUNT|CONFIG_KPROBES)' \
           out/.config || true
 
     # 10. Build kernel
@@ -189,29 +178,19 @@ jobs:
           2>&1 | tee build.log
 
     # 11. Verify output
-    - name: ✅ Check build output
+    - name: Check build output
       run: |
         test -f out/arch/arm64/boot/Image.gz
 
         echo "========================================"
-        echo "BUILD SUCCESS: ${{ matrix.build_type }}"
+        echo "BUILD SUCCESS"
+        echo "TYPE: ${{ matrix.build_type }}"
         echo "========================================"
 
         ls -lh out/arch/arm64/boot/Image.gz
 
-        if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          ls -lh out/arch/arm64/boot/dtbo.img
-        fi
-
-    # 12. Upload final config
-    - name: 💾 Upload Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/.config
-
-    # 13. Package AnyKernel3
-    - name: 📦 Package AnyKernel3
+    # 12. Package with Joker AnyKernel3
+    - name: Package AnyKernel3
       run: |
         git clone --depth=1 \
           -b sixteen \
@@ -230,15 +209,22 @@ jobs:
           "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
           *
 
-    # 14. Upload kernel ZIP
-    - name: 📤 Upload Kernel ZIP
+    # 13. Upload Kernel ZIP
+    - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
 
+    # 14. Upload final config
+    - name: Upload Config
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: out/.config
+
     # 15. Upload build log
-    - name: 📋 Upload build log
+    - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
       with:
