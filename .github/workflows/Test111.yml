@@ -1,3 +1,39 @@
+name: Build Kernel KSU (violet)
+
+on:
+  push:
+    branches:
+      - 16
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # ============================================================
+    # 1. Checkout
+    # ============================================================
+
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+
+
+    # ============================================================
+    # 2. Dependencies
+    # ============================================================
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+
+        sudo apt install -y \
+          git \
           bc \
           bison \
           flex \
@@ -146,7 +182,7 @@
     # ============================================================
     # 8. Configure KernelSU
     #
-    # Only these KernelSU options are explicitly enabled.
+    # Only these KernelSU options are enabled.
     # SUSFS is explicitly disabled.
     # ============================================================
 
@@ -225,11 +261,10 @@
 
 
     # ============================================================
-    # 10. Save FULL final defconfig
+    # 10. Save FULL Final Defconfig
     #
-    # Keep every configuration from violet-perf.
-    # Add only the selected KernelSU configuration.
-    # Do NOT use savedefconfig here.
+    # This is a complete copy of the final .config.
+    # No savedefconfig is used.
     # ============================================================
 
     - name: Save Full Final Defconfig
@@ -276,7 +311,7 @@
 
 
     # ============================================================
-    # 11. Upload FULL Final Defconfig BEFORE Kernel Build
+    # 11. Upload FULL Final Defconfig BEFORE BUILD
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -288,7 +323,63 @@
 
 
     # ============================================================
-    # 12. Build Kernel
+    # 12. Force Build Configuration
+    #
+    # The exact FULL final defconfig uploaded above
+    # is copied back to the active .config used by Kbuild.
+    # ============================================================
+
+    - name: Use Full Final Defconfig For Build
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "USING FULL FINAL DEFCONFIG FOR BUILD"
+        echo "========================================"
+
+        cp \
+          out/violet-ksu-full_defconfig \
+          out/.config
+
+        echo
+        echo "========================================"
+        echo "VERIFY ACTIVE BUILD CONFIG"
+        echo "========================================"
+
+        test -f out/.config
+
+        wc -l \
+          out/.config
+
+        echo
+        echo "========================================"
+        echo "ACTIVE KERNELSU CONFIG"
+        echo "========================================"
+
+        grep -E '^CONFIG_KSU' \
+          out/.config || true
+
+        echo
+        echo "========================================"
+        echo "VERIFY SUSFS"
+        echo "========================================"
+
+        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+          echo "ERROR: SUSFS IS ENABLED"
+          exit 1
+        else
+          echo "OK: SUSFS IS NOT ENABLED"
+        fi
+
+        echo
+        echo "========================================"
+        echo "BUILD CONFIG READY"
+        echo "========================================"
+
+
+    # ============================================================
+    # 13. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -317,7 +408,7 @@
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 14. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -338,7 +429,7 @@
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 15. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -377,7 +468,7 @@
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 16. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -388,10 +479,10 @@
 
 
     # ============================================================
-    # 16. Upload Full Config
+    # 17. Upload Full Active Config
     # ============================================================
 
-    - name: Upload Full Config
+    - name: Upload Full Active Config
       uses: actions/upload-artifact@v4
       with:
         name: violet-KSU-config-${{ env.BUILD_TIME }}
@@ -399,7 +490,7 @@
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
