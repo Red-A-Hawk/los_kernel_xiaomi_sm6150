@@ -1,6 +1,9 @@
 name: Build Kernel (violet)
 
 on:
+  push:
+    branches:
+      - 16
   workflow_dispatch:
 
 jobs:
@@ -9,501 +12,110 @@ jobs:
 
     steps:
 
-      # 1. Checkout
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
-
-      # 2. Dependencies
-      - name: Install dependencies
-        run: |
-          set -eux
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            git \
-            bc \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            libncurses-dev \
-            make \
-            gcc-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu \
-            device-tree-compiler \
-            curl \
-            wget \
-            unzip \
-            zip \
-            file \
-            python3 \
-            openjdk-17-jdk
-
-      # 3. Setup Clang
-      - name: Setup Clang
-        run: |
-          set -eux
-
-          CLANG_ARCHIVE="Clang-16.0.6-20260807.tar.gz"
-          CLANG_URL="https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/${CLANG_ARCHIVE}"
-
-          echo "========================================"
-          echo "DOWNLOAD CLANG"
-          echo "========================================"
-
-          rm -rf clang
-          rm -f "$CLANG_ARCHIVE"
-
-          mkdir -p clang
-
-          wget \
-            --progress=dot:giga \
-            --tries=5 \
-            --timeout=30 \
-            -O "$CLANG_ARCHIVE" \
-            "$CLANG_URL"
-
-          echo
-          echo "========================================"
-          echo "VERIFY CLANG ARCHIVE"
-          echo "========================================"
-
-          test -s "$CLANG_ARCHIVE"
-
-          ls -lh "$CLANG_ARCHIVE"
-
-          file "$CLANG_ARCHIVE"
-
-          gzip -t "$CLANG_ARCHIVE"
-
-          tar -tzf "$CLANG_ARCHIVE" >/dev/null
-
-          echo "Archive is valid."
-
-          echo
-          echo "========================================"
-          echo "EXTRACT CLANG"
-          echo "========================================"
-
-          tar -xzf "$CLANG_ARCHIVE" -C clang
-
-          echo
-          echo "========================================"
-          echo "SEARCH CLANG"
-          echo "========================================"
-
-          CLANG_BIN="$(find "$PWD/clang" -type f -name clang -print | head -n 1)"
-
-          if [ -z "$CLANG_BIN" ]; then
-            echo "ERROR: clang binary was not found."
-
-            echo
-            echo "Extracted directories:"
-            find clang -maxdepth 4 -type d -print
-
-            echo
-            echo "Extracted files:"
-            find clang -type f | head -n 200
-
-            exit 1
-          fi
-
-          echo "CLANG:"
-          echo "$CLANG_BIN"
-
-          chmod +x "$CLANG_BIN"
-
-          CLANG_DIR="$(dirname "$CLANG_BIN")"
-
-          echo "$CLANG_DIR" >> "$GITHUB_PATH"
-
-          echo
-          echo "========================================"
-          echo "SEARCH LLD"
-          echo "========================================"
-
-          LLD_BIN="$(find "$PWD/clang" -type f -name ld.lld -print | head -n 1)"
-
-          if [ -z "$LLD_BIN" ]; then
-            echo "ERROR: ld.lld binary was not found."
-            exit 1
-          fi
-
-          echo "LLD:"
-          echo "$LLD_BIN"
-
-          chmod +x "$LLD_BIN"
-
-          LLD_DIR="$(dirname "$LLD_BIN")"
-
-          echo "$LLD_DIR" >> "$GITHUB_PATH"
-
-          echo
-          echo "========================================"
-          echo "CLANG SETUP COMPLETE"
-          echo "========================================"
-
-      # 4. Verify toolchain
-      - name: Verify Clang toolchain
-        run: |
-          set -eux
-
-          echo "========================================"
-          echo "VERIFY CLANG"
-          echo "========================================"
-
-          which clang
-          clang --version
-
-          echo
-          echo "========================================"
-          echo "VERIFY LLD"
-          echo "========================================"
-
-          which ld.lld
-          ld.lld --version
-
-          echo
-          echo "========================================"
-          echo "VERIFY CROSS COMPILER"
-          echo "========================================"
-
-          which aarch64-linux-gnu-gcc
-          aarch64-linux-gnu-gcc --version | head -n 1
-
-      # 5. Build environment
-      - name: Configure build environment
-        run: |
-          set -eux
-
-          echo "ARCH=arm64" >> "$GITHUB_ENV"
-          echo "SUBARCH=arm64" >> "$GITHUB_ENV"
-          echo "CC=clang" >> "$GITHUB_ENV"
-          echo "LD=ld.lld" >> "$GITHUB_ENV"
-          echo "LLVM=1" >> "$GITHUB_ENV"
-          echo "LLVM_IAS=1" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
-
-      # 6. Detect Violet DTS
-      - name: Detect Violet DTS
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "DETECTING VIOLET DTS"
-          echo "========================================"
-
-          echo
-          echo "DTS files:"
-          find arch/arm64/boot/dts \
-            -type f \
-            -name "*.dts" \
-            -print \
-            | grep -i violet \
-            | sort || true
-
-          echo
-          echo "DTSI files:"
-
-          find arch/arm64/boot/dts/qcom/xiaomi/violet \
-            -maxdepth 1 \
-            -type f \
-            -name "*.dtsi" \
-            -print \
-            | sort
-
-          echo
-          echo "Violet DTS references:"
-
-          grep -R -n \
-            "violet-sm6150" \
-            arch/arm64/boot/dts \
-            2>/dev/null || true
-
-      # 7. Defconfig
-      - name: Load Violet defconfig
-        run: |
-          set -eux
-
-          echo "========================================"
-          echo "LOADING DEFCONFIG"
-          echo "========================================"
-
-          make O=out vendor/violet-perf_defconfig
-
-      # 8. Inspect memory labels
-      - name: Inspect SM6150 memory labels
-        run: |
-          set -e
-
-          BASE="arch/arm64/boot/dts/qcom/sm6150.dtsi"
-          MEMORY="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
-
-          echo "========================================"
-          echo "MEMORY LABEL DEFINITIONS"
-          echo "========================================"
-
-          grep -nE \
-            "reserved_memory:|qcom_seecom:|qcom_smcinvoke:|pil_modem_mem:|pil_video_mem:|wlan_msa_mem:|pil_cdsp_mem:|pil_adsp_mem:|pil_ipa_fw_mem:|pil_ipa_gsi_mem:|pil_gpu_mem:|dfps_data_memory:|disp_rdump_memory:" \
-            "$BASE" || true
-
-          echo
-          echo "========================================"
-          echo "MEMORY LABEL REFERENCES"
-          echo "========================================"
-
-          grep -nE \
-            "^[[:space:]]*&[A-Za-z0-9_]+[[:space:]]*[{]" \
-            "$MEMORY" || true
-
-      # 9. Fix Violet memory DTSI
-      - name: Fix Violet memory DTSI
-        run: |
-          set -e
-
-          FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
-          BASE="arch/arm64/boot/dts/qcom/sm6150.dtsi"
-
-          echo "========================================"
-          echo "CHECKING VIOLET MEMORY LABELS"
-          echo "========================================"
-
-          test -f "$FILE"
-          test -f "$BASE"
-
-          labels="
-          qcom_seecom
-          qcom_smcinvoke
-          pil_modem_mem
-          pil_video_mem
-          wlan_msa_mem
-          pil_cdsp_mem
-          pil_adsp_mem
-          pil_ipa_fw_mem
-          pil_ipa_gsi_mem
-          pil_gpu_mem
-          dfps_data_memory
-          disp_rdump_memory
-          reserved_memory
-          "
-
-          for label in $labels; do
-
-            if grep -qE \
-              "^[[:space:]]*${label}:" \
-              "$BASE"; then
-
-              echo "FOUND   : $label"
-
-            else
-
-              echo "MISSING : $label"
-
-              if grep -qE \
-                "^[[:space:]]*&${label}[[:space:]]*[{]" \
-                "$FILE"; then
-
-                echo "Removing unsupported override: $label"
-
-                sed -i \
-                  "/^[[:space:]]*&${label}[[:space:]]*[{]/,/^[[:space:]]*};[[:space:]]*$/d" \
-                  "$FILE"
-
-              else
-
-                echo "No override found for: $label"
-
-              fi
-
-            fi
-
-          done
-
-          echo
-          echo "========================================"
-          echo "FINAL MEMORY FILE"
-          echo "========================================"
-
-          cat "$FILE"
-
-      # 10. Final DTS memory validation
-      - name: Validate memory references
-        run: |
-          set -e
-
-          FILE="arch/arm64/boot/dts/qcom/xiaomi/violet/violet-sm6150-memory.dtsi"
-          BASE="arch/arm64/boot/dts/qcom/sm6150.dtsi"
-
-          echo "========================================"
-          echo "FINAL MEMORY VALIDATION"
-          echo "========================================"
-
-          while read -r label; do
-
-            [ -z "$label" ] && continue
-
-            if grep -qE \
-              "^[[:space:]]*&${label}[[:space:]]*[{]" \
-              "$FILE"; then
-
-              if grep -qE \
-                "^[[:space:]]*${label}:" \
-                "$BASE"; then
-
-                echo "VALID : $label"
-
-              else
-
-                echo "ERROR : unsupported label remains: $label"
-                exit 1
-
-              fi
-
-            fi
-
-          done << EOF
-          qcom_seecom
-          qcom_smcinvoke
-          pil_modem_mem
-          pil_video_mem
-          wlan_msa_mem
-          pil_cdsp_mem
-          pil_adsp_mem
-          pil_ipa_fw_mem
-          pil_ipa_gsi_mem
-          pil_gpu_mem
-          dfps_data_memory
-          disp_rdump_memory
-          reserved_memory
-          EOF
-
-      # 11. Build DTBs
-      - name: Build Device Trees
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "BUILDING DEVICE TREES"
-          echo "========================================"
-
-          make O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            dtbs \
-            2>&1 | tee dts-error.log
-
-          RESULT=${PIPESTATUS[0]}
-
-          echo
-          echo "========================================"
-          echo "DTS RETURN CODE: $RESULT"
-          echo "========================================"
-
-          echo
-          echo "========================================"
-          echo "DTS ERRORS"
-          echo "========================================"
-
-          grep -nE \
-            "Error:|error:|FATAL ERROR|Label or path|syntax error|No rule to make target" \
-            dts-error.log || true
-
-          exit "$RESULT"
-
-      # 12. Build kernel
-      - name: Build kernel
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "BUILDING KERNEL"
-          echo "========================================"
-
-          make O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            -j"$(nproc)" \
-            2>&1 | tee build.log
-
-      # 13. Check output
-      - name: Check kernel output
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "CHECKING OUTPUT"
-          echo "========================================"
-
-          if [ -f out/arch/arm64/boot/Image.gz ]; then
-            echo "FOUND: Image.gz"
-          elif [ -f out/arch/arm64/boot/Image ]; then
-            echo "FOUND: Image"
-          else
-            echo "ERROR: Kernel Image not found."
-            exit 1
-          fi
-
-          echo
-          echo "DTB files:"
-
-          find out/arch/arm64/boot/dts \
-            -type f \
-            \( -name "*.dtb" -o -name "*.dtbo" \) \
-            -print \
-            2>/dev/null \
-            | sort
-
-      # 14. Package
-      - name: Package kernel
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "PACKAGING KERNEL"
-          echo "========================================"
-
-          git clone \
-            --depth=1 \
-            https://github.com/Joker-V2/AnyKernel3.git \
-            AK3
-
-          if [ -f out/arch/arm64/boot/Image.gz ]; then
-            cp \
-              out/arch/arm64/boot/Image.gz \
-              AK3/
-          else
-            cp \
-              out/arch/arm64/boot/Image \
-              AK3/
-          fi
-
-          cd AK3
-
-          zip -r9 \
-            ../Kernel-violet.zip \
-            .
-
-      # 15. Upload kernel
-      - name: Upload Kernel
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel-violet
-          path: Kernel-violet.zip
-
-      # 16. Upload logs
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-build-logs
-          path: |
-            build.log
-            dts-error.log
+    # 1. Checkout kernel source
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+
+    # 2. Install dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          git bc bison flex libssl-dev \
+          make zip unzip curl wget \
+          libelf-dev libncurses-dev \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          python3 \
+          openjdk-17-jre-headless
+
+    # 3. Clone Toolchains
+    - name: 🔧 Clone Toolchains
+      run: |
+        mkdir -p clang && cd clang
+        wget https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
+        tar -xzf Clang-17.0.0-20230725.tar.gz
+        rm Clang-17.0.0-20230725.tar.gz
+        cd ..
+        git clone https://github.com/greenforce-project/gcc-arm64 -b main --depth=1 gcc64
+        git clone https://github.com/greenforce-project/gcc-arm -b main --depth=1 gcc32
+
+    # 4. Setup Environment
+    - name: ⚙️ Setup Environment
+      run: |
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> $GITHUB_ENV
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> $GITHUB_ENV
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> $GITHUB_ENV
+
+    # 5. Verify Clang and GCC toolchains
+    - name: Verify toolchains
+      run: |
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        which clang
+        clang --version
+        which ld.lld
+        ld.lld --version
+        ls -la "$GCC64_PATH/bin"
+        ls -la "$GCC32_PATH/bin"
+
+    # 6. Load defconfig
+    - name: Load defconfig
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        make O=out ARCH=arm64 vendor/violet-perf_defconfig
+
+    # 7. Build kernel
+    - name: 🛠️ Build Kernel
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export KBUILD_BUILD_USER=Manipulator
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
+        export BUILD_DATE=$BUILD_DATE
+        export CFLAGS_EXTRA="-DBUILD_DATE=$BUILD_DATE"
+
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          2>&1 | tee build.log
+
+    # 8. Verify output
+    - name: Check build output
+      run: |
+        test -f out/arch/arm64/boot/Image.gz
+
+    # 9. Package AnyKernel3
+    - name: Package AnyKernel3
+      run: |
+        git clone --depth=1 -b sixteen https://github.com/Joker-V2/AnyKernel3.git AK3
+        cp out/arch/arm64/boot/Image.gz AK3/
+        [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img AK3/
+        cd AK3
+        zip -r9 ../Kernel-violet.zip *
+
+    # 10. Upload kernel
+    - name: Upload Kernel ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-violet
+        path: Kernel-violet.zip
+
+    # 11. Upload build log
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
