@@ -1,39 +1,3 @@
-name: Build Kernel KSU (violet)
-
-on:
-  push:
-    branches:
-      - 16
-  workflow_dispatch:
-
-jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-    # ============================================================
-    # 1. Checkout
-    # ============================================================
-
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
-      with:
-        ref: 16
-        fetch-depth: 1
-
-
-    # ============================================================
-    # 2. Dependencies
-    # ============================================================
-
-    - name: Install dependencies
-      run: |
-        sudo apt update
-
-        sudo apt install -y \
-          git \
           bc \
           bison \
           flex \
