@@ -1,10 +1,13 @@
-name: Generate Violet Defconfigs
+name: Build Kernel (violet)
 
 on:
+  push:
+    branches:
+      - 16
   workflow_dispatch:
 
 jobs:
-  generate-defconfig:
+  build:
 
     runs-on: ubuntu-latest
 
@@ -21,20 +24,24 @@ jobs:
     steps:
 
     # ============================================================
-    # 1. CHECKOUT
+    # 1. Checkout
     # ============================================================
+
     - name: Checkout kernel source
       uses: actions/checkout@v4
       with:
         ref: 16
         fetch-depth: 1
 
+
     # ============================================================
-    # 2. DEPENDENCIES
+    # 2. Dependencies
     # ============================================================
+
     - name: Install dependencies
       run: |
         sudo apt update
+
         sudo apt install -y \
           git \
           bc \
@@ -48,253 +55,311 @@ jobs:
           wget \
           libelf-dev \
           libncurses-dev \
-          python3 \
           gcc-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi
+          gcc-arm-linux-gnueabi \
+          python3 \
+          openjdk-17-jre-headless
+
 
     # ============================================================
-    # 3. TOOLCHAINS
+    # 3. Toolchains
     # ============================================================
+
     - name: Clone Toolchains
       run: |
         mkdir -p clang
         cd clang
 
-        wget -q \
+        wget \
           https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
 
         tar -xzf Clang-17.0.0-20230725.tar.gz
-        rm -f Clang-17.0.0-20230725.tar.gz
+
+        rm Clang-17.0.0-20230725.tar.gz
 
         cd ..
 
         git clone \
-          --depth=1 \
-          -b main \
           https://github.com/greenforce-project/gcc-arm64 \
+          -b main \
+          --depth=1 \
           gcc64
 
         git clone \
-          --depth=1 \
-          -b main \
           https://github.com/greenforce-project/gcc-arm \
+          -b main \
+          --depth=1 \
           gcc32
 
+
     # ============================================================
-    # 4. ENVIRONMENT
+    # 4. Environment
     # ============================================================
-    - name: Setup environment
+
+    - name: Setup Environment
       run: |
-        echo "BUILD_TIME=$(date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
 
         echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
         echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
         echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
 
+
     # ============================================================
-    # 5. TOOLCHAIN CHECK
+    # 5. Verify toolchains
     # ============================================================
+
     - name: Verify toolchains
       run: |
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "=== CLANG ==="
+        echo "========================================"
+        echo "CLANG"
+        echo "========================================"
+
+        which clang
         clang --version
 
         echo
-        echo "=== LLD ==="
+        echo "========================================"
+        echo "LLD"
+        echo "========================================"
+
+        which ld.lld
         ld.lld --version
 
         echo
-        echo "=== GCC64 ==="
-        ls -la "$GCC64_PATH/bin" | head
+        echo "========================================"
+        echo "GCC64"
+        echo "========================================"
+
+        ls -la "$GCC64_PATH/bin"
 
         echo
-        echo "=== GCC32 ==="
-        ls -la "$GCC32_PATH/bin" | head
+        echo "========================================"
+        echo "GCC32"
+        echo "========================================"
+
+        ls -la "$GCC32_PATH/bin"
+
 
     # ============================================================
-    # 6. NOMOUNT
-    # Must be installed before defconfig
+    # 6. NoMount
+    #
+    # IMPORTANT:
+    # NoMount is installed BEFORE KernelSU
+    # and BEFORE defconfig.
     # ============================================================
+
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
+        echo "========================================"
+        echo "SETTING UP NOMOUNT"
+        echo "========================================"
+
         curl -LSs \
-          https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh \
+          "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
           | bash -
 
+        echo
+        echo "========================================"
+        echo "NOMOUNT CHECK"
+        echo "========================================"
+
+        ls -ld fs/nomount
+
+        grep -n "nomount" fs/Makefile || true
+        grep -n "nomount" fs/Kconfig || true
+
+
     # ============================================================
-    # 7. KERNELSU-NEXT
-    # Must be installed before defconfig
+    # 7. KernelSU-Next
+    #
+    # Installed BEFORE defconfig.
     # ============================================================
+
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
       run: |
+        echo "========================================"
+        echo "SETTING UP KERNELSU-NEXT"
+        echo "========================================"
+
         curl -LSs \
           "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
           | bash -s syscall
 
+        echo
+        echo "========================================"
+        echo "KERNELSU CHECK"
+        echo "========================================"
+
+        ls -ld drivers/kernelsu
+
+        echo
+        grep -n "kernelsu" drivers/Makefile || true
+
+        echo
+        grep -n "kernelsu" drivers/Kconfig || true
+
+
     # ============================================================
-    # 8. LOAD ORIGINAL DEFCONFIG
+    # 8. Load ORIGINAL defconfig
+    #
+    # Every Matrix job gets its own fresh checkout,
+    # therefore every job starts from the same violet-perf config.
     # ============================================================
-    - name: Load violet-perf_defconfig
+
+    - name: Load Original violet-perf defconfig
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        make \
-          O=out \
+        echo "========================================"
+        echo "LOADING ORIGINAL DEFCONFIG"
+        echo "========================================"
+
+        make O=out \
           ARCH=arm64 \
           vendor/violet-perf_defconfig
 
-        echo
-        echo "Original defconfig loaded."
 
     # ============================================================
-    # 9. CONFIGURE MATRIX
+    # 9. Configure Matrix
     # ============================================================
-    - name: Configure ${{ matrix.build_type }}
+
+    - name: Configure Matrix
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        CONFIG="out/.config"
-
         echo "========================================"
-        echo "BUILD TYPE: ${{ matrix.build_type }}"
+        echo "BUILD TYPE"
+        echo "${{ matrix.build_type }}"
         echo "========================================"
-
-        # --------------------------------------------------------
-        # Function to safely set a CONFIG option
-        # --------------------------------------------------------
-        set_config() {
-          SYMBOL="$1"
-          VALUE="$2"
-
-          if grep -q "^${SYMBOL}=" "$CONFIG"; then
-            sed -i "s/^${SYMBOL}=.*/${SYMBOL}=${VALUE}/" "$CONFIG"
-          elif grep -q "^# ${SYMBOL} is not set" "$CONFIG"; then
-            sed -i "s/^# ${SYMBOL} is not set/${SYMBOL}=${VALUE}/" "$CONFIG"
-          else
-            echo "${SYMBOL}=${VALUE}" >> "$CONFIG"
-          fi
-        }
-
-        # --------------------------------------------------------
-        # Disable helper
-        # --------------------------------------------------------
-        disable_config() {
-          SYMBOL="$1"
-
-          if grep -q "^${SYMBOL}=" "$CONFIG"; then
-            sed -i "s/^${SYMBOL}=.*/# ${SYMBOL} is not set/" "$CONFIG"
-          elif ! grep -q "^# ${SYMBOL} is not set" "$CONFIG"; then
-            echo "# ${SYMBOL} is not set" >> "$CONFIG"
-          fi
-        }
 
         case "${{ matrix.build_type }}" in
 
+          # ------------------------------------------------------
+          # BASE
+          # ------------------------------------------------------
+
           Base)
 
-            echo "Using original violet-perf_defconfig."
+            echo "Base kernel"
+            echo "No KernelSU"
+            echo "No SUSFS"
+            echo "No NoMount"
+
+            DEFCONFIG_NAME="violet-perf_defconfig"
 
             ;;
+
+
+          # ------------------------------------------------------
+          # KSU
+          # ------------------------------------------------------
 
           KSU)
 
-            set_config CONFIG_KSU y
-            set_config CONFIG_KSU_EXTRAS y
-            set_config CONFIG_KSU_TAMPER_SYSCALL_TABLE y
-            set_config CONFIG_KSU_LSM_SECURITY_HOOKS y
-            set_config CONFIG_KSU_FEATURE_SULOG y
-            set_config CONFIG_KSU_FEATURE_ADBROOT y
-            set_config CONFIG_KSU_HEURISTIC_IN_TREE_BUILD y
+            echo "KernelSU-Next only"
 
-            disable_config CONFIG_KPROBES
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --disable CONFIG_KSU_SUSFS \
+              --disable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
+
+            DEFCONFIG_NAME="violet-ksu_defconfig"
 
             ;;
+
+
+          # ------------------------------------------------------
+          # KSU + NOMOUNT
+          # ------------------------------------------------------
 
           KSU-NoMount)
 
-            set_config CONFIG_KSU y
-            set_config CONFIG_KSU_EXTRAS y
-            set_config CONFIG_KSU_TAMPER_SYSCALL_TABLE y
-            set_config CONFIG_KSU_LSM_SECURITY_HOOKS y
-            set_config CONFIG_KSU_FEATURE_SULOG y
-            set_config CONFIG_KSU_FEATURE_ADBROOT y
-            set_config CONFIG_KSU_HEURISTIC_IN_TREE_BUILD y
+            echo "KernelSU-Next + NoMount"
 
-            set_config CONFIG_NOMOUNT y
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --disable CONFIG_KSU_SUSFS \
+              --enable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
 
-            disable_config CONFIG_KPROBES
+            DEFCONFIG_NAME="violet-ksu-nomount_defconfig"
 
             ;;
+
+
+          # ------------------------------------------------------
+          # KSU + SUSFS
+          # ------------------------------------------------------
 
           KSU-SUSFS)
 
-            set_config CONFIG_KSU y
-            set_config CONFIG_KSU_EXTRAS y
-            set_config CONFIG_KSU_TAMPER_SYSCALL_TABLE y
-            set_config CONFIG_KSU_LSM_SECURITY_HOOKS y
-            set_config CONFIG_KSU_FEATURE_SULOG y
-            set_config CONFIG_KSU_FEATURE_ADBROOT y
-            set_config CONFIG_KSU_HEURISTIC_IN_TREE_BUILD y
+            echo "KernelSU-Next + SUSFS"
 
-            set_config CONFIG_KSU_SUSFS y
-            set_config CONFIG_KSU_SUSFS_SUS_PATH y
-            set_config CONFIG_KSU_SUSFS_SUS_MOUNT y
-            set_config CONFIG_KSU_SUSFS_SUS_KSTAT y
-            set_config CONFIG_KSU_SUSFS_TRY_UMOUNT y
-            set_config CONFIG_KSU_SUSFS_SPOOF_UNAME y
-            set_config CONFIG_KSU_SUSFS_ENABLE_LOG y
-            set_config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS y
-            set_config CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG y
-            set_config CONFIG_KSU_SUSFS_OPEN_REDIRECT y
-            set_config CONFIG_KSU_SUSFS_SUS_MAP y
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_SUSFS \
+              --disable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
 
-            disable_config CONFIG_KPROBES
+            DEFCONFIG_NAME="violet-ksu-susfs_defconfig"
 
             ;;
 
+
+          # ------------------------------------------------------
+          # KSU + SUSFS + NOMOUNT
+          # ------------------------------------------------------
+
           KSU-SUSFS-NoMount)
 
-            set_config CONFIG_KSU y
-            set_config CONFIG_KSU_EXTRAS y
-            set_config CONFIG_KSU_TAMPER_SYSCALL_TABLE y
-            set_config CONFIG_KSU_LSM_SECURITY_HOOKS y
-            set_config CONFIG_KSU_FEATURE_SULOG y
-            set_config CONFIG_KSU_FEATURE_ADBROOT y
-            set_config CONFIG_KSU_HEURISTIC_IN_TREE_BUILD y
+            echo "KernelSU-Next + SUSFS + NoMount"
 
-            set_config CONFIG_KSU_SUSFS y
-            set_config CONFIG_KSU_SUSFS_SUS_PATH y
-            set_config CONFIG_KSU_SUSFS_SUS_MOUNT y
-            set_config CONFIG_KSU_SUSFS_SUS_KSTAT y
-            set_config CONFIG_KSU_SUSFS_TRY_UMOUNT y
-            set_config CONFIG_KSU_SUSFS_SPOOF_UNAME y
-            set_config CONFIG_KSU_SUSFS_ENABLE_LOG y
-            set_config CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS y
-            set_config CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG y
-            set_config CONFIG_KSU_SUSFS_OPEN_REDIRECT y
-            set_config CONFIG_KSU_SUSFS_SUS_MAP y
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_SUSFS \
+              --enable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
 
-            set_config CONFIG_NOMOUNT y
-
-            disable_config CONFIG_KPROBES
+            DEFCONFIG_NAME="violet-ksu-susfs-nomount_defconfig"
 
             ;;
 
         esac
 
-        # --------------------------------------------------------
-        # Let Kconfig resolve dependencies
-        # --------------------------------------------------------
-        make \
-          O=out \
+
+        # ========================================================
+        # Resolve Kconfig dependencies
+        # ========================================================
+
+        echo
+        echo "========================================"
+        echo "RUNNING OLDDEFCONFIG"
+        echo "========================================"
+
+        make O=out \
           ARCH=arm64 \
           olddefconfig
+
+
+        # ========================================================
+        # Final config
+        # ========================================================
 
         echo
         echo "========================================"
@@ -305,45 +370,198 @@ jobs:
           '^(CONFIG_KSU=|CONFIG_KSU_|CONFIG_NOMOUNT=|CONFIG_KPROBES=)' \
           out/.config || true
 
+
+        # ========================================================
+        # Create minimized defconfig
+        # ========================================================
+
+        echo
+        echo "========================================"
+        echo "CREATING DEFCONFIG"
+        echo "========================================"
+
+        make O=out \
+          ARCH=arm64 \
+          savedefconfig
+
+        cp out/defconfig \
+          "out/${DEFCONFIG_NAME}"
+
+
+        echo
+        echo "========================================"
+        echo "GENERATED DEFCONFIG"
+        echo "========================================"
+
+        ls -lh \
+          "out/${DEFCONFIG_NAME}"
+
+
+        echo
+        echo "========================================"
+        echo "IMPORTANT CONFIG LINES"
+        echo "========================================"
+
+        grep -E \
+          '^(CONFIG_KSU|CONFIG_NOMOUNT|CONFIG_KPROBES)' \
+          "out/${DEFCONFIG_NAME}" || true
+
+
     # ============================================================
-    # 10. SAVE DEFCONFIG
+    # 10. Clean source tree
+    #
+    # Prevent:
+    # ".. is not clean, please run make mrproper"
     # ============================================================
-    - name: Generate final defconfig
+
+    - name: Clean source tree
+      run: |
+        echo "========================================"
+        echo "CLEANING SOURCE TREE"
+        echo "========================================"
+
+        rm -f .config
+
+        if [ -d include/config ]; then
+          rm -rf include/config
+        fi
+
+        echo "Source tree cleanup complete."
+
+
+    # ============================================================
+    # 11. Build Kernel
+    # ============================================================
+
+    - name: Build Kernel
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        mkdir -p defconfigs
+        export KBUILD_BUILD_USER=Manipulator
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
 
-        make \
+        echo "========================================"
+        echo "BUILDING KERNEL"
+        echo "TYPE: ${{ matrix.build_type }}"
+        echo "========================================"
+
+        make -j$(nproc --all) \
           O=out \
           ARCH=arm64 \
-          savedefconfig
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          2>&1 | tee build.log
 
-        cp \
-          out/defconfig \
-          "defconfigs/violet-${{ matrix.build_type }}_defconfig"
+
+    # ============================================================
+    # 12. Verify kernel
+    # ============================================================
+
+    - name: Check Build Output
+      run: |
+        echo "========================================"
+        echo "CHECKING BUILD"
+        echo "========================================"
+
+        test -f out/arch/arm64/boot/Image.gz
 
         echo
         echo "========================================"
-        echo "DEFCONFIG CREATED"
+        echo "BUILD SUCCESS"
         echo "========================================"
+
+        echo "TYPE: ${{ matrix.build_type }}"
 
         ls -lh \
-          "defconfigs/violet-${{ matrix.build_type }}_defconfig"
+          out/arch/arm64/boot/Image.gz
+
+
+    # ============================================================
+    # 13. Package AnyKernel3
+    # ============================================================
+
+    - name: Package AnyKernel3
+      run: |
+        echo "========================================"
+        echo "PACKAGING ANYKERNEL3"
+        echo "========================================"
+
+        git clone \
+          --depth=1 \
+          -b sixteen \
+          https://github.com/Joker-V2/AnyKernel3.git \
+          AK3
+
+        cp \
+          out/arch/arm64/boot/Image.gz \
+          AK3/
+
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp \
+            out/arch/arm64/boot/dtbo.img \
+            AK3/
+        fi
+
+        cd AK3
+
+        zip -r9 \
+          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
+          *
+
+        cd ..
 
         echo
-        echo "=== KSU / SUSFS / NOMOUNT ==="
+        ls -lh \
+          "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
 
-        grep -E \
-          '^(CONFIG_KSU=|CONFIG_KSU_|CONFIG_NOMOUNT=)' \
-          "defconfigs/violet-${{ matrix.build_type }}_defconfig" || true
 
     # ============================================================
-    # 11. UPLOAD DEFCONFIG
+    # 14. Upload Kernel ZIP
     # ============================================================
-    - name: Upload defconfig
+
+    - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: violet-${{ matrix.build_type }}-defconfig-${{ env.BUILD_TIME }}
-        path: defconfigs/violet-${{ matrix.build_type }}_defconfig
+        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+
+
+    # ============================================================
+    # 15. Upload generated defconfig
+    # ============================================================
+
+    - name: Upload Generated Defconfig
+      uses: actions/upload-artifact@v4
+      with:
+        name: defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: |
+          out/*defconfig
+
+
+    # ============================================================
+    # 16. Upload full .config
+    # ============================================================
+
+    - name: Upload Full Config
+      uses: actions/upload-artifact@v4
+      with:
+        name: full-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: out/.config
+
+
+    # ============================================================
+    # 17. Upload build log
+    # ============================================================
+
+    - name: Upload Build Log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: build.log
