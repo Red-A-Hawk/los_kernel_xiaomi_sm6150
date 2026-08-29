@@ -228,8 +228,8 @@ jobs:
     # EVERY MATRIX STARTS FROM SAME ORIGINAL CONFIG
     # ============================================================
 
-    - name: Load original violet defconfig
-      run: |
+     - name: Load original violet defconfig
+       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
