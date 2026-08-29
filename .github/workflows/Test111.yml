@@ -225,11 +225,11 @@ jobs:
 
         echo
         echo "========================================"
-        echo "FINAL KERNELSU CONFIG"
+        echo "ALL KERNELSU CONFIG"
         echo "========================================"
 
         grep -E \
-          '^CONFIG_KSU=' \
+          '^CONFIG_KSU' \
           out/.config || true
 
 
