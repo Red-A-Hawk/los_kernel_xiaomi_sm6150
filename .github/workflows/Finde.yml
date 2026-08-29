@@ -1,0 +1,73 @@
+name: DTS Label Checker
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'اسم الـ label اللي عايز تدور عليه (اختياري)'
+        required: false
+        default: ''
+  push:
+    paths:
+      - '**/*.dts'
+      - '**/*.dtsi'
+  pull_request:
+    paths:
+      - '**/*.dts'
+      - '**/*.dtsi'
+
+jobs:
+  check-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Search for a specific symbol (manual trigger)
+        if: ${{ github.event.inputs.symbol != '' }}
+        run: |
+          SYM="${{ github.event.inputs.symbol }}"
+          echo "## نتائج البحث عن: $SYM" >> $GITHUB_STEP_SUMMARY
+          echo "### التعريفات (label:)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -rn "^\s*${SYM}:" --include="*.dts" --include="*.dtsi" . >> $GITHUB_STEP_SUMMARY || echo "لا يوجد تعريف!" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "### الاستخدامات (&label)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -rn "&${SYM}\b" --include="*.dts" --include="*.dtsi" . >> $GITHUB_STEP_SUMMARY || echo "لا يوجد استخدام!" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Audit ALL labels (finds broken references automatically)
+        run: |
+          echo "## فحص شامل: labels مستخدمة بدون تعريف" > audit_report.txt
+          echo "" >> audit_report.txt
+
+          # كل الـ &label المستخدمة كمرجع
+          grep -rhoE "&[a-zA-Z0-9_]+" --include="*.dts" --include="*.dtsi" . \
+            | sed 's/^&//' | sort -u > /tmp/used_labels.txt
+
+          # كل الـ label: المعرّفة فعلياً
+          grep -rhoE "^\s*[a-zA-Z0-9_]+:" --include="*.dts" --include="*.dtsi" . \
+            | sed 's/[[:space:]]*//g; s/://' | sort -u > /tmp/defined_labels.txt
+
+          MISSING=0
+          while read -r sym; do
+            if ! grep -qx "$sym" /tmp/defined_labels.txt; then
+              echo "❌ $sym غير معرّف في أي مكان لكنه مُستخدم هنا:" >> audit_report.txt
+              grep -rn "&${sym}\b" --include="*.dts" --include="*.dtsi" . >> audit_report.txt
+              echo "" >> audit_report.txt
+              MISSING=$((MISSING+1))
+            fi
+          done < /tmp/used_labels.txt
+
+          if [ "$MISSING" -eq 0 ]; then
+            echo "✅ كل الـ labels المستخدمة معرّفة بشكل صحيح." >> audit_report.txt
+          fi
+
+          cat audit_report.txt >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload full report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dts-label-audit
+          path: audit_report.txt
