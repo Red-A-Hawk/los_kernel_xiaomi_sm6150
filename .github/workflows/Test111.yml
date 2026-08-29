@@ -182,7 +182,7 @@ jobs:
     # ============================================================
     # 8. Configure KernelSU
     #
-    # ONLY these KernelSU options are explicitly enabled.
+    # Only these KernelSU options are explicitly enabled.
     # SUSFS is explicitly disabled.
     # ============================================================
 
@@ -261,13 +261,14 @@ jobs:
 
 
     # ============================================================
-    # 10. Save FULL Final Config
+    # 10. Save FULL final defconfig
     #
-    # This is NOT savedefconfig.
-    # It is the complete .config after olddefconfig.
+    # Keep every configuration from violet-perf.
+    # Add only the selected KernelSU configuration.
+    # Do NOT use savedefconfig here.
     # ============================================================
 
-    - name: Save Full Final Config
+    - name: Save Full Final Defconfig
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -289,6 +290,7 @@ jobs:
           out/violet-ksu-full_defconfig
 
         echo
+        echo "========================================"
         echo "LINE COUNT"
         echo "========================================"
 
@@ -310,7 +312,19 @@ jobs:
 
 
     # ============================================================
-    # 11. Build Kernel
+    # 11. Upload FULL Final Defconfig BEFORE Kernel Build
+    # ============================================================
+
+    - name: Upload Full Final Defconfig Before Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: violet-KSU-full-defconfig-${{ env.BUILD_TIME }}
+        path: out/violet-ksu-full_defconfig
+        if-no-files-found: error
+
+
+    # ============================================================
+    # 12. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -339,7 +353,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Verify Kernel
+    # 13. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -360,7 +374,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Package AnyKernel3
+    # 14. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -399,7 +413,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Upload Kernel ZIP
+    # 15. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -407,17 +421,6 @@ jobs:
       with:
         name: Kernel-violet-KSU-${{ env.BUILD_TIME }}
         path: Kernel-violet-KSU-${{ env.BUILD_TIME }}.zip
-
-
-    # ============================================================
-    # 15. Upload Full Final Defconfig
-    # ============================================================
-
-    - name: Upload Full Final Defconfig
-      uses: actions/upload-artifact@v4
-      with:
-        name: violet-KSU-full-defconfig-${{ env.BUILD_TIME }}
-        path: out/violet-ksu-full_defconfig
 
 
     # ============================================================
