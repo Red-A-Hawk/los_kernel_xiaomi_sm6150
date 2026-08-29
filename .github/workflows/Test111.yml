@@ -267,7 +267,7 @@ jobs:
     - name: Generate KSU defconfig
       run: |
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
         echo "CREATING KSU DEFCONFIG"
