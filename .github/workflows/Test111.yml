@@ -1,4 +1,4 @@
-name: Build Kernel KSU (violet)
+name: Build Kernel (violet)
 
 on:
   push:
@@ -10,6 +10,16 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type:
+          - Base
+          - KSU
+          - KSU-NoMount
+          - KSU-SUSFS
+          - KSU-SUSFS-NoMount
 
     steps:
 
@@ -134,10 +144,44 @@ jobs:
 
 
     # ============================================================
-    # 6. KernelSU-Next
+    # 6. Setup NoMount
+    #
+    # Only installed for NoMount variants.
+    # ============================================================
+
+    - name: Setup NoMount
+      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+      run: |
+        echo "========================================"
+        echo "SETTING UP NOMOUNT"
+        echo "========================================"
+
+        curl -LSs \
+          "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
+          | bash -
+
+        echo
+        echo "========================================"
+        echo "NOMOUNT CHECK"
+        echo "========================================"
+
+        test -d fs/nomount
+
+        ls -ld fs/nomount
+
+        grep -n "nomount" fs/Makefile || true
+        grep -n "nomount" fs/Kconfig || true
+
+
+    # ============================================================
+    # 7. Setup KernelSU-Next
+    #
+    # syscall is intentionally used for ALL KSU variants.
+    # Base does not install KernelSU.
     # ============================================================
 
     - name: Setup KernelSU-Next
+      if: ${{ matrix.build_type != 'Base' }}
       run: |
         echo "========================================"
         echo "SETTING UP KERNELSU-NEXT"
@@ -152,6 +196,8 @@ jobs:
         echo "KERNELSU CHECK"
         echo "========================================"
 
+        test -d drivers/kernelsu
+
         ls -ld drivers/kernelsu
 
         echo
@@ -162,7 +208,7 @@ jobs:
 
 
     # ============================================================
-    # 7. Load Original violet-perf defconfig
+    # 8. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
@@ -171,58 +217,183 @@ jobs:
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "LOADING ORIGINAL DEFCONFIG"
+        echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
         echo "========================================"
 
         make O=out \
           ARCH=arm64 \
           vendor/violet-perf_defconfig
 
+        test -f out/.config
+
 
     # ============================================================
-    # 8. Configure KernelSU
-    #
-    # Only these KernelSU options are enabled.
-    # SUSFS is explicitly disabled.
+    # 9. Configure Matrix
     # ============================================================
 
-    - name: Configure KernelSU
+    - name: Configure Matrix
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
+        BUILD_TYPE="${{ matrix.build_type }}"
+
         echo "========================================"
-        echo "CONFIGURING KERNELSU ONLY"
+        echo "BUILD TYPE"
+        echo "$BUILD_TYPE"
         echo "========================================"
 
-        scripts/config \
-          --file out/.config \
-          --enable CONFIG_KSU \
-          --enable CONFIG_KSU_EXTRAS \
-          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-          --enable CONFIG_KSU_FEATURE_SULOG \
-          --enable CONFIG_KSU_FEATURE_ADBROOT \
-          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-          --disable CONFIG_KSU_SUSFS
+        case "$BUILD_TYPE" in
+
+          # ------------------------------------------------------
+          # BASE
+          # ------------------------------------------------------
+
+          Base)
+
+            echo "Base kernel"
+            echo "KernelSU: DISABLED"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: DISABLED"
+
+            scripts/config \
+              --file out/.config \
+              --disable CONFIG_KSU \
+              --disable CONFIG_KSU_SUSFS \
+              --disable CONFIG_NOMOUNT
+
+            DEFCONFIG_NAME="violet-perf-full_defconfig"
+
+            ;;
+
+
+          # ------------------------------------------------------
+          # KSU
+          # ------------------------------------------------------
+
+          KSU)
+
+            echo "KernelSU-Next"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: DISABLED"
+
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_EXTRAS \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+              --enable CONFIG_KSU_FEATURE_SULOG \
+              --enable CONFIG_KSU_FEATURE_ADBROOT \
+              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+              --disable CONFIG_KSU_SUSFS \
+              --disable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
+
+            DEFCONFIG_NAME="violet-ksu-full_defconfig"
+
+            ;;
+
+
+          # ------------------------------------------------------
+          # KSU + NOMOUNT
+          # ------------------------------------------------------
+
+          KSU-NoMount)
+
+            echo "KernelSU-Next"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: ENABLED"
+
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_EXTRAS \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+              --enable CONFIG_KSU_FEATURE_SULOG \
+              --enable CONFIG_KSU_FEATURE_ADBROOT \
+              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+              --disable CONFIG_KSU_SUSFS \
+              --enable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
+
+            DEFCONFIG_NAME="violet-ksu-nomount-full_defconfig"
+
+            ;;
+
+
+          # ------------------------------------------------------
+          # KSU + SUSFS
+          # ------------------------------------------------------
+
+          KSU-SUSFS)
+
+            echo "KernelSU-Next"
+            echo "SUSFS: ENABLED"
+            echo "NoMount: DISABLED"
+
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_EXTRAS \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+              --enable CONFIG_KSU_FEATURE_SULOG \
+              --enable CONFIG_KSU_FEATURE_ADBROOT \
+              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+              --enable CONFIG_KSU_SUSFS \
+              --disable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
+
+            DEFCONFIG_NAME="violet-ksu-susfs-full_defconfig"
+
+            ;;
+
+
+          # ------------------------------------------------------
+          # KSU + SUSFS + NOMOUNT
+          # ------------------------------------------------------
+
+          KSU-SUSFS-NoMount)
+
+            echo "KernelSU-Next"
+            echo "SUSFS: ENABLED"
+            echo "NoMount: ENABLED"
+
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_EXTRAS \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+              --enable CONFIG_KSU_FEATURE_SULOG \
+              --enable CONFIG_KSU_FEATURE_ADBROOT \
+              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+              --enable CONFIG_KSU_SUSFS \
+              --enable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES
+
+            DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
+
+            ;;
+
+
+          *)
+
+            echo "ERROR: Unknown build type: $BUILD_TYPE"
+            exit 1
+
+            ;;
+
+        esac
+
+
+        # ========================================================
+        # Resolve Kconfig dependencies
+        # ========================================================
 
         echo
-        echo "========================================"
-        echo "KERNELSU CONFIG BEFORE OLDDEFCONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU' out/.config || true
-
-
-    # ============================================================
-    # 9. Resolve Kconfig dependencies
-    # ============================================================
-
-    - name: Resolve Kconfig
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
         echo "========================================"
@@ -231,54 +402,155 @@ jobs:
           ARCH=arm64 \
           olddefconfig
 
-        echo
-        echo "========================================"
-        echo "ALL KERNELSU CONFIG"
-        echo "========================================"
 
-        grep -E '^CONFIG_KSU' out/.config || true
+        # ========================================================
+        # Verify final configuration
+        # ========================================================
 
         echo
         echo "========================================"
-        echo "EXPECTED KERNELSU OPTIONS"
+        echo "FINAL CONFIGURATION"
         echo "========================================"
 
-        grep -E \
-          '^(CONFIG_KSU=|CONFIG_KSU_EXTRAS=|CONFIG_KSU_TAMPER_SYSCALL_TABLE=|CONFIG_KSU_LSM_SECURITY_HOOKS=|CONFIG_KSU_FEATURE_SULOG=|CONFIG_KSU_FEATURE_ADBROOT=|CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=)' \
+        echo
+        echo "--- KernelSU ---"
+
+        grep -E '^CONFIG_KSU' \
           out/.config || true
 
         echo
+        echo "--- NoMount ---"
+
+        grep -E '^CONFIG_NOMOUNT' \
+          out/.config || true
+
+        echo
+        echo "--- KPROBES ---"
+
+        grep -E '^CONFIG_KPROBES' \
+          out/.config || true
+
+
+        # ========================================================
+        # SUSFS validation
+        # ========================================================
+
+        echo
         echo "========================================"
-        echo "SUSFS CHECK"
+        echo "SUSFS VALIDATION"
         echo "========================================"
 
-        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-          echo "ERROR: CONFIG_KSU_SUSFS IS ENABLED"
+        case "$BUILD_TYPE" in
+
+          KSU|KSU-NoMount)
+
+            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+              echo "ERROR: SUSFS MUST BE DISABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            echo "OK: SUSFS IS DISABLED"
+
+            ;;
+
+
+          KSU-SUSFS|KSU-SUSFS-NoMount)
+
+            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+              echo "OK: SUSFS IS ENABLED"
+            else
+              echo "ERROR: SUSFS MUST BE ENABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            ;;
+
+
+          Base)
+
+            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+              echo "ERROR: SUSFS MUST BE DISABLED FOR BASE"
+              exit 1
+            fi
+
+            echo "OK: SUSFS IS DISABLED"
+
+            ;;
+
+        esac
+
+
+        # ========================================================
+        # NoMount validation
+        # ========================================================
+
+        echo
+        echo "========================================"
+        echo "NOMOUNT VALIDATION"
+        echo "========================================"
+
+        case "$BUILD_TYPE" in
+
+          KSU-NoMount|KSU-SUSFS-NoMount)
+
+            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
+              echo "OK: NOMOUNT IS ENABLED"
+            else
+              echo "ERROR: NOMOUNT MUST BE ENABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            ;;
+
+
+          Base|KSU|KSU-SUSFS)
+
+            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
+              echo "ERROR: NOMOUNT MUST BE DISABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            echo "OK: NOMOUNT IS DISABLED"
+
+            ;;
+
+        esac
+
+
+        # ========================================================
+        # KPROBES validation
+        # ========================================================
+
+        echo
+        echo "========================================"
+        echo "KPROBES VALIDATION"
+        echo "========================================"
+
+        if grep -q '^CONFIG_KPROBES=y' out/.config; then
+          echo "ERROR: CONFIG_KPROBES MUST BE DISABLED"
           exit 1
         else
-          echo "OK: CONFIG_KSU_SUSFS IS NOT ENABLED"
+          echo "OK: CONFIG_KPROBES IS NOT ENABLED"
         fi
 
 
-    # ============================================================
-    # 10. Save FULL Final Defconfig
-    #
-    # This is a complete copy of the final .config.
-    # No savedefconfig is used.
-    # ============================================================
+        # ========================================================
+        # Save FULL final configuration
+        #
+        # IMPORTANT:
+        # This is NOT savedefconfig.
+        # It is the complete active .config.
+        # ========================================================
 
-    - name: Save Full Final Defconfig
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
+        echo
         echo "========================================"
         echo "SAVING FULL FINAL DEFCONFIG"
         echo "========================================"
 
         cp \
           out/.config \
-          out/violet-ksu-full_defconfig
+          "out/${DEFCONFIG_NAME}"
+
 
         echo
         echo "========================================"
@@ -286,7 +558,8 @@ jobs:
         echo "========================================"
 
         ls -lh \
-          out/violet-ksu-full_defconfig
+          "out/${DEFCONFIG_NAME}"
+
 
         echo
         echo "========================================"
@@ -294,83 +567,91 @@ jobs:
         echo "========================================"
 
         wc -l \
-          out/violet-ksu-full_defconfig
+          "out/${DEFCONFIG_NAME}"
+
 
         echo
         echo "========================================"
-        echo "KERNELSU CONFIG IN FULL DEFCONFIG"
+        echo "KERNELSU CONFIG"
         echo "========================================"
 
         grep -E '^CONFIG_KSU' \
-          out/violet-ksu-full_defconfig || true
+          "out/${DEFCONFIG_NAME}" || true
+
 
         echo
         echo "========================================"
-        echo "FULL FINAL CONFIG READY FOR BUILD"
+        echo "SUSFS CONFIG"
+        echo "========================================"
+
+        grep -E '^CONFIG_KSU_SUSFS' \
+          "out/${DEFCONFIG_NAME}" || true
+
+
+        echo
+        echo "========================================"
+        echo "NOMOUNT CONFIG"
+        echo "========================================"
+
+        grep -E '^CONFIG_NOMOUNT' \
+          "out/${DEFCONFIG_NAME}" || true
+
+
+        echo
+        echo "========================================"
+        echo "FULL FINAL DEFCONFIG READY"
         echo "========================================"
 
 
     # ============================================================
-    # 11. Upload FULL Final Defconfig BEFORE BUILD
+    # 10. Upload Full Final Defconfig BEFORE BUILD
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
       uses: actions/upload-artifact@v4
       with:
-        name: violet-KSU-full-defconfig-${{ env.BUILD_TIME }}
-        path: out/violet-ksu-full_defconfig
+        name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: out/*-full_defconfig
         if-no-files-found: error
 
 
     # ============================================================
-    # 12. Force Build Configuration
+    # 11. Verify the exact config used for build
     #
-    # The exact FULL final defconfig uploaded above
-    # is copied back to the active .config used by Kbuild.
+    # Do NOT clean the source tree.
+    # The active out/.config remains untouched.
     # ============================================================
 
-    - name: Use Full Final Defconfig For Build
+    - name: Verify Build Configuration
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "USING FULL FINAL DEFCONFIG FOR BUILD"
-        echo "========================================"
-
-        cp \
-          out/violet-ksu-full_defconfig \
-          out/.config
-
-        echo
-        echo "========================================"
-        echo "VERIFY ACTIVE BUILD CONFIG"
+        echo "VERIFYING ACTIVE BUILD CONFIG"
         echo "========================================"
 
         test -f out/.config
 
-        wc -l \
-          out/.config
+        echo
+        echo "CONFIG LINE COUNT:"
+        wc -l out/.config
 
         echo
-        echo "========================================"
-        echo "ACTIVE KERNELSU CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU' \
-          out/.config || true
+        echo "BUILD TYPE:"
+        echo "${{ matrix.build_type }}"
 
         echo
-        echo "========================================"
-        echo "VERIFY SUSFS"
-        echo "========================================"
+        echo "KERNELSU:"
+        grep -E '^CONFIG_KSU' out/.config || true
 
-        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-          echo "ERROR: SUSFS IS ENABLED"
-          exit 1
-        else
-          echo "OK: SUSFS IS NOT ENABLED"
-        fi
+        echo
+        echo "SUSFS:"
+        grep -E '^CONFIG_KSU_SUSFS' out/.config || true
+
+        echo
+        echo "NOMOUNT:"
+        grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
         echo "========================================"
@@ -379,7 +660,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Build Kernel
+    # 12. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -395,6 +676,8 @@ jobs:
         echo "BUILDING KERNEL"
         echo "========================================"
 
+        echo "BUILD TYPE: ${{ matrix.build_type }}"
+
         make -j$(nproc --all) \
           O=out \
           ARCH=arm64 \
@@ -408,7 +691,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Verify Kernel
+    # 13. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -424,12 +707,14 @@ jobs:
         echo "BUILD SUCCESS"
         echo "========================================"
 
+        echo "TYPE: ${{ matrix.build_type }}"
+
         ls -lh \
           out/arch/arm64/boot/Image.gz
 
 
     # ============================================================
-    # 15. Package AnyKernel3
+    # 14. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -457,45 +742,48 @@ jobs:
         cd AK3
 
         zip -r9 \
-          "../Kernel-violet-KSU-${BUILD_TIME}.zip" \
+          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
           *
 
         cd ..
 
         echo
         ls -lh \
-          "Kernel-violet-KSU-${BUILD_TIME}.zip"
+          "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
 
 
     # ============================================================
-    # 16. Upload Kernel ZIP
+    # 15. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-violet-KSU-${{ env.BUILD_TIME }}
-        path: Kernel-violet-KSU-${{ env.BUILD_TIME }}.zip
+        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+        if-no-files-found: error
 
 
     # ============================================================
-    # 17. Upload Full Active Config
+    # 16. Upload Full Active .config
     # ============================================================
 
     - name: Upload Full Active Config
       uses: actions/upload-artifact@v4
       with:
-        name: violet-KSU-config-${{ env.BUILD_TIME }}
+        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: out/.config
+        if-no-files-found: error
 
 
     # ============================================================
-    # 18. Upload Build Log
+    # 17. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: violet-KSU-build-log-${{ env.BUILD_TIME }}
+        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: build.log
+        if-no-files-found: warn
