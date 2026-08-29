@@ -44,19 +44,26 @@ jobs:
           openjdk-17-jre-headless
 
     # 3. Clone Toolchains
-    - name: 🔧 Clone Toolchains
+    - name: Clone Toolchains
       run: |
-        mkdir -p clang && cd clang
+        mkdir -p clang
+        cd clang
+
         wget https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
+
         tar -xzf Clang-17.0.0-20230725.tar.gz
         rm Clang-17.0.0-20230725.tar.gz
+
         cd ..
 
-        git clone https://github.com/greenforce-project/gcc-arm64 -b main --depth=1 gcc64
-        git clone https://github.com/greenforce-project/gcc-arm -b main --depth=1 gcc32
+        git clone https://github.com/greenforce-project/gcc-arm64 \
+          -b main --depth=1 gcc64
+
+        git clone https://github.com/greenforce-project/gcc-arm \
+          -b main --depth=1 gcc32
 
     # 4. Setup Environment
-    - name: ⚙️ Setup Environment
+    - name: Setup Environment
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> $GITHUB_ENV
         echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
@@ -74,33 +81,41 @@ jobs:
         which ld.lld
         ld.lld --version
 
-        ls -la "$GCC64_PATH/bin"
-        ls -la "$GCC32_PATH/bin"
-
+    # ============================================================
     # 6. NoMount
-    # Must happen before KernelSU and before defconfig
-    - name: 🥷 Setup NoMount
+    # ============================================================
+
+    - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
-        curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
+        echo "========================================"
+        echo "SETTING UP NOMOUNT"
+        echo "========================================"
 
+        curl -LSs \
+          "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
+          | bash
+
+    # ============================================================
     # 7. KernelSU-Next
-    # Must happen before defconfig
-    - name: 📥 Setup KernelSU-Next
+    # ============================================================
+
+    - name: Setup KernelSU-Next
       if: ${{ matrix.build_type == 'KSU' || matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
-        curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" | bash -s syscall
+        echo "========================================"
+        echo "SETTING UP KERNELSU-NEXT"
+        echo "========================================"
 
-    # 8. Load original violet defconfig
+        curl -LSs \
+          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
+          | bash -s syscall
+
+    # ============================================================
+    # 8. Load defconfig
+    # ============================================================
+
     - name: Load defconfig
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        make O=out ARCH=arm64 vendor/violet-perf_defconfig
-
-    # 9. Configure only what is required by Matrix
-    - name: Configure Matrix
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -109,53 +124,80 @@ jobs:
         echo "BUILD TYPE: ${{ matrix.build_type }}"
         echo "========================================"
 
-        case "${{ matrix.build_type }}" in
+        make O=out ARCH=arm64 vendor/violet-perf_defconfig
 
-          Base)
-            echo "Base: original defconfig"
-            ;;
+    # ============================================================
+    # 9. Configure Matrix
+    # ============================================================
+
+    - name: Configure Matrix
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        cd out
+
+        case "${{ matrix.build_type }}" in
 
           KSU)
             ./scripts/config --enable CONFIG_KSU
-            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
-            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-NoMount)
             ./scripts/config --enable CONFIG_KSU
-            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
             ./scripts/config --enable CONFIG_NOMOUNT
-            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-SUSFS)
             ./scripts/config --enable CONFIG_KSU
-            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
             ./scripts/config --enable CONFIG_KSU_SUSFS
-            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
           KSU-SUSFS-NoMount)
             ./scripts/config --enable CONFIG_KSU
-            ./scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
             ./scripts/config --enable CONFIG_KSU_SUSFS
             ./scripts/config --enable CONFIG_NOMOUNT
-            ./scripts/config --disable CONFIG_KPROBES
             ;;
 
         esac
 
+        cd ..
+
         make O=out ARCH=arm64 olddefconfig
 
         echo
-        echo "=== FINAL KERNEL CONFIG ==="
+        echo "========================================"
+        echo "FINAL CONFIG"
+        echo "========================================"
 
         grep -E \
-          '^(CONFIG_KSU|CONFIG_KSU_TAMPER_SYSCALL_TABLE|CONFIG_KSU_SUSFS|CONFIG_NOMOUNT|CONFIG_KPROBES)' \
+          '^(CONFIG_KSU=|CONFIG_KSU_|CONFIG_NOMOUNT=)' \
           out/.config || true
 
-    # 10. Build kernel
-    - name: 🛠️ Build Kernel
+    # ============================================================
+    # 10. Show Base config
+    # ============================================================
+
+    - name: Show Base config
+      if: ${{ matrix.build_type == 'Base' }}
+      run: |
+        echo "========================================"
+        echo "BASE BUILD"
+        echo "NO KSU"
+        echo "NO SUSFS"
+        echo "NO NOMOUNT"
+        echo "========================================"
+
+        grep -E \
+          '^(CONFIG_KSU=|CONFIG_KSU_|CONFIG_NOMOUNT=)' \
+          out/.config || true
+
+    # ============================================================
+    # 11. Build Kernel
+    # ============================================================
+
+    - name: Build Kernel
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -177,7 +219,10 @@ jobs:
           CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
           2>&1 | tee build.log
 
-    # 11. Verify output
+    # ============================================================
+    # 12. Verify output
+    # ============================================================
+
     - name: Check build output
       run: |
         test -f out/arch/arm64/boot/Image.gz
@@ -189,10 +234,14 @@ jobs:
 
         ls -lh out/arch/arm64/boot/Image.gz
 
-    # 12. Package with Joker AnyKernel3
+    # ============================================================
+    # 13. Package with Joker AnyKernel3
+    # ============================================================
+
     - name: Package AnyKernel3
       run: |
-        git clone --depth=1 \
+        git clone \
+          --depth=1 \
           -b sixteen \
           https://github.com/Joker-V2/AnyKernel3.git \
           AK3
@@ -209,21 +258,30 @@ jobs:
           "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
           *
 
-    # 13. Upload Kernel ZIP
+    # ============================================================
+    # 14. Upload Kernel
+    # ============================================================
+
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
 
-    # 14. Upload final config
-    - name: Upload Config
+    # ============================================================
+    # 15. Upload config
+    # ============================================================
+
+    - name: Upload config
       uses: actions/upload-artifact@v4
       with:
         name: config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: out/.config
 
-    # 15. Upload build log
+    # ============================================================
+    # 16. Upload build log
+    # ============================================================
+
     - name: Upload build log
       if: always()
       uses: actions/upload-artifact@v4
