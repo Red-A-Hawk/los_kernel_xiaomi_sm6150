@@ -180,30 +180,38 @@ jobs:
 
 
     # ============================================================
-    # 8. Enable ONLY CONFIG_KSU
+    # 8. Configure KernelSU
+    #
+    # ONLY these KernelSU options are explicitly enabled.
+    # SUSFS is explicitly disabled.
     # ============================================================
 
-    - name: Enable KernelSU
+    - name: Configure KernelSU
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "ENABLING ONLY KERNELSU"
+        echo "CONFIGURING KERNELSU ONLY"
         echo "========================================"
 
         scripts/config \
           --file out/.config \
-          --enable CONFIG_KSU
+          --enable CONFIG_KSU \
+          --enable CONFIG_KSU_EXTRAS \
+          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+          --enable CONFIG_KSU_FEATURE_SULOG \
+          --enable CONFIG_KSU_FEATURE_ADBROOT \
+          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+          --disable CONFIG_KSU_SUSFS
 
         echo
         echo "========================================"
-        echo "CONFIG_KSU BEFORE OLDDEFCONFIG"
+        echo "KERNELSU CONFIG BEFORE OLDDEFCONFIG"
         echo "========================================"
 
-        grep -E \
-          '^CONFIG_KSU=' \
-          out/.config || true
+        grep -E '^CONFIG_KSU' out/.config || true
 
 
     # ============================================================
@@ -228,13 +236,69 @@ jobs:
         echo "ALL KERNELSU CONFIG"
         echo "========================================"
 
+        grep -E '^CONFIG_KSU' out/.config || true
+
+        echo
+        echo "========================================"
+        echo "EXPECTED KERNELSU OPTIONS"
+        echo "========================================"
+
         grep -E \
-          '^CONFIG_KSU' \
+          '^(CONFIG_KSU=|CONFIG_KSU_EXTRAS=|CONFIG_KSU_TAMPER_SYSCALL_TABLE=|CONFIG_KSU_LSM_SECURITY_HOOKS=|CONFIG_KSU_FEATURE_SULOG=|CONFIG_KSU_FEATURE_ADBROOT=|CONFIG_KSU_HEURISTIC_IN_TREE_BUILD=)' \
           out/.config || true
+
+        echo
+        echo "========================================"
+        echo "SUSFS CHECK"
+        echo "========================================"
+
+        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+          echo "ERROR: CONFIG_KSU_SUSFS IS ENABLED"
+          exit 1
+        else
+          echo "OK: CONFIG_KSU_SUSFS IS NOT ENABLED"
+        fi
 
 
     # ============================================================
-    # 10. Clean source tree
+    # 10. Save generated defconfig
+    # ============================================================
+
+    - name: Generate KSU defconfig
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "CREATING KSU DEFCONFIG"
+        echo "========================================"
+
+        make O=out \
+          ARCH=arm64 \
+          savedefconfig
+
+        cp \
+          out/defconfig \
+          out/violet-ksu_defconfig
+
+        echo
+        echo "========================================"
+        echo "GENERATED DEFCONFIG"
+        echo "========================================"
+
+        ls -lh out/violet-ksu_defconfig
+
+        echo
+        echo "========================================"
+        echo "KSU OPTIONS IN DEFCONFIG"
+        echo "========================================"
+
+        grep -E '^CONFIG_KSU' \
+          out/violet-ksu_defconfig || true
+
+
+    # ============================================================
+    # 11. Clean source tree
     # ============================================================
 
     - name: Clean source tree
@@ -253,7 +317,7 @@ jobs:
 
 
     # ============================================================
-    # 11. Build Kernel
+    # 12. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -282,7 +346,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Verify Kernel
+    # 13. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -303,7 +367,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Package AnyKernel3
+    # 14. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -342,7 +406,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Upload Kernel ZIP
+    # 15. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -353,7 +417,18 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload Full Config
+    # 16. Upload KSU defconfig
+    # ============================================================
+
+    - name: Upload KSU Defconfig
+      uses: actions/upload-artifact@v4
+      with:
+        name: violet-KSU-defconfig-${{ env.BUILD_TIME }}
+        path: out/violet-ksu_defconfig
+
+
+    # ============================================================
+    # 17. Upload Full Config
     # ============================================================
 
     - name: Upload Full Config
@@ -364,7 +439,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
