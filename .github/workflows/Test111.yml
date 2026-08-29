@@ -261,40 +261,52 @@ jobs:
 
 
     # ============================================================
-    # 10. Save generated defconfig
+    # 10. Save FULL Final Config
+    #
+    # This is NOT savedefconfig.
+    # It is the complete .config after olddefconfig.
     # ============================================================
 
-    - name: Generate KSU defconfig
+    - name: Save Full Final Config
       run: |
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "CREATING KSU DEFCONFIG"
+        echo "SAVING FULL FINAL DEFCONFIG"
         echo "========================================"
-
-        make O=out \
-          ARCH=arm64 \
-          savedefconfig
 
         cp \
-          out/defconfig \
-          out/violet-ksu_defconfig
+          out/.config \
+          out/violet-ksu-full_defconfig
 
         echo
         echo "========================================"
-        echo "GENERATED DEFCONFIG"
+        echo "FULL FINAL DEFCONFIG"
         echo "========================================"
 
-        ls -lh out/violet-ksu_defconfig
+        ls -lh \
+          out/violet-ksu-full_defconfig
+
+        echo
+        echo "LINE COUNT"
+        echo "========================================"
+
+        wc -l \
+          out/violet-ksu-full_defconfig
 
         echo
         echo "========================================"
-        echo "KSU OPTIONS IN DEFCONFIG"
+        echo "KERNELSU CONFIG IN FULL DEFCONFIG"
         echo "========================================"
 
         grep -E '^CONFIG_KSU' \
-          out/violet-ksu_defconfig || true
+          out/violet-ksu-full_defconfig || true
+
+        echo
+        echo "========================================"
+        echo "FULL FINAL CONFIG READY FOR BUILD"
+        echo "========================================"
 
 
     # ============================================================
@@ -398,14 +410,14 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload KSU defconfig
+    # 15. Upload Full Final Defconfig
     # ============================================================
 
-    - name: Upload KSU Defconfig
+    - name: Upload Full Final Defconfig
       uses: actions/upload-artifact@v4
       with:
-        name: violet-KSU-defconfig-${{ env.BUILD_TIME }}
-        path: out/violet-ksu_defconfig
+        name: violet-KSU-full-defconfig-${{ env.BUILD_TIME }}
+        path: out/violet-ksu-full_defconfig
 
 
     # ============================================================
