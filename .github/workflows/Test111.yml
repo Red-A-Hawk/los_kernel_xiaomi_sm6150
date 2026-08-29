@@ -1,0 +1,375 @@
+name: Build Kernel KSU (violet)
+
+on:
+  push:
+    branches:
+      - 16
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # ============================================================
+    # 1. Checkout
+    # ============================================================
+
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+
+
+    # ============================================================
+    # 2. Dependencies
+    # ============================================================
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+
+        sudo apt install -y \
+          git \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          make \
+          zip \
+          unzip \
+          curl \
+          wget \
+          libelf-dev \
+          libncurses-dev \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          python3 \
+          openjdk-17-jre-headless
+
+
+    # ============================================================
+    # 3. Toolchains
+    # ============================================================
+
+    - name: Clone Toolchains
+      run: |
+        mkdir -p clang
+        cd clang
+
+        wget \
+          https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
+
+        tar -xzf Clang-17.0.0-20230725.tar.gz
+
+        rm Clang-17.0.0-20230725.tar.gz
+
+        cd ..
+
+        git clone \
+          https://github.com/greenforce-project/gcc-arm64 \
+          -b main \
+          --depth=1 \
+          gcc64
+
+        git clone \
+          https://github.com/greenforce-project/gcc-arm \
+          -b main \
+          --depth=1 \
+          gcc32
+
+
+    # ============================================================
+    # 4. Environment
+    # ============================================================
+
+    - name: Setup Environment
+      run: |
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+
+
+    # ============================================================
+    # 5. Verify toolchains
+    # ============================================================
+
+    - name: Verify toolchains
+      run: |
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "CLANG"
+        echo "========================================"
+
+        which clang
+        clang --version
+
+        echo
+        echo "========================================"
+        echo "LLD"
+        echo "========================================"
+
+        which ld.lld
+        ld.lld --version
+
+        echo
+        echo "========================================"
+        echo "GCC64"
+        echo "========================================"
+
+        ls -la "$GCC64_PATH/bin"
+
+        echo
+        echo "========================================"
+        echo "GCC32"
+        echo "========================================"
+
+        ls -la "$GCC32_PATH/bin"
+
+
+    # ============================================================
+    # 6. KernelSU-Next
+    # ============================================================
+
+    - name: Setup KernelSU-Next
+      run: |
+        echo "========================================"
+        echo "SETTING UP KERNELSU-NEXT"
+        echo "========================================"
+
+        curl -LSs \
+          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
+          | bash -s syscall
+
+        echo
+        echo "========================================"
+        echo "KERNELSU CHECK"
+        echo "========================================"
+
+        ls -ld drivers/kernelsu
+
+        echo
+        grep -n "kernelsu" drivers/Makefile || true
+
+        echo
+        grep -n "kernelsu" drivers/Kconfig || true
+
+
+    # ============================================================
+    # 7. Load Original violet-perf defconfig
+    # ============================================================
+
+    - name: Load Original violet-perf defconfig
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "LOADING ORIGINAL DEFCONFIG"
+        echo "========================================"
+
+        make O=out \
+          ARCH=arm64 \
+          vendor/violet-perf_defconfig
+
+
+    # ============================================================
+    # 8. Enable ONLY CONFIG_KSU
+    # ============================================================
+
+    - name: Enable KernelSU
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "ENABLING ONLY KERNELSU"
+        echo "========================================"
+
+        scripts/config \
+          --file out/.config \
+          --enable CONFIG_KSU
+
+        echo
+        echo "========================================"
+        echo "CONFIG_KSU BEFORE OLDDEFCONFIG"
+        echo "========================================"
+
+        grep -E \
+          '^CONFIG_KSU=' \
+          out/.config || true
+
+
+    # ============================================================
+    # 9. Resolve Kconfig dependencies
+    # ============================================================
+
+    - name: Resolve Kconfig
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "RUNNING OLDDEFCONFIG"
+        echo "========================================"
+
+        make O=out \
+          ARCH=arm64 \
+          olddefconfig
+
+        echo
+        echo "========================================"
+        echo "FINAL KERNELSU CONFIG"
+        echo "========================================"
+
+        grep -E \
+          '^CONFIG_KSU=' \
+          out/.config || true
+
+
+    # ============================================================
+    # 10. Clean source tree
+    # ============================================================
+
+    - name: Clean source tree
+      run: |
+        echo "========================================"
+        echo "CLEANING SOURCE TREE"
+        echo "========================================"
+
+        rm -f .config
+
+        if [ -d include/config ]; then
+          rm -rf include/config
+        fi
+
+        echo "Source tree cleanup complete."
+
+
+    # ============================================================
+    # 11. Build Kernel
+    # ============================================================
+
+    - name: Build Kernel
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        export KBUILD_BUILD_USER=Manipulator
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
+
+        echo "========================================"
+        echo "BUILDING KERNEL"
+        echo "========================================"
+
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          2>&1 | tee build.log
+
+
+    # ============================================================
+    # 12. Verify Kernel
+    # ============================================================
+
+    - name: Check Build Output
+      run: |
+        echo "========================================"
+        echo "CHECKING BUILD"
+        echo "========================================"
+
+        test -f out/arch/arm64/boot/Image.gz
+
+        echo
+        echo "========================================"
+        echo "BUILD SUCCESS"
+        echo "========================================"
+
+        ls -lh \
+          out/arch/arm64/boot/Image.gz
+
+
+    # ============================================================
+    # 13. Package AnyKernel3
+    # ============================================================
+
+    - name: Package AnyKernel3
+      run: |
+        echo "========================================"
+        echo "PACKAGING ANYKERNEL3"
+        echo "========================================"
+
+        git clone \
+          --depth=1 \
+          -b sixteen \
+          https://github.com/Joker-V2/AnyKernel3.git \
+          AK3
+
+        cp \
+          out/arch/arm64/boot/Image.gz \
+          AK3/
+
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp \
+            out/arch/arm64/boot/dtbo.img \
+            AK3/
+        fi
+
+        cd AK3
+
+        zip -r9 \
+          "../Kernel-violet-KSU-${BUILD_TIME}.zip" \
+          *
+
+        cd ..
+
+        echo
+        ls -lh \
+          "Kernel-violet-KSU-${BUILD_TIME}.zip"
+
+
+    # ============================================================
+    # 14. Upload Kernel ZIP
+    # ============================================================
+
+    - name: Upload Kernel ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-violet-KSU-${{ env.BUILD_TIME }}
+        path: Kernel-violet-KSU-${{ env.BUILD_TIME }}.zip
+
+
+    # ============================================================
+    # 15. Upload Full Config
+    # ============================================================
+
+    - name: Upload Full Config
+      uses: actions/upload-artifact@v4
+      with:
+        name: violet-KSU-config-${{ env.BUILD_TIME }}
+        path: out/.config
+
+
+    # ============================================================
+    # 16. Upload Build Log
+    # ============================================================
+
+    - name: Upload Build Log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: violet-KSU-build-log-${{ env.BUILD_TIME }}
+        path: build.log
