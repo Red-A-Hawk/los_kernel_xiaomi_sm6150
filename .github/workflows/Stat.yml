@@ -1,0 +1,245 @@
+name: Build Kernel (violet)
+
+on:
+  push:
+    branches:
+      - 16
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type:
+          - Base
+          - KSU
+          - KSU-NoMount
+          - KSU-SUSFS
+          - KSU-SUSFS-NoMount
+
+    steps:
+
+    # 1. Checkout kernel source
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
+      with:
+        ref: 16
+        fetch-depth: 1
+
+    # 2. Install dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          git bc bison flex libssl-dev \
+          make zip unzip curl wget \
+          libelf-dev libncurses-dev \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          python3 \
+          openjdk-17-jre-headless
+
+    # 3. Clone Toolchains
+    - name: 🔧 Clone Toolchains
+      run: |
+        mkdir -p clang && cd clang
+        wget https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
+        tar -xzf Clang-17.0.0-20230725.tar.gz
+        rm Clang-17.0.0-20230725.tar.gz
+        cd ..
+
+        git clone https://github.com/greenforce-project/gcc-arm64 -b main --depth=1 gcc64
+        git clone https://github.com/greenforce-project/gcc-arm -b main --depth=1 gcc32
+
+    # 4. Setup Environment
+    - name: ⚙️ Setup Environment
+      run: |
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> $GITHUB_ENV
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> $GITHUB_ENV
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> $GITHUB_ENV
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> $GITHUB_ENV
+
+    # 5. Verify Clang and GCC toolchains
+    - name: Verify toolchains
+      run: |
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "=== CLANG ==="
+        which clang
+        clang --version
+
+        echo "=== LLD ==="
+        which ld.lld
+        ld.lld --version
+
+        echo "=== GCC64 ==="
+        ls -la "$GCC64_PATH/bin"
+
+        echo "=== GCC32 ==="
+        ls -la "$GCC32_PATH/bin"
+
+    # 6. Setup NoMount
+    - name: 🥷 Setup NoMount
+      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+      run: |
+        curl https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -
+
+    # 7. Setup KernelSU-Next
+    - name: 📥 Setup KernelSU-Next
+      if: ${{ matrix.build_type == 'KSU' || matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" | bash -s syscall
+
+    # 8. Load violet defconfig
+    - name: ⚙️ Load defconfig
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        make O=out ARCH=arm64 vendor/violet-perf_defconfig
+
+    # 9. Configure Matrix build
+    - name: 🔧 Configure ${{ matrix.build_type }}
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "CONFIGURING: ${{ matrix.build_type }}"
+        echo "========================================"
+
+        case "${{ matrix.build_type }}" in
+
+          Base)
+            scripts/config --disable CONFIG_KSU || true
+            scripts/config --disable CONFIG_KSU_SUSFS || true
+            scripts/config --disable CONFIG_NOMOUNT || true
+            ;;
+
+          KSU)
+            scripts/config --enable CONFIG_KSU
+            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            scripts/config --disable CONFIG_KSU_SUSFS || true
+            scripts/config --disable CONFIG_NOMOUNT || true
+            scripts/config --disable CONFIG_KPROBES
+            ;;
+
+          KSU-NoMount)
+            scripts/config --enable CONFIG_KSU
+            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            scripts/config --disable CONFIG_KSU_SUSFS || true
+            scripts/config --enable CONFIG_NOMOUNT
+            scripts/config --disable CONFIG_KPROBES
+            ;;
+
+          KSU-SUSFS)
+            scripts/config --enable CONFIG_KSU
+            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            scripts/config --enable CONFIG_KSU_SUSFS
+            scripts/config --disable CONFIG_NOMOUNT || true
+            scripts/config --disable CONFIG_KPROBES
+            ;;
+
+          KSU-SUSFS-NoMount)
+            scripts/config --enable CONFIG_KSU
+            scripts/config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
+            scripts/config --enable CONFIG_KSU_SUSFS
+            scripts/config --enable CONFIG_NOMOUNT
+            scripts/config --disable CONFIG_KPROBES
+            ;;
+
+        esac
+
+        make O=out ARCH=arm64 olddefconfig
+
+        echo
+        echo "========================================"
+        echo "FINAL CONFIG"
+        echo "========================================"
+
+        grep -E \
+          '^(CONFIG_KSU|CONFIG_KSU_TAMPER_SYSCALL_TABLE|CONFIG_KSU_SUSFS|CONFIG_NOMOUNT|CONFIG_KPROBES)=' \
+          out/.config || true
+
+    # 10. Build kernel
+    - name: 🛠️ Build Kernel
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        export KBUILD_BUILD_USER=Manipulator
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
+        export BUILD_DATE=$BUILD_DATE
+        export CFLAGS_EXTRA="-DBUILD_DATE=$BUILD_DATE"
+
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          2>&1 | tee build.log
+
+    # 11. Verify output
+    - name: ✅ Check build output
+      run: |
+        test -f out/arch/arm64/boot/Image.gz
+
+        echo "========================================"
+        echo "BUILD SUCCESS"
+        echo "========================================"
+
+        ls -lh out/arch/arm64/boot/Image.gz
+
+        [ -f out/arch/arm64/boot/dtbo.img ] && \
+          ls -lh out/arch/arm64/boot/dtbo.img || true
+
+    # 12. Upload final config
+    - name: 💾 Upload Config
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: out/.config
+
+    # 13. Package AnyKernel3
+    - name: 📦 Package AnyKernel3
+      run: |
+        git clone --depth=1 \
+          -b sixteen \
+          https://github.com/Joker-V2/AnyKernel3.git \
+          AK3
+
+        cp out/arch/arm64/boot/Image.gz AK3/
+
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp out/arch/arm64/boot/dtbo.img AK3/
+        fi
+
+        cd AK3
+
+        zip -r9 \
+          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
+          *
+
+    # 14. Upload kernel ZIP
+    - name: 📤 Upload Kernel ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+
+    # 15. Upload build log
+    - name: 📋 Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        path: build.log
