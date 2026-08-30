@@ -206,7 +206,54 @@ jobs:
         echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
         echo "CLANG_TRIPLE=$CLANG_TRIPLE"
 
+    #
+    - name: Fix Kbuild Argument List Too Long
+      run: |
+        set -e
 
+        echo "========================================"
+        echo "FIXING KBUILD ARGUMENT LIST TOO LONG"
+        echo "========================================"
+
+        test -f scripts/Makefile.build
+
+        cp \
+          scripts/Makefile.build \
+          scripts/Makefile.build.original
+
+        python3 <<'PY'
+        from pathlib import Path
+
+        path = Path("scripts/Makefile.build")
+        text = path.read_text()
+
+        old = """cmd_link_multi-link = $(LD) $(ld_flags) -r -o $@ $(link_multi_deps) $(cmd_secanalysis)"""
+
+        new = """cmd_link_multi-link = $(file >$@.rsp,$(link_multi_deps)) $(LD) $(ld_flags) -r -o $@ @$@.rsp $(cmd_secanalysis); rm -f $@.rsp"""
+
+        if old not in text:
+            raise SystemExit(
+                "ERROR: Expected cmd_link_multi-link definition was not found"
+            )
+
+        text = text.replace(old, new, 1)
+
+        path.write_text(text)
+        PY
+
+        echo
+        echo "========================================"
+        echo "KBUILD PATCH CHECK"
+        echo "========================================"
+
+        grep -n \
+          "cmd_link_multi-link" \
+          scripts/Makefile.build
+
+        echo
+        echo "OK: KBUILD ARGUMENT LIMIT FIX APPLIED"
+
+    
     # ============================================================
     # 6. Setup NoMount
     # ============================================================
