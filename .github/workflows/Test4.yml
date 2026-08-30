@@ -1,34 +1,22 @@
-name: Build Kernel (violet)
+name: Kernel LTO Diagnostic (violet)
 
 on:
-  push:
-    branches:
-      - 16
   workflow_dispatch:
 
 jobs:
-  build:
 
-    runs-on: ubuntu-latest
+  diagnostic:
+
+    runs-on: ubuntu-22.04
 
     defaults:
       run:
         working-directory: k
 
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type:
-          - Base
-          - KSU
-          - KSU-NoMount
-          - KSU-SUSFS
-          - KSU-SUSFS-NoMount
-
     steps:
 
     # ============================================================
-    # 1. Checkout
+    # 1. CHECKOUT
     # ============================================================
 
     - name: Checkout kernel source
@@ -40,62 +28,53 @@ jobs:
 
 
     # ============================================================
-    # 2. Dependencies
+    # 2. DEPENDENCIES
     # ============================================================
 
     - name: Install dependencies
       run: |
-        sudo apt update
+        set -e
 
-        sudo apt install -y \
+        sudo apt-get update
+
+        sudo apt-get install -y \
           git \
           bc \
           bison \
           flex \
           libssl-dev \
-          make \
-          zip \
-          unzip \
-          curl \
-          wget \
           libelf-dev \
           libncurses-dev \
+          make \
+          device-tree-compiler \
           python3 \
-          openjdk-17-jre-headless
+          curl \
+          wget
 
 
     # ============================================================
-    # 3. Toolchains
+    # 3. TOOLCHAINS
     # ============================================================
 
-    - name: Clone LineageOS Toolchains
+    - name: Download LineageOS Toolchains
       run: |
         set -e
 
-        echo "========================================"
-        echo "SETTING UP TOOLCHAINS"
-        echo "========================================"
+        echo "============================================================"
+        echo "DOWNLOADING TOOLCHAINS"
+        echo "============================================================"
 
         rm -rf clang gcc64 gcc32
-
-        echo
-        echo "CLANG r416183b"
 
         git clone \
           --depth=1 \
           https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
           clang
 
-        echo
-        echo "GCC64 4.9"
-
         git clone \
           --depth=1 \
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
           gcc64
-
-        echo
-        echo "GCC32 4.9"
 
         git clone \
           --depth=1 \
@@ -103,16 +82,16 @@ jobs:
           gcc32
 
         echo
-        echo "TOOLCHAINS DOWNLOADED"
+        echo "TOOLCHAINS READY"
 
 
     # ============================================================
-    # 4. Environment
+    # 4. ENVIRONMENT
     # ============================================================
 
-    - name: Setup Environment
+    - name: Setup environment
       run: |
-        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+        set -e
 
         echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
         echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
@@ -124,126 +103,93 @@ jobs:
 
 
     # ============================================================
-    # 5. Verify toolchains
+    # 5. TOOLCHAIN DIAGNOSTIC
     # ============================================================
 
-    - name: Verify toolchains
+    - name: Toolchain diagnostic
       run: |
-        set -e
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        : > "$REPORT"
+
+        echo "============================================================" | tee -a "$REPORT"
+        echo "TOOLCHAIN DIAGNOSTIC" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "========================================"
-        echo "VERIFYING TOOLCHAINS"
-        echo "========================================"
+        echo | tee -a "$REPORT"
+        echo "PATH=$PATH" | tee -a "$REPORT"
 
-        echo
-        echo "CLANG"
+        echo | tee -a "$REPORT"
+        echo "CLANG" | tee -a "$REPORT"
+        command -v clang | tee -a "$REPORT"
+        clang --version 2>&1 | head -5 | tee -a "$REPORT"
 
-        which clang
-        clang --version
+        echo | tee -a "$REPORT"
+        echo "LLD" | tee -a "$REPORT"
+        command -v ld.lld | tee -a "$REPORT"
+        ld.lld --version 2>&1 | head -3 | tee -a "$REPORT"
 
-        echo
-        echo "LLD"
+        echo | tee -a "$REPORT"
+        echo "LLVM BINARIES" | tee -a "$REPORT"
 
-        which ld.lld
-        ld.lld --version
+        for tool in \
+          llvm-ar \
+          llvm-nm \
+          llvm-objcopy \
+          llvm-objdump \
+          llvm-strip \
+          llvm-readelf \
+          llvm-objdump; do
 
-        echo
-        echo "LLVM TOOLS"
+          if command -v "$tool" >/dev/null 2>&1; then
+            echo "[PASS] $tool" | tee -a "$REPORT"
+          else
+            echo "[FAIL] $tool" | tee -a "$REPORT"
+          fi
 
-        which llvm-ar
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
+        done
 
-        echo
-        echo "GCC64"
+        echo | tee -a "$REPORT"
+        echo "AARCH64 GCC" | tee -a "$REPORT"
 
-        ls -la "$GCC64_PATH/bin"
+        if [ -x "$GCC64_PATH/bin/aarch64-linux-android-gcc" ]; then
+          echo "[PASS] AArch64 GCC exists" | tee -a "$REPORT"
+          "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version 2>&1 | head -3 | tee -a "$REPORT"
+        else
+          echo "[FAIL] AArch64 GCC missing" | tee -a "$REPORT"
+        fi
 
-        "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version || true
+        echo | tee -a "$REPORT"
+        echo "ARM32 GCC" | tee -a "$REPORT"
 
-        echo
-        echo "GCC32"
-
-        ls -la "$GCC32_PATH/bin"
-
-        "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version || true
-
-        echo
-        echo "CROSS COMPILE"
-
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
-
-
-    # ============================================================
-    # 6. Setup NoMount
-    # ============================================================
-
-    - name: Setup NoMount
-      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "SETTING UP NOMOUNT"
-        echo "========================================"
-
-        curl -LSs \
-          "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
-          | bash -
-
-        test -d fs/nomount
-
-        ls -ld fs/nomount
-
-        grep -n "nomount" fs/Makefile || true
-        grep -n "nomount" fs/Kconfig || true
+        if [ -x "$GCC32_PATH/bin/arm-linux-androideabi-gcc" ]; then
+          echo "[PASS] ARM32 GCC exists" | tee -a "$REPORT"
+          "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version 2>&1 | head -3 | tee -a "$REPORT"
+        else
+          echo "[FAIL] ARM32 GCC missing" | tee -a "$REPORT"
+        fi
 
 
     # ============================================================
-    # 7. Setup KernelSU-Next
+    # 6. LOAD DEFCONFIG
     # ============================================================
 
-    - name: Setup KernelSU-Next
-      if: ${{ matrix.build_type != 'Base' }}
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "SETTING UP KERNELSU-NEXT"
-        echo "========================================"
-
-        curl -LSs \
-          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
-          | bash -s syscall
-
-        test -d drivers/kernelsu
-
-        ls -ld drivers/kernelsu
-
-        grep -n "kernelsu" drivers/Makefile || true
-        grep -n "kernelsu" drivers/Kconfig || true
-
-
-    # ============================================================
-    # 8. Load Original violet-perf defconfig
-    # ============================================================
-
-    - name: Load Original violet-perf defconfig
+    - name: Generate kernel configuration
       run: |
         set -e
 
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "========================================"
-        echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
-        echo "========================================"
+        echo "============================================================"
+        echo "GENERATING DEFCONFIG"
+        echo "============================================================"
+
+        rm -rf out
 
         make O=out \
           ARCH=arm64 \
@@ -251,818 +197,679 @@ jobs:
 
         test -f out/.config
 
-
-    # ============================================================
-    # 9. Configure Matrix
-    # ============================================================
-
-    - name: Configure Matrix
-      run: |
-        set -e
-
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        BUILD_TYPE="${{ matrix.build_type }}"
-
-        echo "========================================"
-        echo "BUILD TYPE"
-        echo "$BUILD_TYPE"
-        echo "========================================"
-
-        case "$BUILD_TYPE" in
-
-          Base)
-
-            scripts/config \
-              --file out/.config \
-              --disable CONFIG_KSU \
-              --disable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT
-
-            DEFCONFIG_NAME="violet-perf-full_defconfig"
-
-            ;;
-
-          KSU)
-
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --disable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
-
-            DEFCONFIG_NAME="violet-ksu-full_defconfig"
-
-            ;;
-
-          KSU-NoMount)
-
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --disable CONFIG_KSU_SUSFS \
-              --enable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
-
-            DEFCONFIG_NAME="violet-ksu-nomount-full_defconfig"
-
-            ;;
-
-          KSU-SUSFS)
-
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --enable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
-
-            DEFCONFIG_NAME="violet-ksu-susfs-full_defconfig"
-
-            ;;
-
-          KSU-SUSFS-NoMount)
-
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --enable CONFIG_KSU_SUSFS \
-              --enable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
-
-            DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
-
-            ;;
-
-          *)
-
-            echo "ERROR: Unknown build type"
-            exit 1
-
-            ;;
-
-        esac
-
-        make O=out \
-          ARCH=arm64 \
-          olddefconfig
-
-        case "$BUILD_TYPE" in
-
-          KSU|KSU-NoMount)
-
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED"
-              exit 1
-            fi
-
-            ;;
-
-          KSU-SUSFS|KSU-SUSFS-NoMount)
-
-            if ! grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE ENABLED"
-              exit 1
-            fi
-
-            ;;
-
-          Base)
-
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED"
-              exit 1
-            fi
-
-            ;;
-
-        esac
-
-        case "$BUILD_TYPE" in
-
-          KSU-NoMount|KSU-SUSFS-NoMount)
-
-            if ! grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "ERROR: NOMOUNT MUST BE ENABLED"
-              exit 1
-            fi
-
-            ;;
-
-          Base|KSU|KSU-SUSFS)
-
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "ERROR: NOMOUNT MUST BE DISABLED"
-              exit 1
-            fi
-
-            ;;
-
-        esac
-
-        if grep -q '^CONFIG_KPROBES=y' out/.config; then
-          echo "ERROR: CONFIG_KPROBES MUST BE DISABLED"
-          exit 1
-        fi
-
-        cp \
-          out/.config \
-          "out/${DEFCONFIG_NAME}"
-
-
-    # ============================================================
-    # 10. Upload Full Final Defconfig
-    # ============================================================
-
-    - name: Upload Full Final Defconfig Before Build
-      uses: actions/upload-artifact@v4
-      with:
-        name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/out/*-full_defconfig
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 11. Verify Build Configuration
-    # ============================================================
-
-    - name: Verify Build Configuration
-      run: |
-        set -e
-
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        test -f out/.config
-
-        echo "BUILD TYPE: ${{ matrix.build_type }}"
-
         echo
-        echo "KERNELSU:"
-        grep -E '^CONFIG_KSU' out/.config || true
-
-        echo
-        echo "SUSFS:"
-        grep -E '^CONFIG_KSU_SUSFS' out/.config || true
-
-        echo
-        echo "NOMOUNT:"
-        grep -E '^CONFIG_NOMOUNT' out/.config || true
+        echo "[PASS] out/.config generated"
 
 
     # ============================================================
-    # 12. FULL COMPATIBILITY DIAGNOSTIC
+    # 7. CONFIGURATION DIAGNOSTIC
     # ============================================================
 
-    - name: Compatibility Diagnostic
+    - name: Configuration diagnostic
       run: |
         set +e
 
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        REPORT="out/compatibility-diagnostic.txt"
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
 
-        mkdir -p out
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "KERNEL CONFIGURATION" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
-        : > "$REPORT"
+        CONFIGS="
+        CONFIG_LTO_CLANG
+        CONFIG_LTO_CLANG_FULL
+        CONFIG_LTO_CLANG_THIN
+        CONFIG_LTO_CLANG_NONE
+        CONFIG_MODVERSIONS
+        CONFIG_MODULES
+        CONFIG_HAVE_ARCH_PREL32_RELOCATIONS
+        CONFIG_KPROBES
+        CONFIG_KALLSYMS
+        CONFIG_KALLSYMS_ALL
+        CONFIG_TRIM_UNUSED_KSYMS
+        CONFIG_CFI_CLANG
+        CONFIG_LD_IS_LLD
+        CONFIG_LD_VERSION
+        "
 
-        PASS=0
-        WARN=0
-        FAIL=0
+        for cfg in $CONFIGS; do
 
-        pass()
-        {
-          PASS=$((PASS + 1))
-          echo "[PASS] $1" >> "$REPORT"
-        }
-
-        warn()
-        {
-          WARN=$((WARN + 1))
-          echo "[WARN] $1" >> "$REPORT"
-        }
-
-        fail()
-        {
-          FAIL=$((FAIL + 1))
-          echo "[FAIL] $1" >> "$REPORT"
-        }
-
-        section()
-        {
-          echo "" >> "$REPORT"
-          echo "============================================================" >> "$REPORT"
-          echo "$1" >> "$REPORT"
-          echo "============================================================" >> "$REPORT"
-        }
-
-        section "BUILD IDENTITY"
-
-        echo "BUILD TYPE: ${{ matrix.build_type }}" >> "$REPORT"
-        echo "KERNEL: violet" >> "$REPORT"
-        echo "ARCH: $ARCH" >> "$REPORT"
-        echo "HOST: $(uname -a)" >> "$REPORT"
-
-        section "TOOLCHAIN PATH"
-
-        echo "CLANG_PATH=$CLANG_PATH" >> "$REPORT"
-        echo "GCC64_PATH=$GCC64_PATH" >> "$REPORT"
-        echo "GCC32_PATH=$GCC32_PATH" >> "$REPORT"
-
-        if command -v clang >/dev/null 2>&1; then
-          pass "clang executable found"
-          clang --version >> "$REPORT" 2>&1
-        else
-          fail "clang executable missing"
-        fi
-
-        if command -v ld.lld >/dev/null 2>&1; then
-          pass "ld.lld executable found"
-          ld.lld --version >> "$REPORT" 2>&1
-        else
-          fail "ld.lld executable missing"
-        fi
-
-        for tool in llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
-          if command -v "$tool" >/dev/null 2>&1; then
-            pass "$tool found"
-          else
-            fail "$tool missing"
-          fi
-        done
-
-        section "GCC CROSS TOOLCHAINS"
-
-        if [ -x "$GCC64_PATH/bin/aarch64-linux-android-gcc" ]; then
-          pass "AArch64 GCC found"
-          "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version >> "$REPORT" 2>&1
-        else
-          fail "AArch64 GCC missing"
-        fi
-
-        if [ -x "$GCC32_PATH/bin/arm-linux-androideabi-gcc" ]; then
-          pass "ARM32 GCC found"
-          "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version >> "$REPORT" 2>&1
-        else
-          fail "ARM32 GCC missing"
-        fi
-
-        section "KERNEL BUILD ENVIRONMENT"
-
-        echo "LLVM=1" >> "$REPORT"
-        echo "LLVM_IAS=1" >> "$REPORT"
-        echo "CC=clang" >> "$REPORT"
-        echo "LD=ld.lld" >> "$REPORT"
-        echo "AR=llvm-ar" >> "$REPORT"
-        echo "AS=llvm-as" >> "$REPORT"
-        echo "NM=llvm-nm" >> "$REPORT"
-        echo "OBJCOPY=llvm-objcopy" >> "$REPORT"
-        echo "OBJDUMP=llvm-objdump" >> "$REPORT"
-        echo "STRIP=llvm-strip" >> "$REPORT"
-        echo "CROSS_COMPILE=$CROSS_COMPILE" >> "$REPORT"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32" >> "$REPORT"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE" >> "$REPORT"
-
-        pass "LLVM build environment recorded"
-
-        section "CONFIGURATION"
-
-        for cfg in \
-          CONFIG_LTO_CLANG \
-          CONFIG_LTO_CLANG_FULL \
-          CONFIG_LTO_CLANG_THIN \
-          CONFIG_MODVERSIONS \
-          CONFIG_HAVE_ARCH_PREL32_RELOCATIONS \
-          CONFIG_KPROBES \
-          CONFIG_KSU \
-          CONFIG_KSU_SUSFS \
-          CONFIG_NOMOUNT; do
-
-          value=$(grep "^$cfg=" out/.config 2>/dev/null | head -1)
+          value=$(grep "^${cfg}=" out/.config 2>/dev/null | head -1)
 
           if [ -n "$value" ]; then
-            echo "$value" >> "$REPORT"
+            echo "$value" | tee -a "$REPORT"
           else
-            echo "$cfg=NOT_SET" >> "$REPORT"
+            echo "$cfg=NOT_SET" | tee -a "$REPORT"
           fi
 
         done
 
-        section "LTO COMPATIBILITY"
+
+    # ============================================================
+    # 8. NORMALIZE CONFIG
+    # ============================================================
+
+    - name: Run olddefconfig
+      run: |
+        set -e
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        make O=out \
+          ARCH=arm64 \
+          olddefconfig
+
+        test -f out/.config
+
+        echo "[PASS] olddefconfig completed"
+
+
+    # ============================================================
+    # 9. LTO CONFIG CHECK
+    # ============================================================
+
+    - name: LTO compatibility check
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "LTO COMPATIBILITY" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        LTO=$(grep '^CONFIG_LTO_CLANG=' out/.config 2>/dev/null)
+        MODVERSIONS=$(grep '^CONFIG_MODVERSIONS=' out/.config 2>/dev/null)
+        PREL32=$(grep '^CONFIG_HAVE_ARCH_PREL32_RELOCATIONS=' out/.config 2>/dev/null)
+
+        echo "LTO          : ${LTO:-NOT_SET}" | tee -a "$REPORT"
+        echo "MODVERSIONS  : ${MODVERSIONS:-NOT_SET}" | tee -a "$REPORT"
+        echo "PREL32       : ${PREL32:-NOT_SET}" | tee -a "$REPORT"
 
         if grep -q '^CONFIG_LTO_CLANG=y' out/.config; then
-          pass "CONFIG_LTO_CLANG enabled"
-
-          if grep -q '^CONFIG_MODVERSIONS=y' out/.config; then
-            pass "CONFIG_MODVERSIONS enabled with LTO"
-          else
-            warn "CONFIG_LTO_CLANG enabled but CONFIG_MODVERSIONS is disabled"
-          fi
+          echo "[PASS] CONFIG_LTO_CLANG enabled" | tee -a "$REPORT"
         else
-          warn "CONFIG_LTO_CLANG is not enabled"
+          echo "[WARN] CONFIG_LTO_CLANG disabled" | tee -a "$REPORT"
         fi
 
-        section "MAKEFILE.BUILD"
-
-        if [ -f scripts/Makefile.build ]; then
-          pass "scripts/Makefile.build exists"
-
-          echo "" >> "$REPORT"
-          echo "--- update_lto_symversions ---" >> "$REPORT"
-
-          grep -n -A15 -B5 \
-            "update_lto_symversions" \
-            scripts/Makefile.build \
-            >> "$REPORT" 2>&1 || true
-
-          echo "" >> "$REPORT"
-          echo "--- cmd_link_multi ---" >> "$REPORT"
-
-          grep -n -A12 -B5 \
-            "cmd_link_multi" \
-            scripts/Makefile.build \
-            >> "$REPORT" 2>&1 || true
-
+        if grep -q '^CONFIG_MODVERSIONS=y' out/.config; then
+          echo "[PASS] CONFIG_MODVERSIONS enabled" | tee -a "$REPORT"
         else
-          fail "scripts/Makefile.build missing"
+          echo "[WARN] CONFIG_MODVERSIONS disabled" | tee -a "$REPORT"
         fi
 
-        section "SYMVERSION FIX"
+
+    # ============================================================
+    # 10. MAKEFILE.BUILD INSPECTION
+    # ============================================================
+
+    - name: Inspect scripts/Makefile.build
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "MAKEFILE.BUILD" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        if [ ! -f scripts/Makefile.build ]; then
+          echo "[FAIL] scripts/Makefile.build missing" | tee -a "$REPORT"
+          exit 0
+        fi
+
+        echo "[PASS] scripts/Makefile.build exists" | tee -a "$REPORT"
+
+        echo | tee -a "$REPORT"
+        echo "--- update_lto_symversions ---" | tee -a "$REPORT"
+
+        grep -n \
+          -A20 \
+          -B8 \
+          "update_lto_symversions" \
+          scripts/Makefile.build \
+          2>&1 | head -80 | tee -a "$REPORT"
+
+        echo | tee -a "$REPORT"
+        echo "--- cmd_link_multi ---" | tee -a "$REPORT"
+
+        grep -n \
+          -A20 \
+          -B8 \
+          "cmd_link_multi" \
+          scripts/Makefile.build \
+          2>&1 | head -100 | tee -a "$REPORT"
+
+
+    # ============================================================
+    # 11. VERIFY SYMVERSION FIX
+    # ============================================================
+
+    - name: Verify LTO symversion implementation
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "SYMVERSION IMPLEMENTATION" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
         if grep -q 'foreach n' scripts/Makefile.build 2>/dev/null && \
            grep -q 'wildcard.*symversions' scripts/Makefile.build 2>/dev/null; then
 
-          pass "Argument-list-safe update_lto_symversions implementation detected"
+          echo "[PASS] Argument-list-safe symversion implementation detected" | tee -a "$REPORT"
 
         else
 
-          warn "Original for-loop style update_lto_symversions detected or fix not detected"
+          echo "[WARN] Argument-list-safe symversion implementation NOT detected" | tee -a "$REPORT"
 
         fi
 
-        section "CMD_LINK_MULTI RESPONSE FILE"
 
-        if grep -q '\$(file >\$@.rsp' scripts/Makefile.build 2>/dev/null; then
+    # ============================================================
+    # 12. RESPONSE FILE CHECK
+    # ============================================================
 
-          pass "cmd_link_multi uses Make response file"
+    - name: Check response file implementation
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "RESPONSE FILE" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        if grep -q '\.rsp' scripts/Makefile.build 2>/dev/null; then
+
+          echo "[PASS] .rsp response-file reference detected" | tee -a "$REPORT"
+
+          grep -n \
+            -E '\.rsp|\$file' \
+            scripts/Makefile.build \
+            2>/dev/null | head -40 | tee -a "$REPORT"
 
         else
 
-          warn "cmd_link_multi does not use .rsp response file"
+          echo "[INFO] No .rsp response file implementation detected" | tee -a "$REPORT"
 
         fi
 
-        section "LINK_MULTI_DEPS"
 
-        echo "--- link_multi definitions ---" >> "$REPORT"
+    # ============================================================
+    # 13. LINK_MULTI_DEPS
+    # ============================================================
 
-        grep -n -E \
-          'link_multi_deps|cmd_link_multi|quiet_cmd_link_multi' \
+    - name: Inspect link_multi_deps
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "LINK_MULTI_DEPS" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        grep -n \
+          -A12 \
+          -B5 \
+          "link_multi_deps" \
           scripts/Makefile.build \
-          >> "$REPORT" 2>&1 || true
+          2>&1 | head -100 | tee -a "$REPORT"
 
-        section "MAKE EXPANSION TEST"
+        echo | tee -a "$REPORT"
+        echo "--- link commands ---" | tee -a "$REPORT"
 
-        echo "--- make version ---" >> "$REPORT"
-        make --version | head -3 >> "$REPORT" 2>&1
+        grep -n \
+          -E \
+          'cmd_link_multi|quiet_cmd_link_multi' \
+          scripts/Makefile.build \
+          2>&1 | head -80 | tee -a "$REPORT"
 
-        echo "" >> "$REPORT"
-        echo "--- kernel make variables ---" >> "$REPORT"
 
-        make -s O=out ARCH=arm64 \
-          -pn 2>/dev/null \
+    # ============================================================
+    # 14. MODPOST FILES
+    # ============================================================
+
+    - name: Inspect modpost implementation
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "MODPOST" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        for file in \
+          scripts/mod/modpost.c \
+          scripts/mod/modpost.h \
+          scripts/Makefile.modpost \
+          scripts/Makefile.lib \
+          include/linux/export.h; do
+
+          echo | tee -a "$REPORT"
+          echo "--- $file ---" | tee -a "$REPORT"
+
+          if [ -f "$file" ]; then
+            echo "[PASS] file exists" | tee -a "$REPORT"
+          else
+            echo "[FAIL] file missing" | tee -a "$REPORT"
+          fi
+
+        done
+
+
+    # ============================================================
+    # 15. EXPORT / VERSIONING INSPECTION
+    # ============================================================
+
+    - name: Inspect export and versioning code
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "EXPORT / SYMBOL VERSIONING" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        echo "--- modpost symbol version references ---" | tee -a "$REPORT"
+
+        grep -n \
+          -E \
+          'symvers|version|EXPORT_SYMBOL|crc' \
+          scripts/mod/modpost.c \
+          2>/dev/null | head -120 | tee -a "$REPORT"
+
+        echo | tee -a "$REPORT"
+        echo "--- export.h references ---" | tee -a "$REPORT"
+
+        grep -n \
+          -E \
+          'EXPORT_SYMBOL|__CRC|MODVERSIONS' \
+          include/linux/export.h \
+          2>/dev/null | head -100 | tee -a "$REPORT"
+
+
+    # ============================================================
+    # 16. GSPCA INSPECTION
+    # ============================================================
+
+    - name: Inspect GSPCA exports
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "GSPCA EXPORTS" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        for file in \
+          drivers/media/usb/gspca/gspca.c \
+          drivers/media/usb/gspca/gspca.h; do
+
+          echo | tee -a "$REPORT"
+          echo "--- $file ---" | tee -a "$REPORT"
+
+          if [ -f "$file" ]; then
+
+            grep -n \
+              -E \
+              'EXPORT_SYMBOL|EXPORT_SYMBOL_GPL|gspca_debug|gspca_dev_probe|gspca_disconnect|gspca_frame_add|gspca_resume|gspca_suspend' \
+              "$file" \
+              2>/dev/null | head -100 | tee -a "$REPORT"
+
+          else
+
+            echo "[INFO] File not found" | tee -a "$REPORT"
+
+          fi
+
+        done
+
+
+    # ============================================================
+    # 17. ARM64 BUILD VARIABLES
+    # ============================================================
+
+    - name: Inspect kernel build variables
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "BUILD VARIABLES" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        make -s O=out ARCH=arm64 -pn 2>/dev/null \
           | grep -E \
-          '^(CONFIG_LTO_CLANG|CONFIG_MODVERSIONS|LLVM|LLVM_IAS|CC|LD|AR|AS|NM|OBJCOPY|OBJDUMP|STRIP|CROSS_COMPILE|CROSS_COMPILE_ARM32|CLANG_TRIPLE)' \
-          | sort \
-          >> "$REPORT" 2>&1 || true
+          '^(ARCH|CC|LD|AR|AS|NM|OBJCOPY|OBJDUMP|STRIP|CROSS_COMPILE|CROSS_COMPILE_ARM32|CLANG_TRIPLE|LLVM|LLVM_IAS|CONFIG_LTO_CLANG|CONFIG_MODVERSIONS)[[:space:]]*=' \
+          | sort -u \
+          | head -100 \
+          | tee -a "$REPORT"
 
-        pass "Kernel Make variable database inspected"
+        echo | tee -a "$REPORT"
+        echo "[INFO] Make database inspection completed" | tee -a "$REPORT"
 
-        section "KERNELSU COMPATIBILITY"
 
-        if [ "${{ matrix.build_type }}" = "Base" ]; then
+    # ============================================================
+    # 18. CROSS COMPILER TEST
+    # ============================================================
 
-          if grep -q '^CONFIG_KSU=y' out/.config; then
-            fail "KernelSU enabled in Base build"
-          else
-            pass "KernelSU disabled for Base"
-          fi
+    - name: Cross compiler functional test
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "CROSS COMPILER TEST" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        cat > /tmp/test.c <<'EOF'
+        int test_function(int a)
+        {
+          return a + 1;
+        }
+        EOF
+
+        clang \
+          --target=aarch64-linux-gnu \
+          -c \
+          /tmp/test.c \
+          -o /tmp/test.o \
+          2>&1 | tee -a "$REPORT"
+
+        if [ -f /tmp/test.o ]; then
+          echo "[PASS] Clang AArch64 object compilation" | tee -a "$REPORT"
+        else
+          echo "[FAIL] Clang AArch64 object compilation" | tee -a "$REPORT"
+        fi
+
+
+    # ============================================================
+    # 19. LLD TEST
+    # ============================================================
+
+    - name: LLD functional test
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "LLD TEST" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        clang \
+          --target=aarch64-linux-gnu \
+          -c \
+          /tmp/test.c \
+          -o /tmp/test.o \
+          2>&1 | tee -a "$REPORT"
+
+        ld.lld \
+          -m aarch64linux \
+          -o /tmp/test.elf \
+          /tmp/test.o \
+          2>&1 | tee -a "$REPORT"
+
+        if [ -f /tmp/test.elf ]; then
+          echo "[PASS] LLD AArch64 link test" | tee -a "$REPORT"
+        else
+          echo "[FAIL] LLD AArch64 link test" | tee -a "$REPORT"
+        fi
+
+
+    # ============================================================
+    # 20. LTO OBJECT TEST
+    # ============================================================
+
+    - name: LLVM LTO object test
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "LLVM LTO OBJECT TEST" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        clang \
+          --target=aarch64-linux-gnu \
+          -flto \
+          -c \
+          /tmp/test.c \
+          -o /tmp/test-lto.o \
+          2>&1 | tee -a "$REPORT"
+
+        if [ -f /tmp/test-lto.o ]; then
+          echo "[PASS] LLVM LTO object generated" | tee -a "$REPORT"
+        else
+          echo "[FAIL] LLVM LTO object generation failed" | tee -a "$REPORT"
+        fi
+
+
+    # ============================================================
+    # 21. ARCHITECTURE MAKEFILE
+    # ============================================================
+
+    - name: Inspect ARM64 Makefile
+      run: |
+        set +e
+
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "ARM64 MAKEFILE" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+
+        if [ -f arch/arm64/Makefile ]; then
+
+          grep -n \
+            -E \
+            'LTO|LLVM|CLANG|CROSS_COMPILE|COMPAT|ARM32' \
+            arch/arm64/Makefile \
+            2>/dev/null | head -150 | tee -a "$REPORT"
 
         else
 
-          if grep -q '^CONFIG_KSU=y' out/.config; then
-            pass "KernelSU enabled"
-          else
-            fail "KernelSU expected but not enabled"
-          fi
-
-          if [ -d drivers/kernelsu ]; then
-            pass "drivers/kernelsu exists"
-          else
-            fail "drivers/kernelsu missing"
-          fi
+          echo "[FAIL] arch/arm64/Makefile missing" | tee -a "$REPORT"
 
         fi
 
-        section "SUSFS COMPATIBILITY"
 
-        case "${{ matrix.build_type }}" in
+    # ============================================================
+    # 22. SEARCH LTO REFERENCES
+    # ============================================================
 
-          KSU-SUSFS|KSU-SUSFS-NoMount)
+    - name: Search LTO implementation
+      run: |
+        set +e
 
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              pass "SUSFS enabled as requested"
-            else
-              fail "SUSFS expected but disabled"
-            fi
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
 
-            ;;
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "LTO SOURCE REFERENCES" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
-          *)
+        grep -R -n \
+          -E \
+          'CONFIG_LTO_CLANG|LTO_CLANG|update_lto_symversions|\.lto\.o|lto\.ko' \
+          scripts \
+          arch/arm64 \
+          2>/dev/null \
+          | head -250 \
+          | tee -a "$REPORT"
 
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              fail "SUSFS enabled when it should be disabled"
-            else
-              pass "SUSFS disabled as requested"
-            fi
 
-            ;;
+    # ============================================================
+    # 23. ARGUMENT-LIST RISK
+    # ============================================================
 
-        esac
+    - name: Detect argument list risks
+      run: |
+        set +e
 
-        section "NOMOUNT COMPATIBILITY"
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
 
-        case "${{ matrix.build_type }}" in
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "ARGUMENT LIST RISK" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
-          KSU-NoMount|KSU-SUSFS-NoMount)
+        grep -R -n \
+          -E \
+          'for .* in \$\(|\$\(.*_deps|\$link_multi_deps|filter-out FORCE' \
+          scripts/Makefile.build \
+          2>/dev/null \
+          | head -150 \
+          | tee -a "$REPORT"
 
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              pass "NoMount enabled as requested"
-            else
-              fail "NoMount expected but disabled"
-            fi
+        echo | tee -a "$REPORT"
+        echo "--- response files ---" | tee -a "$REPORT"
 
-            if [ -d fs/nomount ]; then
-              pass "fs/nomount exists"
-            else
-              fail "fs/nomount missing"
-            fi
+        grep -R -n \
+          -E \
+          '\.rsp|\$\(file >' \
+          scripts/Makefile.build \
+          2>/dev/null \
+          | head -100 \
+          | tee -a "$REPORT"
 
-            ;;
 
-          *)
+    # ============================================================
+    # 24. FINAL DIRECTORY CHECK
+    # ============================================================
 
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              fail "NoMount enabled when it should be disabled"
-            else
-              pass "NoMount disabled as requested"
-            fi
+    - name: Final source tree check
+      run: |
+        set +e
 
-            ;;
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
 
-        esac
-
-        section "KPROBES"
-
-        if grep -q '^CONFIG_KPROBES=y' out/.config; then
-          fail "CONFIG_KPROBES enabled"
-        else
-          pass "CONFIG_KPROBES is not enabled"
-        fi
-
-        section "SOURCE TREE"
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "SOURCE TREE CHECK" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
         for path in \
           Makefile \
           Kconfig \
           scripts/Makefile.build \
-          scripts/Kconfig.include \
+          scripts/Makefile.lib \
+          scripts/Makefile.modpost \
+          scripts/mod/modpost.c \
+          scripts/mod/modpost.h \
+          include/linux/export.h \
           arch/arm64/Makefile \
-          arch/arm64/Kconfig; do
+          arch/arm64/Kconfig \
+          drivers/media/usb/gspca/gspca.c \
+          drivers/media/usb/gspca/gspca.h; do
 
           if [ -f "$path" ]; then
-            pass "$path exists"
+            echo "[PASS] $path" | tee -a "$REPORT"
           else
-            fail "$path missing"
+            echo "[FAIL] $path" | tee -a "$REPORT"
           fi
 
         done
 
-        section "ARCHITECTURE"
 
-        echo "ARCH=$ARCH" >> "$REPORT"
+    # ============================================================
+    # 25. FINAL SUMMARY
+    # ============================================================
 
-        if [ -d arch/arm64 ]; then
-          pass "ARM64 architecture tree exists"
-        else
-          fail "ARM64 architecture tree missing"
-        fi
+    - name: Final diagnostic summary
+      run: |
+        set +e
 
-        section "LLVM IAS"
+        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
 
-        if grep -q 'LLVM_IAS=1' "$REPORT"; then
-          pass "LLVM integrated assembler selected"
-        else
-          warn "LLVM_IAS setting not detected"
-        fi
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "FINAL SUMMARY" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
-        section "POTENTIAL ARGUMENT LIST TOO LONG SOURCES"
+        echo | tee -a "$REPORT"
+        echo "Toolchain:" | tee -a "$REPORT"
 
-        echo "--- Makefile.build command constructions ---" >> "$REPORT"
+        command -v clang >/dev/null 2>&1 \
+          && echo "[PASS] clang" | tee -a "$REPORT" \
+          || echo "[FAIL] clang" | tee -a "$REPORT"
 
-        grep -R -n \
-          -E 'for .* in \$\(|\$\(.*_deps\)|\$\(link_multi_deps\)|\$\(filter-out FORCE' \
-          scripts/Makefile.build \
-          >> "$REPORT" 2>&1 || true
+        command -v ld.lld >/dev/null 2>&1 \
+          && echo "[PASS] ld.lld" | tee -a "$REPORT" \
+          || echo "[FAIL] ld.lld" | tee -a "$REPORT"
 
-        echo "" >> "$REPORT"
-        echo "--- rsp / response-file references ---" >> "$REPORT"
+        echo | tee -a "$REPORT"
+        echo "Configuration:" | tee -a "$REPORT"
 
-        grep -R -n \
-          -E '\.rsp|\$\(file >' \
-          scripts/Makefile.build \
-          >> "$REPORT" 2>&1 || true
+        grep '^CONFIG_LTO_CLANG=' out/.config 2>/dev/null | tee -a "$REPORT"
+        grep '^CONFIG_MODVERSIONS=' out/.config 2>/dev/null | tee -a "$REPORT"
 
-        pass "Argument-list-sensitive command patterns inspected"
+        echo | tee -a "$REPORT"
+        echo "Important LTO files:" | tee -a "$REPORT"
 
-        section "SUMMARY"
+        test -f scripts/Makefile.build \
+          && echo "[PASS] scripts/Makefile.build" | tee -a "$REPORT" \
+          || echo "[FAIL] scripts/Makefile.build" | tee -a "$REPORT"
 
-        echo "PASS=$PASS" >> "$REPORT"
-        echo "WARN=$WARN" >> "$REPORT"
-        echo "FAIL=$FAIL" >> "$REPORT"
+        test -f scripts/mod/modpost.c \
+          && echo "[PASS] scripts/mod/modpost.c" | tee -a "$REPORT" \
+          || echo "[FAIL] scripts/mod/modpost.c" | tee -a "$REPORT"
 
-        echo
-        echo "========================================"
-        echo "COMPATIBILITY DIAGNOSTIC SUMMARY"
-        echo "========================================"
-        echo "BUILD TYPE : ${{ matrix.build_type }}"
-        echo "PASS       : $PASS"
-        echo "WARN       : $WARN"
-        echo "FAIL       : $FAIL"
-        echo "REPORT     : $REPORT"
-        echo "========================================"
-
-        if [ "$FAIL" -gt 0 ]; then
-          echo
-          echo "DIAGNOSTIC FOUND CRITICAL FAILURES"
-          echo "BUILD WILL NOT START"
-          exit 1
-        fi
+        echo | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
+        echo "DIAGNOSTIC COMPLETE" | tee -a "$REPORT"
+        echo "============================================================" | tee -a "$REPORT"
 
         echo
-        echo "NO CRITICAL COMPATIBILITY FAILURES DETECTED"
-        echo "BUILD MAY PROCEED"
+        echo "Diagnostic completed."
+        echo "No kernel build was started."
 
 
     # ============================================================
-    # 13. Upload Compatibility Diagnostic
+    # 26. UPLOAD REPORT
     # ============================================================
 
-    - name: Upload Compatibility Diagnostic
+    - name: Upload diagnostic report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: compatibility-diagnostic-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/out/compatibility-diagnostic.txt
-        if-no-files-found: warn
-
-
-    # ============================================================
-    # 14. Build Kernel
-    # ============================================================
-
-    - name: Build Kernel
-      run: |
-        set -o pipefail
-
-        export ARCH=arm64
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        export KBUILD_BUILD_USER=Manipulator
-        export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
-
-        echo "========================================"
-        echo "BUILDING KERNEL"
-        echo "========================================"
-
-        echo "BUILD TYPE: ${{ matrix.build_type }}"
-
-        echo
-        echo "========================================"
-        echo "COMPILER"
-        echo "========================================"
-
-        which clang
-        clang --version
-
-        echo
-        echo "========================================"
-        echo "LINKER"
-        echo "========================================"
-
-        which ld.lld
-        ld.lld --version
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILE"
-        echo "========================================"
-
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
-
-        echo
-        echo "========================================"
-        echo "BUILD START"
-        echo "========================================"
-
-        make -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
-          2>&1 | tee build.log
-
-
-    # ============================================================
-    # 15. Verify Kernel
-    # ============================================================
-
-    - name: Check Build Output
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "CHECKING BUILD"
-        echo "========================================"
-
-        test -f out/arch/arm64/boot/Image.gz
-
-        echo
-        echo "========================================"
-        echo "BUILD SUCCESS"
-        echo "========================================"
-
-        echo "TYPE: ${{ matrix.build_type }}"
-
-        ls -lh \
-          out/arch/arm64/boot/Image.gz
-
-
-    # ============================================================
-    # 16. Package AnyKernel3
-    # ============================================================
-
-    - name: Package AnyKernel3
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "PACKAGING ANYKERNEL3"
-        echo "========================================"
-
-        git clone \
-          --depth=1 \
-          -b sixteen \
-          https://github.com/Joker-V2/AnyKernel3.git \
-          AK3
-
-        cp \
-          out/arch/arm64/boot/Image.gz \
-          AK3/
-
-        if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          cp \
-            out/arch/arm64/boot/dtbo.img \
-            AK3/
-        fi
-
-        cd AK3
-
-        zip -r9 \
-          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
-          *
-
-        cd ..
-
-        ls -lh \
-          "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
-
-
-    # ============================================================
-    # 17. Upload Kernel ZIP
-    # ============================================================
-
-    - name: Upload Kernel ZIP
-      uses: actions/upload-artifact@v4
-      with:
-        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+        name: violet-lto-diagnostic
+        path: k/diagnostic.txt
         if-no-files-found: error
-
-
-    # ============================================================
-    # 18. Upload Full Active .config
-    # ============================================================
-
-    - name: Upload Full Active Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/out/.config
-        include-hidden-files: true
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 19. Upload Build Log
-    # ============================================================
-
-    - name: Upload Build Log
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/build.log
-        if-no-files-found: warn
