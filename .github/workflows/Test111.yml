@@ -1,27 +1,26 @@
 name: Build Kernel (violet)
 
 on:
-push:
-branches:
-- 16
-workflow_dispatch:
+  push:
+    branches:
+      - "16"
+  workflow_dispatch:
 
 jobs:
-build:
+  build:
+    runs-on: ubuntu-latest
 
-runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type:
+          - Base
+          - KSU
+          - KSU-NoMount
+          - KSU-SUSFS
+          - KSU-SUSFS-NoMount
 
-strategy:
-  fail-fast: false
-  matrix:
-    build_type:
-      - Base
-      - KSU
-      - KSU-NoMount
-      - KSU-SUSFS
-      - KSU-SUSFS-NoMount
-
-steps:
+    steps:
 
 # ============================================================
 # 1. Checkout
