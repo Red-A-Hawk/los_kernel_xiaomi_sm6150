@@ -9,7 +9,7 @@ on:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
@@ -77,9 +77,10 @@ jobs:
         wget \
           https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
 
+        tar -xzf Clang-17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz 2>/dev/null || \
         tar -xzf Clang-17.0.0-20230725.tar.gz
 
-        rm Clang-17.0.0-20230725.tar.gz
+        rm -f Clang-17.0.0-20230725.tar.gz
 
         cd ..
 
@@ -102,6 +103,8 @@ jobs:
 
     - name: Setup Environment
       run: |
+        set -e
+
         echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
 
         echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
@@ -193,7 +196,7 @@ jobs:
         echo "========================================"
 
         curl -LSs \
-          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
+          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/syscall/kernel/setup.sh" \
           | bash -s syscall
 
         echo
@@ -303,11 +306,6 @@ jobs:
 
     # ============================================================
     # 9. Diagnose KernelSU Kbuild
-    #
-    # IMPORTANT:
-    # This happens BEFORE kernel compilation.
-    # We do NOT expect sucompat.o to exist yet.
-    # We inspect how Kbuild intends to compile it.
     # ============================================================
 
     - name: Diagnose KernelSU Kbuild
@@ -667,17 +665,133 @@ jobs:
 
 
     # ============================================================
-    # 12. Pre-Build Kbuild Test
+    # 12. Generate Kernel Headers BEFORE KernelSU Test
     #
-    # Compile only the KernelSU directory.
-    # This allows us to detect sucompat problems before
-    # spending time on the full kernel build.
+    # IMPORTANT:
+    # drivers/kernelsu/ can be built directly.
+    # Direct subdirectory builds do not reliably force the
+    # top-level prepare stage first on old kernels.
+    #
+    # KernelSU includes:
+    #   <generated/compile.h>
+    #   <generated/utsrelease.h>
+    #
+    # Therefore we explicitly run the normal Kbuild prepare
+    # stage before the KernelSU-only test.
+    # ============================================================
+
+    - name: Prepare Kernel Generated Headers
+      run: |
+        set -e
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "PREPARING KERNEL GENERATED HEADERS"
+        echo "========================================"
+
+        make \
+          O=out \
+          ARCH=arm64 \
+          prepare
+
+        echo
+        echo "========================================"
+        echo "CHECK GENERATED HEADERS"
+        echo "========================================"
+
+        echo
+        echo "compile.h:"
+        test -f out/include/generated/compile.h
+        ls -lh out/include/generated/compile.h
+
+        echo
+        echo "utsrelease.h:"
+        test -f out/include/generated/utsrelease.h
+        ls -lh out/include/generated/utsrelease.h
+
+        echo
+        echo "autoconf.h:"
+        test -f out/include/generated/autoconf.h
+        ls -lh out/include/generated/autoconf.h
+
+        echo
+        echo "version.h:"
+        test -f out/include/generated/uapi/linux/version.h || \
+        test -f out/include/generated/uapi/linux/version.h
+
+        echo
+        echo "========================================"
+        echo "GENERATED HEADERS READY"
+        echo "========================================"
+
+        find out/include/generated \
+          -maxdepth 2 \
+          -type f \
+          -print | sort | head -100
+
+
+    # ============================================================
+    # 13. Verify KernelSU Include Path
+    # ============================================================
+
+    - name: Verify KernelSU Generated Header Environment
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "KERNELSU GENERATED HEADER ENVIRONMENT"
+        echo "========================================"
+
+        echo
+        echo "SRCTREE:"
+        pwd
+
+        echo
+        echo "OBJTREE:"
+        realpath out
+
+        echo
+        echo "KernelSU:"
+        readlink -f drivers/kernelsu
+
+        echo
+        echo "Generated include directory:"
+        realpath out/include
+
+        echo
+        echo "compile.h:"
+        realpath out/include/generated/compile.h
+
+        echo
+        echo "utsrelease.h:"
+        realpath out/include/generated/utsrelease.h
+
+        echo
+        echo "Checking kernel_includes.h:"
+        grep -n \
+          -E \
+          'generated/compile.h|generated/utsrelease.h' \
+          drivers/kernelsu/kernel_includes.h || true
+
+        echo
+        echo "========================================"
+        echo "HEADER ENVIRONMENT OK"
+        echo "========================================"
+
+
+    # ============================================================
+    # 14. Pre-Build KernelSU Test
+    #
+    # Generated headers are already prepared above.
     # ============================================================
 
     - name: Pre-Build KernelSU Test
       if: ${{ matrix.build_type != 'Base' }}
       run: |
-        set -e
+        set -o pipefail
 
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -692,6 +806,18 @@ jobs:
 
         echo
         echo "========================================"
+        echo "GENERATED HEADERS"
+        echo "========================================"
+
+        test -f out/include/generated/compile.h
+        test -f out/include/generated/utsrelease.h
+
+        ls -lh \
+          out/include/generated/compile.h \
+          out/include/generated/utsrelease.h
+
+        echo
+        echo "========================================"
         echo "KERNELSU BUILD"
         echo "========================================"
 
@@ -701,11 +827,12 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1 \
           CC=clang \
-          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
-          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
-          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          CLANG_TRIPLE="$CLANG_PATH/aarch64-linux-gnu-" \
+          CROSS_COMPILE="$GCC64_PATH/bin/aarch64-elf-" \
+          CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-eabi-" \
           drivers/kernelsu/ \
-          V=1
+          V=1 \
+          2>&1 | tee ksu-prebuild.log
 
         echo
         echo "========================================"
@@ -719,36 +846,32 @@ jobs:
 
         echo
         echo "========================================"
-        echo "SEARCHING SUCOMPAT OBJECT"
+        echo "SEARCHING KSU OBJECT"
         echo "========================================"
 
         find out/drivers/kernelsu \
           -type f \
-          \( \
-            -name 'sucompat.o' \
-            -o \
-            -name 'built-in.a' \
-          \) \
+          -name 'ksu.o' \
           -print || true
 
         echo
         echo "========================================"
-        echo "CHECKING SUCOMPAT SYMBOLS"
+        echo "CHECKING KSU SYMBOLS"
         echo "========================================"
 
-        if [ -f out/drivers/kernelsu/feature/sucompat.o ]; then
+        if [ -f out/drivers/kernelsu/ksu.o ]; then
 
-          echo "FOUND sucompat.o"
+          echo "FOUND ksu.o"
 
           llvm-nm \
-            out/drivers/kernelsu/feature/sucompat.o \
+            out/drivers/kernelsu/ksu.o \
             | grep -E \
               'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
             || true
 
         else
 
-          echo "WARNING: sucompat.o NOT FOUND"
+          echo "WARNING: ksu.o NOT FOUND"
 
         fi
 
@@ -759,7 +882,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Upload Full Final Defconfig
+    # 15. Upload Full Final Defconfig Before Build
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -772,7 +895,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Verify Build Configuration
+    # 16. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
@@ -815,7 +938,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Build Kernel
+    # 17. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -841,14 +964,14 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1 \
           CC=clang \
-          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
-          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
-          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          CLANG_TRIPLE="$CLANG_PATH/aarch64-linux-gnu-" \
+          CROSS_COMPILE="$GCC64_PATH/bin/aarch64-elf-" \
+          CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-eabi-" \
           2>&1 | tee build.log
 
 
     # ============================================================
-    # 16. Verify Kernel
+    # 18. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -873,7 +996,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Package AnyKernel3
+    # 19. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -914,7 +1037,7 @@ jobs:
 
 
     # ============================================================
-    # 18. Upload Kernel ZIP
+    # 20. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -927,7 +1050,7 @@ jobs:
 
 
     # ============================================================
-    # 19. Upload Build Log
+    # 21. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
@@ -935,6 +1058,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: build.log
+        path: |
+          build.log
+          ksu-prebuild.log
         if-no-files-found: warn
         retention-days: 7
