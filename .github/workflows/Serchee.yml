@@ -1,0 +1,57 @@
+name: Scan Cross Compile Variables
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Scan CROSS_COMPILE Variables
+        run: |
+          echo "========================================"
+          echo "CROSS COMPILE TREE SCAN"
+          echo "========================================"
+
+          echo
+          echo "=== CROSS_COMPILE_COMPAT ==="
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            'CROSS_COMPILE_COMPAT' . || true
+
+          echo
+          echo "=== CROSS_COMPILE_ARM32 ==="
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            'CROSS_COMPILE_ARM32' . || true
+
+          echo
+          echo "=== CROSS_COMPILE ==="
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            'CROSS_COMPILE' . || true
+
+          echo
+          echo "=== CONFIG_COMPAT ==="
+          grep -RIn \
+            --exclude-dir=.git \
+            --exclude='*.o' \
+            --exclude='*.ko' \
+            'CONFIG_COMPAT' arch/ Makefile scripts/ 2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SCAN COMPLETE"
+          echo "========================================"
