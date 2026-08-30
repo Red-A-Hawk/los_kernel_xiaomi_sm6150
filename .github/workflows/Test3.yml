@@ -1,898 +1,924 @@
-name: Build Kernel (violet)+
+name: Build Kernel (violet)
 
 on:
-  push:
-    branches:
-      - 16
-  workflow_dispatch:
+push:
+branches:
+- 16
+workflow_dispatch:
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type:
-          - Base
-          - KSU
-          - KSU-NoMount
-          - KSU-SUSFS
-          - KSU-SUSFS-NoMount
-
-    steps:
-
-    # ============================================================
-    # 1. Checkout
-    # ============================================================
-
-    - name: Checkout kernel source
-      uses: actions/checkout@v4
-      with:
-        ref: 16
-        fetch-depth: 1
-
-
-    # ============================================================
-    # 2. Dependencies
-    # ============================================================
-
-    - name: Install dependencies
-      run: |
-        sudo apt update
-
-        sudo apt install -y \
-          git \
-          bc \
-          bison \
-          flex \
-          libssl-dev \
-          make \
-          zip \
-          unzip \
-          curl \
-          wget \
-          libelf-dev \
-          libncurses-dev \
-          python3 \
-          jq \
-          gcc-aarch64-linux-gnu \
-          gcc-arm-linux-gnueabi \
-          python3 \
-          openjdk-17-jre-headless
-
-
-    # ============================================================
-    # 3. Toolchains
-    #
-    # Clang r416183b
-    # GCC64 / GCC32 from LineageOS
-    # ============================================================
-
-    - name: Clone Toolchains
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "SETTING UP TOOLCHAINS"
-        echo "========================================"
-
-        echo
-        echo "Downloading Clang r416183b..."
-
-        git clone \
-          https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
-          -b lineage-16.0 \
-          --depth=1 \
-          clang
-
-        echo
-        echo "Downloading GCC64..."
-
-        git clone \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
-          --depth=1 \
-          gcc64
-
-        echo
-        echo "Downloading GCC32..."
-
-        git clone \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
-          --depth=1 \
-          gcc32
-
-        echo
-        echo "TOOLCHAINS READY"
-
-
-    # ============================================================
-    # 4. Environment
-    # ============================================================
+build:
+
+runs-on: ubuntu-latest
+
+strategy:
+  fail-fast: false
+  matrix:
+    build_type:
+      - Base
+      - KSU
+      - KSU-NoMount
+      - KSU-SUSFS
+      - KSU-SUSFS-NoMount
+
+steps:
+
+# ============================================================
+# 1. Checkout
+# ============================================================
+
+- name: Checkout kernel source
+  uses: actions/checkout@v4
+  with:
+    ref: 16
+    fetch-depth: 1
+
+
+# ============================================================
+# 2. Dependencies
+# ============================================================
+
+- name: Install dependencies
+  run: |
+    set -e
+
+    sudo apt update
+
+    sudo apt install -y \
+      git \
+      bc \
+      bison \
+      flex \
+      libssl-dev \
+      make \
+      zip \
+      unzip \
+      curl \
+      wget \
+      libelf-dev \
+      libncurses-dev \
+      python3 \
+      openjdk-17-jre-headless
+
+
+# ============================================================
+# 3. Toolchains
+#
+# Exact LineageOS toolchains:
+#
+# Clang r416183b
+# GCC 4.9 AArch64
+# GCC 4.9 ARM32
+# ============================================================
+
+- name: Clone LineageOS Toolchains
+  run: |
+    set -e
+
+    echo "========================================"
+    echo "SETTING UP TOOLCHAINS"
+    echo "========================================"
+
+    rm -rf clang gcc64 gcc32
+
+    echo
+    echo "========================================"
+    echo "CLANG r416183b"
+    echo "========================================"
+
+    git clone \
+      --depth=1 \
+      https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+      clang
+
+    echo
+    echo "========================================"
+    echo "GCC64 4.9"
+    echo "========================================"
+
+    git clone \
+      --depth=1 \
+      https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+      gcc64
+
+    echo
+    echo "========================================"
+    echo "GCC32 4.9"
+    echo "========================================"
+
+    git clone \
+      --depth=1 \
+      https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+      gcc32
 
-    - name: Setup Environment
-      run: |
-        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+    echo
+    echo "========================================"
+    echo "TOOLCHAINS DOWNLOADED"
+    echo "========================================"
 
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
 
-        echo "PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH" >> "$GITHUB_ENV"
+# ============================================================
+# 4. Environment
+# ============================================================
 
+- name: Setup Environment
+  run: |
+    echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
 
-    # ============================================================
-    # 5. Verify toolchains
-    # ============================================================
+    echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+    echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+    echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
 
-    - name: Verify toolchains
-      run: |
-        set -e
+    echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+    echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+    echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "========================================"
-        echo "CLANG"
-        echo "========================================"
+# ============================================================
+# 5. Verify toolchains
+# ============================================================
 
-        which clang
-        clang --version
+- name: Verify toolchains
+  run: |
+    set -e
 
-        echo
-        echo "========================================"
-        echo "LLD"
-        echo "========================================"
+    export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        which ld.lld
-        ld.lld --version
+    echo "========================================"
+    echo "VERIFYING TOOLCHAINS"
+    echo "========================================"
 
-        echo
-        echo "========================================"
-        echo "LLVM AR"
-        echo "========================================"
+    echo
+    echo "========================================"
+    echo "CLANG"
+    echo "========================================"
 
-        which llvm-ar
-        llvm-ar --version
+    which clang
+    clang --version
 
-        echo
-        echo "========================================"
-        echo "GCC64"
-        echo "========================================"
+    echo
+    echo "========================================"
+    echo "LLD"
+    echo "========================================"
 
-        ls -la "$GCC64_PATH/bin"
+    which ld.lld
+    ld.lld --version
 
-        echo
-        echo "========================================"
-        echo "GCC32"
-        echo "========================================"
+    echo
+    echo "========================================"
+    echo "LLVM TOOLS"
+    echo "========================================"
 
-        ls -la "$GCC32_PATH/bin"
+    which llvm-ar
+    which llvm-nm
+    which llvm-objcopy
+    which llvm-objdump
+    which llvm-strip
 
+    echo
+    echo "========================================"
+    echo "GCC64"
+    echo "========================================"
 
-    # ============================================================
-    # 6. Fix Kbuild Argument List Too Long
-    #
-    # ONLY FIX:
-    # Composite object linker commands can contain thousands
-    # of object files. Passing all objects directly through
-    # /bin/sh can exceed ARG_MAX.
-    #
-    # We make Kbuild generate an ld response file instead.
-    #
-    # No kernel configuration is changed.
-    # No compiler is changed.
-    # No source driver is changed.
-    # ============================================================
+    ls -la "$GCC64_PATH/bin"
 
-    - name: Fix Kbuild Argument List Too Long
-      run: |
-        set -e
+    echo
+    echo "Checking AArch64 GCC:"
 
-        echo "========================================"
-        echo "FIXING KBUILD ARGUMENT LIST TOO LONG"
-        echo "========================================"
+    "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version || true
 
-        test -f scripts/Makefile.build
+    echo
+    echo "========================================"
+    echo "GCC32"
+    echo "========================================"
 
-        cp \
-          scripts/Makefile.build \
-          scripts/Makefile.build.original
+    ls -la "$GCC32_PATH/bin"
 
-        python3 <<'PY'
-        from pathlib import Path
+    echo
+    echo "Checking ARM GCC:"
 
-        path = Path("scripts/Makefile.build")
-        text = path.read_text()
+    "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version || true
 
-        old = """cmd_link_multi-link = $(LD) $(ld_flags) -r -o $@ $(link_multi_deps) $(cmd_secanalysis)"""
+    echo
+    echo "========================================"
+    echo "CROSS COMPILE"
+    echo "========================================"
 
-        new = """cmd_link_multi-link = $(file >$@.rsp,$(link_multi_deps)) $(LD) $(ld_flags) -r -o $@ @$@.rsp $(cmd_secanalysis); rm -f $@.rsp"""
+    echo "CROSS_COMPILE=$CROSS_COMPILE"
+    echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+    echo "CLANG_TRIPLE=$CLANG_TRIPLE"
 
-        if old not in text:
-            raise SystemExit(
-                "ERROR: Expected cmd_link_multi-link definition was not found"
-            )
 
-        text = text.replace(old, new, 1)
+# ============================================================
+# 6. Fix Kbuild Argument List Too Long
+#
+# ONLY FIX:
+# Prevent huge composite-object linker commands from
+# exceeding the shell ARG_MAX limit.
+#
+# No compiler change.
+# No linker change.
+# No configuration change.
+# No source driver change.
+# ============================================================
 
-        path.write_text(text)
-        PY
+- name: Fix Kbuild Argument List Too Long
+  run: |
+    set -e
 
-        echo
-        echo "========================================"
-        echo "KBUILD PATCH CHECK"
-        echo "========================================"
+    echo "========================================"
+    echo "FIXING KBUILD ARGUMENT LIST TOO LONG"
+    echo "========================================"
 
-        grep -n \
-          "cmd_link_multi-link" \
-          scripts/Makefile.build
+    test -f scripts/Makefile.build
 
-        echo
-        echo "========================================"
-        echo "VERIFYING PATCH"
-        echo "========================================"
+    cp \
+      scripts/Makefile.build \
+      scripts/Makefile.build.original
 
-        grep -q \
-          '$(file >$@.rsp,$(link_multi_deps))' \
-          scripts/Makefile.build
+    python3 <<'PY'
+    from pathlib import Path
 
-        grep -q \
-          '@$@.rsp' \
-          scripts/Makefile.build
+    path = Path("scripts/Makefile.build")
+    text = path.read_text()
 
-        echo "OK: RESPONSE FILE LINKING ENABLED"
+    old = """cmd_link_multi-link = $(LD) $(ld_flags) -r -o $@ $(link_multi_deps) $(cmd_secanalysis)"""
 
-        echo
-        echo "========================================"
-        echo "ORIGINAL FILE BACKUP"
-        echo "========================================"
+    new = """cmd_link_multi-link = $(file >$@.rsp,$(link_multi_deps)) $(LD) $(ld_flags) -r -o $@ @$@.rsp $(cmd_secanalysis); rm -f $@.rsp"""
 
-        ls -lh scripts/Makefile.build.original
+    if old not in text:
+        raise SystemExit(
+            "ERROR: Expected cmd_link_multi-link definition was not found"
+        )
 
-        echo
-        echo "KBUILD ARGUMENT LIMIT FIX READY"
+    text = text.replace(old, new, 1)
+    path.write_text(text)
+    PY
 
+    echo
+    echo "========================================"
+    echo "KBUILD PATCH CHECK"
+    echo "========================================"
 
-    # ============================================================
-    # 7. Setup NoMount
-    # ============================================================
+    grep -n \
+      "cmd_link_multi-link" \
+      scripts/Makefile.build
 
-    - name: Setup NoMount
-      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
-      run: |
-        echo "========================================"
-        echo "SETTING UP NOMOUNT"
-        echo "========================================"
+    echo
+    echo "========================================"
+    echo "VERIFYING PATCH"
+    echo "========================================"
 
-        curl -LSs \
-          "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
-          | bash -
+    grep -q \
+      '$(file >$@.rsp,$(link_multi_deps))' \
+      scripts/Makefile.build
 
-        echo
-        echo "========================================"
-        echo "NOMOUNT CHECK"
-        echo "========================================"
+    grep -q \
+      '@$@.rsp' \
+      scripts/Makefile.build
 
-        test -d fs/nomount
+    echo "OK: RESPONSE FILE LINKING ENABLED"
 
-        ls -ld fs/nomount
+    echo
+    echo "========================================"
+    echo "ORIGINAL FILE BACKUP"
+    echo "========================================"
 
-        grep -n "nomount" fs/Makefile || true
-        grep -n "nomount" fs/Kconfig || true
+    ls -lh scripts/Makefile.build.original
 
+    echo
+    echo "KBUILD ARGUMENT LIMIT FIX READY"
 
-    # ============================================================
-    # 8. Setup KernelSU-Next
-    # ============================================================
 
-    - name: Setup KernelSU-Next
-      if: ${{ matrix.build_type != 'Base' }}
-      run: |
-        echo "========================================"
-        echo "SETTING UP KERNELSU-NEXT"
-        echo "========================================"
+# ============================================================
+# 7. Setup NoMount
+# ============================================================
 
-        curl -LSs \
-          "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
-          | bash -s syscall
+- name: Setup NoMount
+  if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+  run: |
+    set -e
 
-        echo
-        echo "========================================"
-        echo "KERNELSU CHECK"
-        echo "========================================"
+    echo "========================================"
+    echo "SETTING UP NOMOUNT"
+    echo "========================================"
 
-        test -d drivers/kernelsu
+    curl -LSs \
+      "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" \
+      | bash -
 
-        ls -ld drivers/kernelsu
+    echo
+    echo "========================================"
+    echo "NOMOUNT CHECK"
+    echo "========================================"
 
-        echo
-        grep -n "kernelsu" drivers/Makefile || true
+    test -d fs/nomount
 
-        echo
-        grep -n "kernelsu" drivers/Kconfig || true
+    ls -ld fs/nomount
 
+    grep -n "nomount" fs/Makefile || true
+    grep -n "nomount" fs/Kconfig || true
 
-    # ============================================================
-    # 9. Load Original violet-perf defconfig
-    # ============================================================
 
-    - name: Load Original violet-perf defconfig
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+# ============================================================
+# 8. Setup KernelSU-Next
+# ============================================================
 
-        echo "========================================"
-        echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
-        echo "========================================"
+- name: Setup KernelSU-Next
+  if: ${{ matrix.build_type != 'Base' }}
+  run: |
+    set -e
 
-        make O=out \
-          ARCH=arm64 \
-          vendor/violet-perf_defconfig
+    echo "========================================"
+    echo "SETTING UP KERNELSU-NEXT"
+    echo "========================================"
 
-        test -f out/.config
+    curl -LSs \
+      "https://raw.githubusercontent.com/manipvlator/KernelSU-Next/stable/kernel/setup.sh" \
+      | bash -s syscall
 
+    echo
+    echo "========================================"
+    echo "KERNELSU CHECK"
+    echo "========================================"
 
-    # ============================================================
-    # 10. Configure Matrix
-    # ============================================================
+    test -d drivers/kernelsu
 
-    - name: Configure Matrix
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+    ls -ld drivers/kernelsu
 
-        BUILD_TYPE="${{ matrix.build_type }}"
+    echo
+    grep -n "kernelsu" drivers/Makefile || true
 
-        echo "========================================"
-        echo "BUILD TYPE"
-        echo "$BUILD_TYPE"
-        echo "========================================"
+    echo
+    grep -n "kernelsu" drivers/Kconfig || true
 
-        case "$BUILD_TYPE" in
 
-          Base)
+# ============================================================
+# 9. Load Original violet-perf defconfig
+# ============================================================
 
-            echo "Base kernel"
-            echo "KernelSU: DISABLED"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: DISABLED"
+- name: Load Original violet-perf defconfig
+  run: |
+    set -e
 
-            scripts/config \
-              --file out/.config \
-              --disable CONFIG_KSU \
-              --disable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT
+    export ARCH=arm64
+    export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-            DEFCONFIG_NAME="violet-perf-full_defconfig"
+    echo "========================================"
+    echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
+    echo "========================================"
 
-            ;;
+    make O=out \
+      ARCH=arm64 \
+      vendor/violet-perf_defconfig
 
+    test -f out/.config
 
-          KSU)
 
-            echo "KernelSU-Next"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: DISABLED"
+# ============================================================
+# 10. Configure Matrix
+# ============================================================
 
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --disable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
+- name: Configure Matrix
+  run: |
+    set -e
 
-            DEFCONFIG_NAME="violet-ksu-full_defconfig"
+    export ARCH=arm64
+    export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-            ;;
+    BUILD_TYPE="${{ matrix.build_type }}"
 
+    echo "========================================"
+    echo "BUILD TYPE"
+    echo "$BUILD_TYPE"
+    echo "========================================"
 
-          KSU-NoMount)
+    case "$BUILD_TYPE" in
 
-            echo "KernelSU-Next"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: ENABLED"
+      Base)
 
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --disable CONFIG_KSU_SUSFS \
-              --enable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
+        echo "Base kernel"
+        echo "KernelSU: DISABLED"
+        echo "SUSFS: DISABLED"
+        echo "NoMount: DISABLED"
 
-            DEFCONFIG_NAME="violet-ksu-nomount-full_defconfig"
+        scripts/config \
+          --file out/.config \
+          --disable CONFIG_KSU \
+          --disable CONFIG_KSU_SUSFS \
+          --disable CONFIG_NOMOUNT
 
-            ;;
+        DEFCONFIG_NAME="violet-perf-full_defconfig"
 
+        ;;
 
-          KSU-SUSFS)
 
-            echo "KernelSU-Next"
-            echo "SUSFS: ENABLED"
-            echo "NoMount: DISABLED"
+      KSU)
 
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --enable CONFIG_KSU_SUSFS \
-              --disable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
+        echo "KernelSU-Next"
+        echo "SUSFS: DISABLED"
+        echo "NoMount: DISABLED"
 
-            DEFCONFIG_NAME="violet-ksu-susfs-full_defconfig"
+        scripts/config \
+          --file out/.config \
+          --enable CONFIG_KSU \
+          --enable CONFIG_KSU_EXTRAS \
+          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+          --enable CONFIG_KSU_FEATURE_SULOG \
+          --enable CONFIG_KSU_FEATURE_ADBROOT \
+          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+          --disable CONFIG_KSU_SUSFS \
+          --disable CONFIG_NOMOUNT \
+          --disable CONFIG_KPROBES
 
-            ;;
+        DEFCONFIG_NAME="violet-ksu-full_defconfig"
 
+        ;;
 
-          KSU-SUSFS-NoMount)
 
-            echo "KernelSU-Next"
-            echo "SUSFS: ENABLED"
-            echo "NoMount: ENABLED"
+      KSU-NoMount)
 
-            scripts/config \
-              --file out/.config \
-              --enable CONFIG_KSU \
-              --enable CONFIG_KSU_EXTRAS \
-              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
-              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
-              --enable CONFIG_KSU_FEATURE_SULOG \
-              --enable CONFIG_KSU_FEATURE_ADBROOT \
-              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
-              --enable CONFIG_KSU_SUSFS \
-              --enable CONFIG_NOMOUNT \
-              --disable CONFIG_KPROBES
+        echo "KernelSU-Next"
+        echo "SUSFS: DISABLED"
+        echo "NoMount: ENABLED"
 
-            DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
+        scripts/config \
+          --file out/.config \
+          --enable CONFIG_KSU \
+          --enable CONFIG_KSU_EXTRAS \
+          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+          --enable CONFIG_KSU_FEATURE_SULOG \
+          --enable CONFIG_KSU_FEATURE_ADBROOT \
+          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+          --disable CONFIG_KSU_SUSFS \
+          --enable CONFIG_NOMOUNT \
+          --disable CONFIG_KPROBES
 
-            ;;
+        DEFCONFIG_NAME="violet-ksu-nomount-full_defconfig"
 
+        ;;
 
-          *)
 
-            echo "ERROR: Unknown build type: $BUILD_TYPE"
-            exit 1
+      KSU-SUSFS)
 
-            ;;
+        echo "KernelSU-Next"
+        echo "SUSFS: ENABLED"
+        echo "NoMount: DISABLED"
 
-        esac
+        scripts/config \
+          --file out/.config \
+          --enable CONFIG_KSU \
+          --enable CONFIG_KSU_EXTRAS \
+          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+          --enable CONFIG_KSU_FEATURE_SULOG \
+          --enable CONFIG_KSU_FEATURE_ADBROOT \
+          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+          --enable CONFIG_KSU_SUSFS \
+          --disable CONFIG_NOMOUNT \
+          --disable CONFIG_KPROBES
 
+        DEFCONFIG_NAME="violet-ksu-susfs-full_defconfig"
 
-        # ========================================================
-        # Resolve Kconfig dependencies
-        # ========================================================
+        ;;
 
-        echo
-        echo "========================================"
-        echo "RUNNING OLDDEFCONFIG"
-        echo "========================================"
 
-        make O=out \
-          ARCH=arm64 \
-          olddefconfig
+      KSU-SUSFS-NoMount)
 
+        echo "KernelSU-Next"
+        echo "SUSFS: ENABLED"
+        echo "NoMount: ENABLED"
 
-        # ========================================================
-        # Verify final configuration
-        # ========================================================
+        scripts/config \
+          --file out/.config \
+          --enable CONFIG_KSU \
+          --enable CONFIG_KSU_EXTRAS \
+          --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+          --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+          --enable CONFIG_KSU_FEATURE_SULOG \
+          --enable CONFIG_KSU_FEATURE_ADBROOT \
+          --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+          --enable CONFIG_KSU_SUSFS \
+          --enable CONFIG_NOMOUNT \
+          --disable CONFIG_KPROBES
 
-        echo
-        echo "========================================"
-        echo "FINAL CONFIGURATION"
-        echo "========================================"
+        DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
 
-        echo
-        echo "--- KernelSU ---"
+        ;;
 
-        grep -E '^CONFIG_KSU' \
-          out/.config || true
 
-        echo
-        echo "--- NoMount ---"
+      *)
 
-        grep -E '^CONFIG_NOMOUNT' \
-          out/.config || true
+        echo "ERROR: Unknown build type: $BUILD_TYPE"
+        exit 1
 
-        echo
-        echo "--- KPROBES ---"
+        ;;
 
-        grep -E '^CONFIG_KPROBES' \
-          out/.config || true
+    esac
 
 
-        # ========================================================
-        # SUSFS validation
-        # ========================================================
+    echo
+    echo "========================================"
+    echo "RUNNING OLDDEFCONFIG"
+    echo "========================================"
 
-        echo
-        echo "========================================"
-        echo "SUSFS VALIDATION"
-        echo "========================================"
+    make O=out \
+      ARCH=arm64 \
+      olddefconfig
 
-        case "$BUILD_TYPE" in
 
-          KSU|KSU-NoMount)
+    echo
+    echo "========================================"
+    echo "FINAL CONFIGURATION"
+    echo "========================================"
 
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
+    echo
+    echo "--- KernelSU ---"
 
-            echo "OK: SUSFS IS DISABLED"
+    grep -E '^CONFIG_KSU' \
+      out/.config || true
 
-            ;;
+    echo
+    echo "--- NoMount ---"
 
+    grep -E '^CONFIG_NOMOUNT' \
+      out/.config || true
 
-          KSU-SUSFS|KSU-SUSFS-NoMount)
+    echo
+    echo "--- KPROBES ---"
 
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "OK: SUSFS IS ENABLED"
-            else
-              echo "ERROR: SUSFS MUST BE ENABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
+    grep -E '^CONFIG_KPROBES' \
+      out/.config || true
 
-            ;;
 
+    echo
+    echo "========================================"
+    echo "SUSFS VALIDATION"
+    echo "========================================"
 
-          Base)
+    case "$BUILD_TYPE" in
 
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED FOR BASE"
-              exit 1
-            fi
+      KSU|KSU-NoMount)
 
-            echo "OK: SUSFS IS DISABLED"
-
-            ;;
-
-        esac
-
-
-        # ========================================================
-        # NoMount validation
-        # ========================================================
-
-        echo
-        echo "========================================"
-        echo "NOMOUNT VALIDATION"
-        echo "========================================"
-
-        case "$BUILD_TYPE" in
-
-          KSU-NoMount|KSU-SUSFS-NoMount)
-
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "OK: NOMOUNT IS ENABLED"
-            else
-              echo "ERROR: NOMOUNT MUST BE ENABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            ;;
-
-
-          Base|KSU|KSU-SUSFS)
-
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "ERROR: NOMOUNT MUST BE DISABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            echo "OK: NOMOUNT IS DISABLED"
-
-            ;;
-
-        esac
-
-
-        # ========================================================
-        # KPROBES validation
-        # ========================================================
-
-        echo
-        echo "========================================"
-        echo "KPROBES VALIDATION"
-        echo "========================================"
-
-        if grep -q '^CONFIG_KPROBES=y' out/.config; then
-          echo "ERROR: CONFIG_KPROBES MUST BE DISABLED"
+        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+          echo "ERROR: SUSFS MUST BE DISABLED FOR $BUILD_TYPE"
           exit 1
+        fi
+
+        echo "OK: SUSFS IS DISABLED"
+
+        ;;
+
+
+      KSU-SUSFS|KSU-SUSFS-NoMount)
+
+        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+          echo "OK: SUSFS IS ENABLED"
         else
-          echo "OK: CONFIG_KPROBES IS NOT ENABLED"
+          echo "ERROR: SUSFS MUST BE ENABLED FOR $BUILD_TYPE"
+          exit 1
         fi
 
-
-        # ========================================================
-        # Save FULL final configuration
-        # ========================================================
-
-        echo
-        echo "========================================"
-        echo "SAVING FULL FINAL DEFCONFIG"
-        echo "========================================"
-
-        cp \
-          out/.config \
-          "out/${DEFCONFIG_NAME}"
+        ;;
 
 
-        echo
-        echo "========================================"
-        echo "FULL FINAL DEFCONFIG"
-        echo "========================================"
+      Base)
 
-        ls -lh \
-          "out/${DEFCONFIG_NAME}"
-
-        echo
-        wc -l \
-          "out/${DEFCONFIG_NAME}"
-
-        echo
-        echo "========================================"
-        echo "KERNELSU CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU' \
-          "out/${DEFCONFIG_NAME}" || true
-
-        echo
-        echo "========================================"
-        echo "SUSFS CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU_SUSFS' \
-          "out/${DEFCONFIG_NAME}" || true
-
-        echo
-        echo "========================================"
-        echo "NOMOUNT CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_NOMOUNT' \
-          "out/${DEFCONFIG_NAME}" || true
-
-        echo
-        echo "========================================"
-        echo "FULL FINAL DEFCONFIG READY"
-        echo "========================================"
-
-
-    # ============================================================
-    # 11. Upload Full Final Defconfig BEFORE BUILD
-    # ============================================================
-
-    - name: Upload Full Final Defconfig Before Build
-      uses: actions/upload-artifact@v4
-      with:
-        name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/*-full_defconfig
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 12. Verify Build Configuration
-    # ============================================================
-
-    - name: Verify Build Configuration
-      run: |
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo "========================================"
-        echo "VERIFYING ACTIVE BUILD CONFIG"
-        echo "========================================"
-
-        test -f out/.config
-
-        echo
-        echo "CONFIG LINE COUNT:"
-        wc -l out/.config
-
-        echo
-        echo "BUILD TYPE:"
-        echo "${{ matrix.build_type }}"
-
-        echo
-        echo "KERNELSU:"
-        grep -E '^CONFIG_KSU' out/.config || true
-
-        echo
-        echo "SUSFS:"
-        grep -E '^CONFIG_KSU_SUSFS' out/.config || true
-
-        echo
-        echo "NOMOUNT:"
-        grep -E '^CONFIG_NOMOUNT' out/.config || true
-
-        echo
-        echo "========================================"
-        echo "BUILD CONFIG READY"
-        echo "========================================"
-
-
-    # ============================================================
-    # 13. Build Kernel
-    # ============================================================
-
-    - name: Build Kernel
-      run: |
-        set -o pipefail
-
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        export KBUILD_BUILD_USER=Manipulator
-        export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
-
-        echo "========================================"
-        echo "BUILDING KERNEL"
-        echo "========================================"
-
-        echo "BUILD TYPE: ${{ matrix.build_type }}"
-
-        echo
-        echo "========================================"
-        echo "COMPILER"
-        echo "========================================"
-
-        clang --version
-
-        echo
-        echo "========================================"
-        echo "LINKER"
-        echo "========================================"
-
-        ld.lld --version
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILE"
-        echo "========================================"
-
-        echo "CROSS_COMPILE=$GCC64_PATH/bin/aarch64-linux-android-"
-        echo "CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-linux-androideabi-"
-        echo "CLANG_TRIPLE=aarch64-linux-gnu-"
-
-        echo
-        echo "========================================"
-        echo "STARTING BUILD"
-        echo "========================================"
-
-        make -j$(nproc --all) \
-          O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-" \
-          CROSS_COMPILE_COMPAT="$GCC32_PATH/bin/arm-linux-androideabi-" \
-          CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-" \
-          2>&1 | tee build.log
-
-
-    # ============================================================
-    # 14. Verify Kernel
-    # ============================================================
-
-    - name: Check Build Output
-      run: |
-        echo "========================================"
-        echo "CHECKING BUILD"
-        echo "========================================"
-
-        test -f out/arch/arm64/boot/Image.gz
-
-        echo
-        echo "========================================"
-        echo "BUILD SUCCESS"
-        echo "========================================"
-
-        echo "TYPE: ${{ matrix.build_type }}"
-
-        ls -lh \
-          out/arch/arm64/boot/Image.gz
-
-
-    # ============================================================
-    # 15. Package AnyKernel3
-    # ============================================================
-
-    - name: Package AnyKernel3
-      run: |
-        echo "========================================"
-        echo "PACKAGING ANYKERNEL3"
-        echo "========================================"
-
-        git clone \
-          --depth=1 \
-          -b sixteen \
-          https://github.com/Joker-V2/AnyKernel3.git \
-          AK3
-
-        cp \
-          out/arch/arm64/boot/Image.gz \
-          AK3/
-
-        if [ -f out/arch/arm64/boot/dtbo.img ]; then
-          cp \
-            out/arch/arm64/boot/dtbo.img \
-            AK3/
+        if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
+          echo "ERROR: SUSFS MUST BE DISABLED FOR BASE"
+          exit 1
         fi
 
-        cd AK3
+        echo "OK: SUSFS IS DISABLED"
 
-        zip -r9 \
-          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
-          *
+        ;;
 
-        cd ..
-
-        echo
-        ls -lh \
-          "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
+    esac
 
 
-    # ============================================================
-    # 16. Upload Kernel ZIP
-    # ============================================================
+    echo
+    echo "========================================"
+    echo "NOMOUNT VALIDATION"
+    echo "========================================"
 
-    - name: Upload Kernel ZIP
-      uses: actions/upload-artifact@v4
-      with:
-        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
-        if-no-files-found: error
+    case "$BUILD_TYPE" in
 
+      KSU-NoMount|KSU-SUSFS-NoMount)
 
-    # ============================================================
-    # 17. Upload Full Active .config
-    # ============================================================
+        if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
+          echo "OK: NOMOUNT IS ENABLED"
+        else
+          echo "ERROR: NOMOUNT MUST BE ENABLED FOR $BUILD_TYPE"
+          exit 1
+        fi
 
-    - name: Upload Full Active Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/.config
-        include-hidden-files: true
-        if-no-files-found: error
+        ;;
 
 
-    # ============================================================
-    # 18. Upload Build Log
-    # ============================================================
+      Base|KSU|KSU-SUSFS)
 
-    - name: Upload Build Log
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: build.log
-        if-no-files-found: warn
+        if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
+          echo "ERROR: NOMOUNT MUST BE DISABLED FOR $BUILD_TYPE"
+          exit 1
+        fi
+
+        echo "OK: NOMOUNT IS DISABLED"
+
+        ;;
+
+    esac
+
+
+    echo
+    echo "========================================"
+    echo "KPROBES VALIDATION"
+    echo "========================================"
+
+    if grep -q '^CONFIG_KPROBES=y' out/.config; then
+      echo "ERROR: CONFIG_KPROBES MUST BE DISABLED"
+      exit 1
+    else
+      echo "OK: CONFIG_KPROBES IS NOT ENABLED"
+    fi
+
+
+    echo
+    echo "========================================"
+    echo "SAVING FULL FINAL DEFCONFIG"
+    echo "========================================"
+
+    cp \
+      out/.config \
+      "out/${DEFCONFIG_NAME}"
+
+
+    echo
+    echo "========================================"
+    echo "FULL FINAL DEFCONFIG"
+    echo "========================================"
+
+    ls -lh \
+      "out/${DEFCONFIG_NAME}"
+
+    echo
+    echo "LINE COUNT"
+
+    wc -l \
+      "out/${DEFCONFIG_NAME}"
+
+    echo
+    echo "KERNELSU CONFIG"
+
+    grep -E '^CONFIG_KSU' \
+      "out/${DEFCONFIG_NAME}" || true
+
+    echo
+    echo "SUSFS CONFIG"
+
+    grep -E '^CONFIG_KSU_SUSFS' \
+      "out/${DEFCONFIG_NAME}" || true
+
+    echo
+    echo "NOMOUNT CONFIG"
+
+    grep -E '^CONFIG_NOMOUNT' \
+      "out/${DEFCONFIG_NAME}" || true
+
+
+# ============================================================
+# 11. Upload Full Final Defconfig
+# ============================================================
+
+- name: Upload Full Final Defconfig Before Build
+  uses: actions/upload-artifact@v4
+  with:
+    name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+    path: out/*-full_defconfig
+    if-no-files-found: error
+
+
+# ============================================================
+# 12. Verify Build Configuration
+# ============================================================
+
+- name: Verify Build Configuration
+  run: |
+    set -e
+
+    export ARCH=arm64
+    export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+    echo "========================================"
+    echo "VERIFYING ACTIVE BUILD CONFIG"
+    echo "========================================"
+
+    test -f out/.config
+
+    echo
+    echo "CONFIG LINE COUNT:"
+    wc -l out/.config
+
+    echo
+    echo "BUILD TYPE:"
+    echo "${{ matrix.build_type }}"
+
+    echo
+    echo "KERNELSU:"
+    grep -E '^CONFIG_KSU' out/.config || true
+
+    echo
+    echo "SUSFS:"
+    grep -E '^CONFIG_KSU_SUSFS' out/.config || true
+
+    echo
+    echo "NOMOUNT:"
+    grep -E '^CONFIG_NOMOUNT' out/.config || true
+
+    echo
+    echo "========================================"
+    echo "BUILD CONFIG READY"
+    echo "========================================"
+
+
+# ============================================================
+# 13. Build Kernel
+#
+# Exact toolchain arrangement:
+#
+# Clang r416183b
+# GCC64 Android 4.9
+# GCC32 Android 4.9
+#
+# ============================================================
+
+- name: Build Kernel
+  run: |
+    set -o pipefail
+
+    export ARCH=arm64
+
+    export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+    export KBUILD_BUILD_USER=Manipulator
+    export KBUILD_BUILD_HOST=LineageOS
+    export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
+
+    echo "========================================"
+    echo "BUILDING KERNEL"
+    echo "========================================"
+
+    echo "BUILD TYPE: ${{ matrix.build_type }}"
+
+    echo
+    echo "========================================"
+    echo "COMPILER"
+    echo "========================================"
+
+    which clang
+    clang --version
+
+    echo
+    echo "========================================"
+    echo "LINKER"
+    echo "========================================"
+
+    which ld.lld
+    ld.lld --version
+
+    echo
+    echo "========================================"
+    echo "CROSS COMPILE"
+    echo "========================================"
+
+    echo "CROSS_COMPILE=$CROSS_COMPILE"
+    echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+    echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+
+    echo
+    echo "========================================"
+    echo "BUILD START"
+    echo "========================================"
+
+    make -j$(nproc --all) \
+      O=out \
+      ARCH=arm64 \
+      LLVM=1 \
+      LLVM_IAS=1 \
+      CC=clang \
+      LD=ld.lld \
+      AR=llvm-ar \
+      AS=llvm-as \
+      NM=llvm-nm \
+      OBJCOPY=llvm-objcopy \
+      OBJDUMP=llvm-objdump \
+      STRIP=llvm-strip \
+      CROSS_COMPILE="$CROSS_COMPILE" \
+      CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+      CLANG_TRIPLE="$CLANG_TRIPLE" \
+      2>&1 | tee build.log
+
+
+# ============================================================
+# 14. Verify Kernel
+# ============================================================
+
+- name: Check Build Output
+  run: |
+    set -e
+
+    echo "========================================"
+    echo "CHECKING BUILD"
+    echo "========================================"
+
+    test -f out/arch/arm64/boot/Image.gz
+
+    echo
+    echo "========================================"
+    echo "BUILD SUCCESS"
+    echo "========================================"
+
+    echo "TYPE: ${{ matrix.build_type }}"
+
+    ls -lh \
+      out/arch/arm64/boot/Image.gz
+
+
+# ============================================================
+# 15. Package AnyKernel3
+# ============================================================
+
+- name: Package AnyKernel3
+  run: |
+    set -e
+
+    echo "========================================"
+    echo "PACKAGING ANYKERNEL3"
+    echo "========================================"
+
+    git clone \
+      --depth=1 \
+      -b sixteen \
+      https://github.com/Joker-V2/AnyKernel3.git \
+      AK3
+
+    cp \
+      out/arch/arm64/boot/Image.gz \
+      AK3/
+
+    if [ -f out/arch/arm64/boot/dtbo.img ]; then
+      cp \
+        out/arch/arm64/boot/dtbo.img \
+        AK3/
+    fi
+
+    cd AK3
+
+    zip -r9 \
+      "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
+      *
+
+    cd ..
+
+    echo
+    ls -lh \
+      "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
+
+
+# ============================================================
+# 16. Upload Kernel ZIP
+# ============================================================
+
+- name: Upload Kernel ZIP
+  uses: actions/upload-artifact@v4
+  with:
+    name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+    path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+    if-no-files-found: error
+
+
+# ============================================================
+# 17. Upload Full Active .config
+# ============================================================
+
+- name: Upload Full Active Config
+  uses: actions/upload-artifact@v4
+  with:
+    name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+    path: out/.config
+    include-hidden-files: true
+    if-no-files-found: error
+
+
+# ============================================================
+# 18. Upload Build Log
+# ============================================================
+
+- name: Upload Build Log
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+    path: build.log
+    if-no-files-found: warn
