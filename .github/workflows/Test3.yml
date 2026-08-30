@@ -56,11 +56,14 @@ jobs:
           libelf-dev \
           libncurses-dev \
           python3 \
+          jq \
           openjdk-17-jre-headless
 
 
     # ============================================================
-    # 3. AOSP Clang Only
+    # 3. Toolchains
+    #
+    # AOSP Clang Only
     # ============================================================
 
     - name: Setup AOSP Clang
@@ -68,24 +71,23 @@ jobs:
         set -e
 
         echo "========================================"
-        echo "SETTING UP AOSP CLANG ONLY"
+        echo "SETTING UP AOSP CLANG"
         echo "========================================"
 
         rm -rf clang
 
         echo
         echo "========================================"
-        echo "DOWNLOADING AOSP CLANG"
+        echo "GETTING LATEST AOSP CLANG"
         echo "========================================"
 
         TC_URL=$(curl -fsSL \
           https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest \
-          | grep '"browser_download_url"' \
-          | head -n 1 \
-          | cut -d '"' -f 4)
+          | jq -r '.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$")) | .browser_download_url' \
+          | head -n 1)
 
-        if [ -z "$TC_URL" ]; then
-          echo "ERROR: Failed to obtain AOSP Clang download URL"
+        if [ -z "$TC_URL" ] || [ "$TC_URL" = "null" ]; then
+          echo "ERROR: Failed to find AOSP Clang release archive"
           exit 1
         fi
 
@@ -94,27 +96,26 @@ jobs:
 
         echo
         echo "========================================"
-        echo "DOWNLOAD"
+        echo "DOWNLOADING AOSP CLANG"
         echo "========================================"
 
-        curl -L \
-          --fail \
+        curl -fL \
           --retry 3 \
+          --retry-delay 2 \
           -o clang.tar.gz \
           "$TC_URL"
 
+        test -s clang.tar.gz
+
         echo
         echo "========================================"
-        echo "EXTRACTING CLANG"
+        echo "EXTRACTING AOSP CLANG"
         echo "========================================"
 
         mkdir -p clang
 
-        if ! tar \
-          -C clang \
-          -xf clang.tar.gz; then
-
-          echo "ERROR: Clang extraction failed"
+        if ! tar -C clang -xf clang.tar.gz; then
+          echo "ERROR: AOSP Clang extraction failed"
           rm -rf clang clang.tar.gz
           exit 1
         fi
@@ -123,18 +124,28 @@ jobs:
 
         echo
         echo "========================================"
-        echo "CLANG DIRECTORY"
+        echo "NORMALIZING CLANG DIRECTORY"
         echo "========================================"
 
-        ls -la clang
+        if [ ! -d "clang/bin" ]; then
+          INNER_DIR=$(find clang -mindepth 1 -maxdepth 1 -type d | head -n 1)
 
-        if [ ! -d clang/bin ]; then
-          echo "ERROR: clang/bin does not exist"
-          exit 1
+          if [ -n "$INNER_DIR" ] && [ -d "$INNER_DIR/bin" ]; then
+            cp -a "$INNER_DIR"/. clang/
+            rm -rf "$INNER_DIR"
+          fi
         fi
 
+        test -d clang/bin
+        test -x clang/bin/clang
+
         echo
-        echo "AOSP CLANG SETUP COMPLETE"
+        echo "========================================"
+        echo "AOSP CLANG READY"
+        echo "========================================"
+
+        ls -ld clang
+        ls -ld clang/bin
 
 
     # ============================================================
@@ -153,10 +164,10 @@ jobs:
 
 
     # ============================================================
-    # 5. Verify AOSP Clang
+    # 5. Verify toolchain
     # ============================================================
 
-    - name: Verify AOSP Clang
+    - name: Verify toolchain
       run: |
         set -e
 
@@ -176,32 +187,48 @@ jobs:
 
         echo
         echo "========================================"
-        echo "LLD"
+        echo "LLVM"
         echo "========================================"
 
-        which ld.lld
-        ld.lld --version
-
-        echo
-        echo "========================================"
-        echo "LLVM TOOLS"
-        echo "========================================"
-
-        which llvm-ar
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
+        echo "LLVM=1"
+        echo "LLVM_IAS=1"
 
         echo
         echo "========================================"
-        echo "AOSP CLANG ONLY"
+        echo "LLVM BINUTILS DISCOVERY"
         echo "========================================"
 
-        echo "CLANG_PATH=$CLANG_PATH"
+        command -v ld.lld || true
+        command -v llvm-ar || true
+        command -v llvm-nm || true
+        command -v llvm-objcopy || true
+        command -v llvm-objdump || true
+        command -v llvm-strip || true
+
+        echo
+        echo "========================================"
+        echo "CROSS COMPILE"
+        echo "========================================"
+
         echo "CROSS_COMPILE=$CROSS_COMPILE"
         echo "CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
         echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+
+        echo
+        echo "========================================"
+        echo "MAKE_ARGS"
+        echo "========================================"
+
+        MAKE_ARGS=(
+          ARCH=arm64
+          LLVM=1
+          LLVM_IAS=1
+          CROSS_COMPILE="$CROSS_COMPILE"
+          CROSS_COMPILE_COMPAT="$CROSS_COMPILE_COMPAT"
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32"
+        )
+
+        printf '%s\n' "${MAKE_ARGS[@]}"
 
 
     # ============================================================
@@ -661,7 +688,11 @@ jobs:
     #
     # AOSP Clang Only
     #
-    # MAKE_ARGS method
+    # LLVM=1
+    # LLVM_IAS=1
+    #
+    # Kbuild discovers LLVM tools automatically.
+    #
     # ============================================================
 
     - name: Build Kernel
@@ -669,13 +700,20 @@ jobs:
         set -o pipefail
 
         export ARCH=arm64
-        export CLANG_ROOT="$CLANG_PATH"
-
-        export PATH="$CLANG_ROOT/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$PATH"
 
         export KBUILD_BUILD_USER=Manipulator
         export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_ROOT/bin/clang"
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
+
+        MAKE_ARGS=(
+          ARCH=arm64
+          LLVM=1
+          LLVM_IAS=1
+          CROSS_COMPILE="$CROSS_COMPILE"
+          CROSS_COMPILE_COMPAT="$CROSS_COMPILE_COMPAT"
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32"
+        )
 
         echo "========================================"
         echo "BUILDING KERNEL"
@@ -685,14 +723,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "AOSP CLANG ONLY"
-        echo "========================================"
-
-        echo "CLANG_ROOT=$CLANG_ROOT"
-
-        echo
-        echo "========================================"
-        echo "COMPILER"
+        echo "AOSP CLANG"
         echo "========================================"
 
         which clang
@@ -700,48 +731,27 @@ jobs:
 
         echo
         echo "========================================"
-        echo "LINKER"
+        echo "LLVM BUILD MODE"
         echo "========================================"
 
-        which ld.lld
-        ld.lld --version
-
-        echo
-        echo "========================================"
-        echo "LLVM TOOLS"
-        echo "========================================"
-
-        which llvm-ar
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
-
-        echo
-        echo "========================================"
-        echo "MAKE_ARGS"
-        echo "========================================"
-
-        export MAKE_ARGS=(
-          ARCH=arm64
-          LLVM=1
-          LLVM_IAS=1
-          LD=ld.lld
-          CROSS_COMPILE=aarch64-linux-gnu-
-          CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-        )
-
-        printf '%s\n' "${MAKE_ARGS[@]}"
+        echo "LLVM=1"
+        echo "LLVM_IAS=1"
 
         echo
         echo "========================================"
         echo "CROSS COMPILE"
         echo "========================================"
 
-        echo "CROSS_COMPILE=aarch64-linux-gnu-"
-        echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
-        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+        echo "CROSS_COMPILE=$CROSS_COMPILE"
+        echo "CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
+        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+
+        echo
+        echo "========================================"
+        echo "MAKE_ARGS"
+        echo "========================================"
+
+        printf '%s\n' "${MAKE_ARGS[@]}"
 
         echo
         echo "========================================"
