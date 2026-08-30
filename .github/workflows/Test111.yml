@@ -77,7 +77,6 @@ jobs:
         wget \
           https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz
 
-        tar -xzf Clang-17.0.0-20230725-release/Clang-17.0.0-20230725.tar.gz 2>/dev/null || \
         tar -xzf Clang-17.0.0-20230725.tar.gz
 
         rm -f Clang-17.0.0-20230725.tar.gz
@@ -183,7 +182,7 @@ jobs:
 
 
     # ============================================================
-    # 7. Setup KernelSU-Next
+    # 7. Setup KernelSU-Next (syscall branch)
     # ============================================================
 
     - name: Setup KernelSU-Next
@@ -192,7 +191,7 @@ jobs:
         set -e
 
         echo "========================================"
-        echo "SETTING UP KERNELSU-NEXT"
+        echo "SETTING UP KERNELSU-NEXT (syscall branch)"
         echo "========================================"
 
         curl -LSs \
@@ -350,6 +349,17 @@ jobs:
             -name 'Kbuild' \
           \) \
           -print | sort
+
+        echo
+        echo "========================================"
+        echo "CONTENTS OF EACH KERNELSU MAKEFILE / KBUILD"
+        echo "========================================"
+
+        for f in $(find drivers/kernelsu -type f \( -name 'Makefile' -o -name 'Kbuild' \) | sort); do
+          echo
+          echo "--- $f ---"
+          cat "$f"
+        done
 
         echo
         echo "========================================"
@@ -666,18 +676,6 @@ jobs:
 
     # ============================================================
     # 12. Generate Kernel Headers BEFORE KernelSU Test
-    #
-    # IMPORTANT:
-    # drivers/kernelsu/ can be built directly.
-    # Direct subdirectory builds do not reliably force the
-    # top-level prepare stage first on old kernels.
-    #
-    # KernelSU includes:
-    #   <generated/compile.h>
-    #   <generated/utsrelease.h>
-    #
-    # Therefore we explicitly run the normal Kbuild prepare
-    # stage before the KernelSU-only test.
     # ============================================================
 
     - name: Prepare Kernel Generated Headers
@@ -715,11 +713,6 @@ jobs:
         echo "autoconf.h:"
         test -f out/include/generated/autoconf.h
         ls -lh out/include/generated/autoconf.h
-
-        echo
-        echo "version.h:"
-        test -f out/include/generated/uapi/linux/version.h || \
-        test -f out/include/generated/uapi/linux/version.h
 
         echo
         echo "========================================"
@@ -770,13 +763,6 @@ jobs:
         realpath out/include/generated/utsrelease.h
 
         echo
-        echo "Checking kernel_includes.h:"
-        grep -n \
-          -E \
-          'generated/compile.h|generated/utsrelease.h' \
-          drivers/kernelsu/kernel_includes.h || true
-
-        echo
         echo "========================================"
         echo "HEADER ENVIRONMENT OK"
         echo "========================================"
@@ -784,8 +770,6 @@ jobs:
 
     # ============================================================
     # 14. Pre-Build KernelSU Test
-    #
-    # Generated headers are already prepared above.
     # ============================================================
 
     - name: Pre-Build KernelSU Test
@@ -827,7 +811,7 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1 \
           CC=clang \
-          CLANG_TRIPLE="$CLANG_PATH/aarch64-linux-gnu-" \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE="$GCC64_PATH/bin/aarch64-elf-" \
           CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-eabi-" \
           drivers/kernelsu/ \
@@ -846,34 +830,17 @@ jobs:
 
         echo
         echo "========================================"
-        echo "SEARCHING KSU OBJECT"
+        echo "CHECKING KSU SYMBOLS (ALL OBJECTS)"
         echo "========================================"
 
-        find out/drivers/kernelsu \
-          -type f \
-          -name 'ksu.o' \
-          -print || true
-
-        echo
-        echo "========================================"
-        echo "CHECKING KSU SYMBOLS"
-        echo "========================================"
-
-        if [ -f out/drivers/kernelsu/ksu.o ]; then
-
-          echo "FOUND ksu.o"
-
-          llvm-nm \
-            out/drivers/kernelsu/ksu.o \
+        for obj in $(find out/drivers/kernelsu -type f -name '*.o' | sort); do
+          echo
+          echo "--- $obj ---"
+          llvm-nm "$obj" \
             | grep -E \
               'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
             || true
-
-        else
-
-          echo "WARNING: ksu.o NOT FOUND"
-
-        fi
+        done
 
         echo
         echo "========================================"
@@ -964,7 +931,7 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1 \
           CC=clang \
-          CLANG_TRIPLE="$CLANG_PATH/aarch64-linux-gnu-" \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE="$GCC64_PATH/bin/aarch64-elf-" \
           CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-eabi-" \
           2>&1 | tee build.log
