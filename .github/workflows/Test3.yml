@@ -40,8 +40,6 @@ jobs:
 
     - name: Install dependencies
       run: |
-        set -e
-
         sudo apt update
 
         sudo apt install -y \
@@ -67,10 +65,13 @@ jobs:
     # ============================================================
     # 3. Setup Toolchains
     #
-    # AOSP Clang + GCC64 + GCC32
+    # AOSP Clang
+    # GCC64
+    # GCC32
     # ============================================================
 
     - name: Setup Toolchains
+      shell: bash
       run: |
         set -e
 
@@ -78,123 +79,117 @@ jobs:
         echo "SETTING UP TOOLCHAINS"
         echo "========================================"
 
+        CLANG_ROOT="$GITHUB_WORKSPACE/clang"
+        GCC64_ROOT="$GITHUB_WORKSPACE/gcc64"
+        GCC32_ROOT="$GITHUB_WORKSPACE/gcc32"
+
+        export CLANG_ROOT
+        export GCC64_ROOT
+        export GCC32_ROOT
+
         # --------------------------------------------------------
         # AOSP Clang
         # --------------------------------------------------------
-
-        CLANG_URL="https://github.com/bachnxuan/aosp_clang_mirror/releases/download/clang-r614150-16165221/clang-r614150.tar.gz"
 
         echo
         echo "========================================"
         echo "DOWNLOADING AOSP CLANG"
         echo "========================================"
 
-        echo "AOSP Clang URL:"
-        echo "$CLANG_URL"
+        AOSP_URL="$(curl -fsSL \
+          https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest \
+          | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url' \
+          | head -n 1)"
 
-        rm -rf clang
-        rm -f clang-r614150.tar.gz
-
-        if ! curl -L \
-          --fail \
-          --retry 3 \
-          --retry-delay 2 \
-          -o clang-r614150.tar.gz \
-          "$CLANG_URL"; then
-
-          echo "ERROR: Failed to download AOSP Clang"
+        if [ -z "$AOSP_URL" ] || [ "$AOSP_URL" = "null" ]; then
+          echo "ERROR: Could not find AOSP Clang release archive"
           exit 1
         fi
 
+        echo "AOSP Clang URL:"
+        echo "$AOSP_URL"
+
+        rm -rf "$CLANG_ROOT"
+        mkdir -p "$CLANG_ROOT"
+
+        curl -fL \
+          --retry 3 \
+          --retry-delay 2 \
+          -o "$GITHUB_WORKSPACE/aosp-clang.tar.gz" \
+          "$AOSP_URL"
+
+        echo
+        echo "AOSP Clang archive:"
+        ls -lh "$GITHUB_WORKSPACE/aosp-clang.tar.gz"
+
         echo
         echo "========================================"
-        echo "VERIFYING CLANG ARCHIVE"
+        echo "VERIFYING AOSP ARCHIVE"
         echo "========================================"
 
-        ls -lh clang-r614150.tar.gz
+        tar -tzf "$GITHUB_WORKSPACE/aosp-clang.tar.gz" >/dev/null
 
-        test -s clang-r614150.tar.gz
-
-        echo "Testing gzip archive..."
-
-        gzip -t clang-r614150.tar.gz
-
-        echo "Archive integrity: OK"
-
-
-        # --------------------------------------------------------
-        # Extract AOSP Clang
-        # --------------------------------------------------------
+        echo "Archive verification: OK"
 
         echo
         echo "========================================"
         echo "EXTRACTING AOSP CLANG"
         echo "========================================"
 
-        mkdir -p clang
+        tar \
+          --no-same-owner \
+          -xzf "$GITHUB_WORKSPACE/aosp-clang.tar.gz" \
+          -C "$CLANG_ROOT"
 
-        if ! tar -C clang -xf clang-r614150.tar.gz; then
-
-          echo
-          echo "ERROR: AOSP Clang extraction failed"
-          echo "Cleaning incomplete extraction..."
-
-          rm -rf clang
-          rm -f clang-r614150.tar.gz
-
-          exit 1
-        fi
-
-        rm -f clang-r614150.tar.gz
-
+        rm -f "$GITHUB_WORKSPACE/aosp-clang.tar.gz"
 
         # --------------------------------------------------------
-        # Normalize possible top-level directory
+        # Normalize extraction directory.
+        #
+        # Some archives contain:
+        #
+        # clang/bin/clang
+        #
+        # while others contain:
+        #
+        # bin/clang
         # --------------------------------------------------------
 
-        if [ ! -d "clang/bin" ]; then
+        if [ ! -x "$CLANG_ROOT/bin/clang" ]; then
 
-          echo
-          echo "Clang archive contains a top-level directory."
-          echo "Searching for clang/bin..."
+          FOUND_CLANG="$(find "$CLANG_ROOT" \
+            -type f \
+            -path "*/bin/clang" \
+            -print -quit)"
 
-          CLANG_SUBDIR="$(find clang \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | head -n 1)"
+          if [ -n "$FOUND_CLANG" ]; then
 
-          if [ -n "$CLANG_SUBDIR" ] && [ -d "$CLANG_SUBDIR/bin" ]; then
+            REAL_ROOT="$(dirname "$(dirname "$FOUND_CLANG")")"
 
-            echo "Found:"
-            echo "$CLANG_SUBDIR"
+            echo "Detected nested Clang directory:"
+            echo "$REAL_ROOT"
 
-            shopt -s dotglob
+            TEMP_CLANG="$GITHUB_WORKSPACE/clang.tmp"
 
-            mv "$CLANG_SUBDIR"/* clang/
+            rm -rf "$TEMP_CLANG"
+            mkdir -p "$TEMP_CLANG"
 
-            rmdir "$CLANG_SUBDIR"
+            cp -a "$REAL_ROOT"/. "$TEMP_CLANG"/
+
+            rm -rf "$CLANG_ROOT"
+            mv "$TEMP_CLANG" "$CLANG_ROOT"
 
           fi
         fi
 
+        if [ ! -x "$CLANG_ROOT/bin/clang" ]; then
+          echo "ERROR: AOSP Clang was extracted but bin/clang was not found"
+          echo
+          find "$CLANG_ROOT" -maxdepth 4 -type f | head -100
+          exit 1
+        fi
 
-        # --------------------------------------------------------
-        # Validate Clang
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "CHECKING AOSP CLANG"
-        echo "========================================"
-
-        test -d clang/bin
-        test -x clang/bin/clang
-        test -x clang/bin/ld.lld
-
-        echo "Clang directory: OK"
-        echo "clang binary: OK"
-        echo "ld.lld binary: OK"
+        echo "AOSP Clang extraction: OK"
 
 
         # --------------------------------------------------------
@@ -206,17 +201,17 @@ jobs:
         echo "CLONING GCC64"
         echo "========================================"
 
-        rm -rf gcc64
+        rm -rf "$GCC64_ROOT"
 
         git clone \
           --depth=1 \
-          -b main \
-          https://github.com/greenforce-project/gcc-arm64.git \
-          gcc64
+          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+          "$GCC64_ROOT"
 
-        test -d gcc64
-
-        echo "GCC64: OK"
+        if [ ! -d "$GCC64_ROOT/bin" ]; then
+          echo "ERROR: GCC64 bin directory not found"
+          exit 1
+        fi
 
 
         # --------------------------------------------------------
@@ -228,17 +223,17 @@ jobs:
         echo "CLONING GCC32"
         echo "========================================"
 
-        rm -rf gcc32
+        rm -rf "$GCC32_ROOT"
 
         git clone \
           --depth=1 \
-          -b main \
-          https://github.com/greenforce-project/gcc-arm.git \
-          gcc32
+          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+          "$GCC32_ROOT"
 
-        test -d gcc32
-
-        echo "GCC32: OK"
+        if [ ! -d "$GCC32_ROOT/bin" ]; then
+          echo "ERROR: GCC32 bin directory not found"
+          exit 1
+        fi
 
 
         # --------------------------------------------------------
@@ -247,104 +242,125 @@ jobs:
 
         echo
         echo "========================================"
-        echo "SETTING ENVIRONMENT"
+        echo "EXPORTING TOOLCHAIN ENVIRONMENT"
         echo "========================================"
 
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+        echo "CLANG_PATH=$CLANG_ROOT" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GCC64_ROOT" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GCC32_ROOT" >> "$GITHUB_ENV"
 
-        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+        echo "PATH=$CLANG_ROOT/bin:$GCC64_ROOT/bin:$GCC32_ROOT/bin:$PATH" >> "$GITHUB_ENV"
 
-
-        # --------------------------------------------------------
-        # PATH
-        # --------------------------------------------------------
-
-        export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
-
-
-        # --------------------------------------------------------
-        # Verify Clang
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "AOSP CLANG VERSION"
-        echo "========================================"
-
-        command -v clang
-        clang --version
-
-
-        # --------------------------------------------------------
-        # Verify LLD
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "LLD VERSION"
-        echo "========================================"
-
-        command -v ld.lld
-        ld.lld --version
-
-
-        # --------------------------------------------------------
-        # Verify LLVM tools
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "LLVM TOOLS"
-        echo "========================================"
-
-        command -v llvm-ar
-        command -v llvm-as
-        command -v llvm-nm
-        command -v llvm-objcopy
-        command -v llvm-objdump
-        command -v llvm-strip
-
-        echo "LLVM tools: OK"
-
-
-        # --------------------------------------------------------
-        # GCC64 inspection
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "GCC64 BINARIES"
-        echo "========================================"
-
-        ls -la "$GITHUB_WORKSPACE/gcc64/bin" | head -50
-
-
-        # --------------------------------------------------------
-        # GCC32 inspection
-        # --------------------------------------------------------
-
-        echo
-        echo "========================================"
-        echo "GCC32 BINARIES"
-        echo "========================================"
-
-        ls -la "$GITHUB_WORKSPACE/gcc32/bin" | head -50
-
-
-        echo
-        echo "========================================"
-        echo "TOOLCHAINS READY"
-        echo "========================================"
+        echo "Toolchains installed successfully."
 
 
     # ============================================================
-    # 4. Setup NoMount
+    # 4. Verify Toolchains
+    # ============================================================
+
+    - name: Verify Toolchains
+      shell: bash
+      run: |
+        set -e
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "TOOLCHAIN VERIFICATION"
+        echo "========================================"
+
+        echo
+        echo "CLANG"
+        echo "----------------------------------------"
+
+        which clang
+        clang --version
+
+
+        echo
+        echo "LLD"
+        echo "----------------------------------------"
+
+        which ld.lld
+        ld.lld --version
+
+
+        echo
+        echo "LLVM AR"
+        echo "----------------------------------------"
+
+        which llvm-ar
+        llvm-ar --version
+
+
+        echo
+        echo "GCC64"
+        echo "----------------------------------------"
+
+        ls -la "$GCC64_PATH/bin"
+
+        echo
+        echo "Searching GCC64:"
+        find "$GCC64_PATH/bin" \
+          -maxdepth 1 \
+          -type f \
+          \( -name 'aarch64-linux-android-*' -o -name '*aarch64*' \) \
+          -print | head -50
+
+
+        echo
+        echo "GCC32"
+        echo "----------------------------------------"
+
+        ls -la "$GCC32_PATH/bin"
+
+        echo
+        echo "Searching GCC32:"
+        find "$GCC32_PATH/bin" \
+          -maxdepth 1 \
+          -type f \
+          \( -name 'arm-linux-androideabi-*' -o -name '*arm*' \) \
+          -print | head -50
+
+
+        echo
+        echo "========================================"
+        echo "CROSS COMPILE CHECK"
+        echo "========================================"
+
+        A64="$GCC64_PATH/bin/aarch64-linux-android-"
+        A32="$GCC32_PATH/bin/arm-linux-androideabi-"
+
+        if [ -x "${A64}gcc" ]; then
+          echo "GCC64 compiler: OK"
+          "${A64}gcc" --version | head -1
+        else
+          echo "WARNING: aarch64-linux-android-gcc not found"
+        fi
+
+        if [ -x "${A32}gcc" ]; then
+          echo "GCC32 compiler: OK"
+          "${A32}gcc" --version | head -1
+        else
+          echo "WARNING: arm-linux-androideabi-gcc not found"
+        fi
+
+
+        echo
+        echo "========================================"
+        echo "FINAL PATH"
+        echo "========================================"
+
+        echo "$PATH"
+
+
+    # ============================================================
+    # 5. Setup NoMount
     # ============================================================
 
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+      shell: bash
       run: |
         set -e
 
@@ -370,11 +386,12 @@ jobs:
 
 
     # ============================================================
-    # 5. Setup KernelSU-Next
+    # 6. Setup KernelSU-Next
     # ============================================================
 
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
+      shell: bash
       run: |
         set -e
 
@@ -403,15 +420,15 @@ jobs:
 
 
     # ============================================================
-    # 6. Load Original violet-perf defconfig
+    # 7. Load Original violet-perf Defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
+      shell: bash
       run: |
         set -e
 
         export ARCH=arm64
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
@@ -426,15 +443,15 @@ jobs:
 
 
     # ============================================================
-    # 7. Configure Matrix
+    # 8. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
+      shell: bash
       run: |
         set -e
 
         export ARCH=arm64
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         BUILD_TYPE="${{ matrix.build_type }}"
@@ -444,15 +461,11 @@ jobs:
         echo "$BUILD_TYPE"
         echo "========================================"
 
-
         case "$BUILD_TYPE" in
-
-          # ======================================================
-          # BASE
-          # ======================================================
 
           Base)
 
+            echo "Base kernel"
             echo "KernelSU: DISABLED"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
@@ -468,13 +481,9 @@ jobs:
             ;;
 
 
-          # ======================================================
-          # KSU
-          # ======================================================
-
           KSU)
 
-            echo "KernelSU: ENABLED"
+            echo "KernelSU-Next"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
 
@@ -496,13 +505,9 @@ jobs:
             ;;
 
 
-          # ======================================================
-          # KSU + NOMOUNT
-          # ======================================================
-
           KSU-NoMount)
 
-            echo "KernelSU: ENABLED"
+            echo "KernelSU-Next"
             echo "SUSFS: DISABLED"
             echo "NoMount: ENABLED"
 
@@ -524,13 +529,9 @@ jobs:
             ;;
 
 
-          # ======================================================
-          # KSU + SUSFS
-          # ======================================================
-
           KSU-SUSFS)
 
-            echo "KernelSU: ENABLED"
+            echo "KernelSU-Next"
             echo "SUSFS: ENABLED"
             echo "NoMount: DISABLED"
 
@@ -552,13 +553,9 @@ jobs:
             ;;
 
 
-          # ======================================================
-          # KSU + SUSFS + NOMOUNT
-          # ======================================================
-
           KSU-SUSFS-NoMount)
 
-            echo "KernelSU: ENABLED"
+            echo "KernelSU-Next"
             echo "SUSFS: ENABLED"
             echo "NoMount: ENABLED"
 
@@ -590,10 +587,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # Resolve Kconfig dependencies
-        # ========================================================
-
         echo
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
@@ -604,10 +597,6 @@ jobs:
           olddefconfig
 
 
-        # ========================================================
-        # Final configuration
-        # ========================================================
-
         echo
         echo "========================================"
         echo "FINAL CONFIGURATION"
@@ -615,32 +604,16 @@ jobs:
 
         echo
         echo "--- KernelSU ---"
-
-        grep -E '^CONFIG_KSU' \
-          out/.config || true
-
-        echo
-        echo "--- SUSFS ---"
-
-        grep -E '^CONFIG_KSU_SUSFS' \
-          out/.config || true
+        grep -E '^CONFIG_KSU' out/.config || true
 
         echo
         echo "--- NoMount ---"
-
-        grep -E '^CONFIG_NOMOUNT' \
-          out/.config || true
+        grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
         echo "--- KPROBES ---"
+        grep -E '^CONFIG_KPROBES' out/.config || true
 
-        grep -E '^CONFIG_KPROBES' \
-          out/.config || true
-
-
-        # ========================================================
-        # SUSFS validation
-        # ========================================================
 
         echo
         echo "========================================"
@@ -687,10 +660,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # NoMount validation
-        # ========================================================
-
         echo
         echo "========================================"
         echo "NOMOUNT VALIDATION"
@@ -724,10 +693,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # KPROBES validation
-        # ========================================================
-
         echo
         echo "========================================"
         echo "KPROBES VALIDATION"
@@ -741,10 +706,6 @@ jobs:
         fi
 
 
-        # ========================================================
-        # Save FULL final configuration
-        # ========================================================
-
         echo
         echo "========================================"
         echo "SAVING FULL FINAL DEFCONFIG"
@@ -754,12 +715,6 @@ jobs:
           out/.config \
           "out/${DEFCONFIG_NAME}"
 
-
-        echo
-        echo "========================================"
-        echo "FULL FINAL DEFCONFIG"
-        echo "========================================"
-
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
@@ -768,33 +723,20 @@ jobs:
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
-
         echo
-        echo "========================================"
-        echo "KERNELSU CONFIG"
-        echo "========================================"
-
+        echo "KERNELSU CONFIG:"
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
 
-
         echo
-        echo "========================================"
-        echo "SUSFS CONFIG"
-        echo "========================================"
-
+        echo "SUSFS CONFIG:"
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
 
-
         echo
-        echo "========================================"
-        echo "NOMOUNT CONFIG"
-        echo "========================================"
-
+        echo "NOMOUNT CONFIG:"
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
-
 
         echo
         echo "========================================"
@@ -803,27 +745,27 @@ jobs:
 
 
     # ============================================================
-    # 8. Upload Full Final Defconfig
+    # 9. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
       uses: actions/upload-artifact@v4
       with:
-        name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        name: full-final-defconfig-${{ matrix.build_type }}-${{ github.run_number }}
         path: out/*-full_defconfig
         if-no-files-found: error
 
 
     # ============================================================
-    # 9. Verify Build Configuration
+    # 10. Verify Active Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
+      shell: bash
       run: |
         set -e
 
         export ARCH=arm64
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
@@ -853,76 +795,28 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
-        echo "KPROBES:"
-        grep -E '^CONFIG_KPROBES' out/.config || true
-
-
-        echo
         echo "========================================"
         echo "BUILD CONFIG READY"
         echo "========================================"
 
 
     # ============================================================
-    # 10. Verify Cross Compiler
-    # ============================================================
-
-    - name: Verify Cross Compiler
-      run: |
-        set -e
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo "========================================"
-        echo "VERIFYING CROSS COMPILERS"
-        echo "========================================"
-
-        echo
-        echo "--- GCC64 ---"
-
-        command -v aarch64-linux-android-gcc || true
-        command -v aarch64-linux-android-ld || true
-        command -v aarch64-linux-android-as || true
-
-        echo
-        echo "--- GCC32 ---"
-
-        command -v arm-linux-androideabi-gcc || true
-        command -v arm-linux-androideabi-ld || true
-        command -v arm-linux-androideabi-as || true
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILER PATHS"
-        echo "========================================"
-
-        find "$GCC64_PATH/bin" \
-          -maxdepth 1 \
-          -type f \
-          | grep 'aarch64-linux-android' \
-          | head -30 || true
-
-        find "$GCC32_PATH/bin" \
-          -maxdepth 1 \
-          -type f \
-          | grep 'arm-linux-androideabi' \
-          | head -30 || true
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILER CHECK COMPLETE"
-        echo "========================================"
-
-
-    # ============================================================
     # 11. Build Kernel
     #
-    # AOSP Clang
-    # GCC64 Android 4.9
-    # GCC32 Android 4.9
+    # AOSP Clang + GCC64 + GCC32
+    #
+    # IMPORTANT:
+    # Do NOT use aarch64-elf- here.
+    # Do NOT use arm-eabi- here.
+    #
+    # Use Android GCC prefixes:
+    #
+    # aarch64-linux-android-
+    # arm-linux-androideabi-
     # ============================================================
 
     - name: Build Kernel
+      shell: bash
       run: |
         set -o pipefail
 
@@ -932,8 +826,8 @@ jobs:
 
         export KBUILD_BUILD_USER=Manipulator
         export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
 
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
 
         echo "========================================"
         echo "BUILDING KERNEL"
@@ -944,73 +838,77 @@ jobs:
 
         echo
         echo "========================================"
-        echo "CLANG"
+        echo "COMPILERS"
         echo "========================================"
 
-        clang --version
+        which clang
+        clang --version | head -3
+
+        echo
+        which ld.lld
+        ld.lld --version | head -1
 
         echo
         echo "========================================"
-        echo "LLD"
+        echo "CROSS COMPILE"
         echo "========================================"
 
-        ld.lld --version
+        echo "CROSS_COMPILE:"
+        echo "aarch64-linux-android-"
+
+        echo "CROSS_COMPILE_COMPAT:"
+        echo "arm-linux-androideabi-"
+
+        echo "CROSS_COMPILE_ARM32:"
+        echo "arm-linux-androideabi-"
 
         echo
         echo "========================================"
-        echo "CROSS COMPILE SETTINGS"
+        echo "MAKE"
         echo "========================================"
 
-        echo "ARCH=arm64"
-        echo "LLVM=1"
-        echo "LLVM_IAS=1"
-        echo "CC=clang"
-        echo "LD=ld.lld"
-        echo "AR=llvm-ar"
-        echo "AS=llvm-as"
-        echo "NM=llvm-nm"
-        echo "OBJCOPY=llvm-objcopy"
-        echo "OBJDUMP=llvm-objdump"
-        echo "STRIP=llvm-strip"
-
-        echo
-        echo "CROSS_COMPILE=aarch64-linux-android-"
-        echo "CROSS_COMPILE_COMPAT=arm-linux-androideabi-"
-        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-"
-        echo "CLANG_TRIPLE=aarch64-linux-gnu-"
-
-
-        echo
-        echo "========================================"
-        echo "STARTING KERNEL BUILD"
-        echo "========================================"
-
-
-        make -j"$(nproc --all)" \
+        make \
+          -j"$(nproc --all)" \
           O=out \
           ARCH=arm64 \
           LLVM=1 \
           LLVM_IAS=1 \
           CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
           2>&1 | tee build.log
+
+        BUILD_STATUS=${PIPESTATUS[0]}
+
+        echo
+        echo "========================================"
+        echo "MAKE EXIT CODE"
+        echo "========================================"
+
+        echo "$BUILD_STATUS"
+
+        if [ "$BUILD_STATUS" -ne 0 ]; then
+          echo
+          echo "========================================"
+          echo "KERNEL BUILD FAILED"
+          echo "========================================"
+
+          exit "$BUILD_STATUS"
+        fi
+
+        echo
+        echo "========================================"
+        echo "KERNEL BUILD FINISHED"
+        echo "========================================"
 
 
     # ============================================================
-    # 12. Verify Kernel
+    # 12. Check Build Output
     # ============================================================
 
     - name: Check Build Output
+      shell: bash
       run: |
         set -e
 
@@ -1029,7 +927,6 @@ jobs:
         echo "${{ matrix.build_type }}"
 
         echo
-        echo "KERNEL:"
         ls -lh \
           out/arch/arm64/boot/Image.gz
 
@@ -1039,6 +936,7 @@ jobs:
     # ============================================================
 
     - name: Package AnyKernel3
+      shell: bash
       run: |
         set -e
 
@@ -1046,46 +944,33 @@ jobs:
         echo "PACKAGING ANYKERNEL3"
         echo "========================================"
 
-        rm -rf AK3
-
         git clone \
           --depth=1 \
           -b sixteen \
           https://github.com/Joker-V2/AnyKernel3.git \
           AK3
 
-        test -d AK3
-
         cp \
           out/arch/arm64/boot/Image.gz \
           AK3/
 
-
         if [ -f out/arch/arm64/boot/dtbo.img ]; then
-
           cp \
             out/arch/arm64/boot/dtbo.img \
             AK3/
-
         fi
-
 
         cd AK3
 
         zip -r9 \
-          "../Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip" \
+          "../Kernel-violet-${{ matrix.build_type }}-${{ github.run_number }}.zip" \
           *
 
         cd ..
 
-
         echo
-        echo "========================================"
-        echo "ANYKERNEL3 PACKAGE"
-        echo "========================================"
-
         ls -lh \
-          "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
+          "Kernel-violet-${{ matrix.build_type }}-${{ github.run_number }}.zip"
 
 
     # ============================================================
@@ -1095,19 +980,19 @@ jobs:
     - name: Upload Kernel ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+        name: Kernel-violet-${{ matrix.build_type }}-${{ github.run_number }}
+        path: Kernel-violet-${{ matrix.build_type }}-${{ github.run_number }}.zip
         if-no-files-found: error
 
 
     # ============================================================
-    # 15. Upload Full Active .config
+    # 15. Upload Full Active Config
     # ============================================================
 
     - name: Upload Full Active Config
       uses: actions/upload-artifact@v4
       with:
-        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        name: active-config-${{ matrix.build_type }}-${{ github.run_number }}
         path: out/.config
         include-hidden-files: true
         if-no-files-found: error
@@ -1121,6 +1006,6 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
+        name: build-log-${{ matrix.build_type }}-${{ github.run_number }}
         path: build.log
         if-no-files-found: warn
