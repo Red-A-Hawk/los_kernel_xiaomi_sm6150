@@ -55,97 +55,39 @@ jobs:
           wget \
           libelf-dev \
           libncurses-dev \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
           python3 \
-          jq \
           openjdk-17-jre-headless
 
 
     # ============================================================
     # 3. Toolchains
     #
-    # AOSP Clang Only
+    # AOSP/LineageOS Clang r416183b
+    # GCC64
+    # GCC32
     # ============================================================
 
-    - name: Setup AOSP Clang
+    - name: Clone Toolchains
       run: |
-        set -e
-
-        echo "========================================"
-        echo "SETTING UP AOSP CLANG"
-        echo "========================================"
-
-        rm -rf clang
-
-        echo
-        echo "========================================"
-        echo "GETTING LATEST AOSP CLANG"
-        echo "========================================"
-
-        TC_URL=$(curl -fsSL \
-          https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest \
-          | jq -r '.assets[] | select(.name | test("\\.(tar\\.gz|tgz)$")) | .browser_download_url' \
-          | head -n 1)
-
-        if [ -z "$TC_URL" ] || [ "$TC_URL" = "null" ]; then
-          echo "ERROR: Failed to find AOSP Clang release archive"
-          exit 1
-        fi
-
-        echo "AOSP CLANG URL:"
-        echo "$TC_URL"
-
-        echo
-        echo "========================================"
-        echo "DOWNLOADING AOSP CLANG"
-        echo "========================================"
-
-        curl -fL \
-          --retry 3 \
-          --retry-delay 2 \
-          -o clang.tar.gz \
-          "$TC_URL"
-
-        test -s clang.tar.gz
-
-        echo
-        echo "========================================"
-        echo "EXTRACTING AOSP CLANG"
-        echo "========================================"
-
         mkdir -p clang
 
-        if ! tar -C clang -xf clang.tar.gz; then
-          echo "ERROR: AOSP Clang extraction failed"
-          rm -rf clang clang.tar.gz
-          exit 1
-        fi
+        git clone \
+          https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+          clang
 
-        rm -f clang.tar.gz
+        git clone \
+          https://github.com/greenforce-project/gcc-arm64 \
+          -b main \
+          --depth=1 \
+          gcc64
 
-        echo
-        echo "========================================"
-        echo "NORMALIZING CLANG DIRECTORY"
-        echo "========================================"
-
-        if [ ! -d "clang/bin" ]; then
-          INNER_DIR=$(find clang -mindepth 1 -maxdepth 1 -type d | head -n 1)
-
-          if [ -n "$INNER_DIR" ] && [ -d "$INNER_DIR/bin" ]; then
-            cp -a "$INNER_DIR"/. clang/
-            rm -rf "$INNER_DIR"
-          fi
-        fi
-
-        test -d clang/bin
-        test -x clang/bin/clang
-
-        echo
-        echo "========================================"
-        echo "AOSP CLANG READY"
-        echo "========================================"
-
-        ls -ld clang
-        ls -ld clang/bin
+        git clone \
+          https://github.com/greenforce-project/gcc-arm \
+          -b main \
+          --depth=1 \
+          gcc32
 
 
     # ============================================================
@@ -157,27 +99,18 @@ jobs:
         echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
 
         echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
-
-        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
 
 
     # ============================================================
-    # 5. Verify toolchain
+    # 5. Verify toolchains
     # ============================================================
 
-    - name: Verify toolchain
+    - name: Verify toolchains
       run: |
-        set -e
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        export PATH="$CLANG_PATH/bin:$PATH"
-
-        echo "========================================"
-        echo "VERIFYING AOSP CLANG"
-        echo "========================================"
-
-        echo
         echo "========================================"
         echo "CLANG"
         echo "========================================"
@@ -187,59 +120,36 @@ jobs:
 
         echo
         echo "========================================"
-        echo "LLVM"
+        echo "LLD"
         echo "========================================"
 
-        echo "LLVM=1"
-        echo "LLVM_IAS=1"
+        which ld.lld
+        ld.lld --version
 
         echo
         echo "========================================"
-        echo "LLVM BINUTILS DISCOVERY"
+        echo "GCC64"
         echo "========================================"
 
-        command -v ld.lld || true
-        command -v llvm-ar || true
-        command -v llvm-nm || true
-        command -v llvm-objcopy || true
-        command -v llvm-objdump || true
-        command -v llvm-strip || true
+        ls -la "$GCC64_PATH/bin"
 
         echo
         echo "========================================"
-        echo "CROSS COMPILE"
+        echo "GCC32"
         echo "========================================"
 
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-
-        echo
-        echo "========================================"
-        echo "MAKE_ARGS"
-        echo "========================================"
-
-        MAKE_ARGS=(
-          ARCH=arm64
-          LLVM=1
-          LLVM_IAS=1
-          CROSS_COMPILE="$CROSS_COMPILE"
-          CROSS_COMPILE_COMPAT="$CROSS_COMPILE_COMPAT"
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32"
-        )
-
-        printf '%s\n' "${MAKE_ARGS[@]}"
+        ls -la "$GCC32_PATH/bin"
 
 
     # ============================================================
     # 6. Setup NoMount
+    #
+    # Only installed for NoMount variants.
     # ============================================================
 
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
-        set -e
-
         echo "========================================"
         echo "SETTING UP NOMOUNT"
         echo "========================================"
@@ -263,13 +173,14 @@ jobs:
 
     # ============================================================
     # 7. Setup KernelSU-Next
+    #
+    # syscall is intentionally used for ALL KSU variants.
+    # Base does not install KernelSU.
     # ============================================================
 
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
       run: |
-        set -e
-
         echo "========================================"
         echo "SETTING UP KERNELSU-NEXT"
         echo "========================================"
@@ -300,10 +211,8 @@ jobs:
 
     - name: Load Original violet-perf defconfig
       run: |
-        set -e
-
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
         echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
@@ -322,10 +231,8 @@ jobs:
 
     - name: Configure Matrix
       run: |
-        set -e
-
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         BUILD_TYPE="${{ matrix.build_type }}"
 
@@ -335,6 +242,10 @@ jobs:
         echo "========================================"
 
         case "$BUILD_TYPE" in
+
+          # ------------------------------------------------------
+          # BASE
+          # ------------------------------------------------------
 
           Base)
 
@@ -353,6 +264,10 @@ jobs:
 
             ;;
 
+
+          # ------------------------------------------------------
+          # KSU
+          # ------------------------------------------------------
 
           KSU)
 
@@ -378,6 +293,10 @@ jobs:
             ;;
 
 
+          # ------------------------------------------------------
+          # KSU + NOMOUNT
+          # ------------------------------------------------------
+
           KSU-NoMount)
 
             echo "KernelSU-Next"
@@ -402,6 +321,10 @@ jobs:
             ;;
 
 
+          # ------------------------------------------------------
+          # KSU + SUSFS
+          # ------------------------------------------------------
+
           KSU-SUSFS)
 
             echo "KernelSU-Next"
@@ -425,6 +348,10 @@ jobs:
 
             ;;
 
+
+          # ------------------------------------------------------
+          # KSU + SUSFS + NOMOUNT
+          # ------------------------------------------------------
 
           KSU-SUSFS-NoMount)
 
@@ -460,6 +387,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # Resolve Kconfig dependencies
+        # ========================================================
+
         echo
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
@@ -469,6 +400,10 @@ jobs:
           ARCH=arm64 \
           olddefconfig
 
+
+        # ========================================================
+        # Verify final configuration
+        # ========================================================
 
         echo
         echo "========================================"
@@ -493,6 +428,10 @@ jobs:
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
 
+
+        # ========================================================
+        # SUSFS validation
+        # ========================================================
 
         echo
         echo "========================================"
@@ -539,6 +478,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # NoMount validation
+        # ========================================================
+
         echo
         echo "========================================"
         echo "NOMOUNT VALIDATION"
@@ -572,6 +515,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # KPROBES validation
+        # ========================================================
+
         echo
         echo "========================================"
         echo "KPROBES VALIDATION"
@@ -584,6 +531,13 @@ jobs:
           echo "OK: CONFIG_KPROBES IS NOT ENABLED"
         fi
 
+
+        # ========================================================
+        # Save FULL final configuration
+        #
+        # This is the complete active .config.
+        # It is NOT savedefconfig.
+        # ========================================================
 
         echo
         echo "========================================"
@@ -603,33 +557,51 @@ jobs:
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
+
         echo
+        echo "========================================"
         echo "LINE COUNT"
+        echo "========================================"
 
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
+
         echo
+        echo "========================================"
         echo "KERNELSU CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
 
+
         echo
+        echo "========================================"
         echo "SUSFS CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
 
+
         echo
+        echo "========================================"
         echo "NOMOUNT CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
 
 
+        echo
+        echo "========================================"
+        echo "FULL FINAL DEFCONFIG READY"
+        echo "========================================"
+
+
     # ============================================================
-    # 10. Upload Full Final Defconfig
+    # 10. Upload Full Final Defconfig BEFORE BUILD
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -641,15 +613,13 @@ jobs:
 
 
     # ============================================================
-    # 11. Verify Build Configuration
+    # 11. Verify the exact config used for build
     # ============================================================
 
     - name: Verify Build Configuration
       run: |
-        set -e
-
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
         echo "VERIFYING ACTIVE BUILD CONFIG"
@@ -685,35 +655,16 @@ jobs:
 
     # ============================================================
     # 12. Build Kernel
-    #
-    # AOSP Clang Only
-    #
-    # LLVM=1
-    # LLVM_IAS=1
-    #
-    # Kbuild discovers LLVM tools automatically.
-    #
     # ============================================================
 
     - name: Build Kernel
       run: |
-        set -o pipefail
-
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         export KBUILD_BUILD_USER=Manipulator
         export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
-
-        MAKE_ARGS=(
-          ARCH=arm64
-          LLVM=1
-          LLVM_IAS=1
-          CROSS_COMPILE="$CROSS_COMPILE"
-          CROSS_COMPILE_COMPAT="$CROSS_COMPILE_COMPAT"
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32"
-        )
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
 
         echo "========================================"
         echo "BUILDING KERNEL"
@@ -721,46 +672,15 @@ jobs:
 
         echo "BUILD TYPE: ${{ matrix.build_type }}"
 
-        echo
-        echo "========================================"
-        echo "AOSP CLANG"
-        echo "========================================"
-
-        which clang
-        clang --version
-
-        echo
-        echo "========================================"
-        echo "LLVM BUILD MODE"
-        echo "========================================"
-
-        echo "LLVM=1"
-        echo "LLVM_IAS=1"
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILE"
-        echo "========================================"
-
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-
-        echo
-        echo "========================================"
-        echo "MAKE_ARGS"
-        echo "========================================"
-
-        printf '%s\n' "${MAKE_ARGS[@]}"
-
-        echo
-        echo "========================================"
-        echo "BUILD START"
-        echo "========================================"
-
         make -j$(nproc --all) \
           O=out \
-          "${MAKE_ARGS[@]}" \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
           2>&1 | tee build.log
 
 
@@ -770,8 +690,6 @@ jobs:
 
     - name: Check Build Output
       run: |
-        set -e
-
         echo "========================================"
         echo "CHECKING BUILD"
         echo "========================================"
@@ -795,8 +713,6 @@ jobs:
 
     - name: Package AnyKernel3
       run: |
-        set -e
-
         echo "========================================"
         echo "PACKAGING ANYKERNEL3"
         echo "========================================"
@@ -844,6 +760,10 @@ jobs:
 
     # ============================================================
     # 16. Upload Full Active .config
+    #
+    # IMPORTANT:
+    # .config is a hidden file.
+    # include-hidden-files is required by upload-artifact@v4.
     # ============================================================
 
     - name: Upload Full Active Config
