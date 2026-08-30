@@ -504,7 +504,7 @@ ifdef CONFIG_LTO_CLANG
     update_lto_symversions =				\
 	rm -f $@.symversions; 				\
 	for i in $(filter-out FORCE,$^); do		\
-		if [ -f $$i.symversions ]; then		\
+		if [ -s $$i.symversions ]; then		\
 			cat $$i.symversions 		\
 				>> $@.symversions;	\
 		fi;					\
