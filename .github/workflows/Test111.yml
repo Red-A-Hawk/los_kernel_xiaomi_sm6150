@@ -145,8 +145,6 @@ jobs:
 
     # ============================================================
     # 6. Setup NoMount
-    #
-    # Only installed for NoMount variants.
     # ============================================================
 
     - name: Setup NoMount
@@ -175,9 +173,6 @@ jobs:
 
     # ============================================================
     # 7. Setup KernelSU-Next
-    #
-    # syscall is intentionally used for ALL KSU variants.
-    # Base does not install KernelSU.
     # ============================================================
 
     - name: Setup KernelSU-Next
@@ -245,10 +240,6 @@ jobs:
 
         case "$BUILD_TYPE" in
 
-          # ------------------------------------------------------
-          # BASE
-          # ------------------------------------------------------
-
           Base)
 
             echo "Base kernel"
@@ -266,10 +257,6 @@ jobs:
 
             ;;
 
-
-          # ------------------------------------------------------
-          # KSU
-          # ------------------------------------------------------
 
           KSU)
 
@@ -295,10 +282,6 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
-          # KSU + NOMOUNT
-          # ------------------------------------------------------
-
           KSU-NoMount)
 
             echo "KernelSU-Next"
@@ -323,10 +306,6 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
-          # KSU + SUSFS
-          # ------------------------------------------------------
-
           KSU-SUSFS)
 
             echo "KernelSU-Next"
@@ -350,10 +329,6 @@ jobs:
 
             ;;
 
-
-          # ------------------------------------------------------
-          # KSU + SUSFS + NOMOUNT
-          # ------------------------------------------------------
 
           KSU-SUSFS-NoMount)
 
@@ -404,7 +379,9 @@ jobs:
 
         echo
         echo "CONFIG_CC_STACKPROTECTOR_STRONG:"
-        grep -E '^CONFIG_CC_STACKPROTECTOR_STRONG|^# CONFIG_CC_STACKPROTECTOR_STRONG is not set' \
+
+        grep -E \
+          '^CONFIG_CC_STACKPROTECTOR_STRONG|^# CONFIG_CC_STACKPROTECTOR_STRONG is not set' \
           out/.config || true
 
 
@@ -423,7 +400,7 @@ jobs:
 
 
         # ========================================================
-        # Verify final configuration
+        # Final configuration
         # ========================================================
 
         echo
@@ -454,6 +431,89 @@ jobs:
 
         grep -E '^CONFIG_CC_STACKPROTECTOR' \
           out/.config || true
+
+
+        # ========================================================
+        # KSU SYMBOL DIAGNOSTIC
+        # ========================================================
+
+        if [ "$BUILD_TYPE" != "Base" ]; then
+
+          echo
+          echo "========================================"
+          echo "KSU FUNCTION DEFINITIONS"
+          echo "========================================"
+
+          grep -Rns \
+            --include='*.c' \
+            --include='*.h' \
+            -E \
+            'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
+            drivers/kernelsu KernelSU 2>/dev/null || true
+
+
+          echo
+          echo "========================================"
+          echo "KERNELSU MAKEFILE"
+          echo "========================================"
+
+          cat drivers/kernelsu/Makefile
+
+
+          echo
+          echo "========================================"
+          echo "KERNELSU SOURCE FILES"
+          echo "========================================"
+
+          find drivers/kernelsu \
+            -type f \
+            \( \
+              -name '*.c' \
+              -o -name '*.h' \
+              -o -name 'Makefile' \
+              -o -name 'Kconfig' \
+            \) \
+            -print | sort
+
+
+          echo
+          echo "========================================"
+          echo "KSU BUILT-IN ARCHIVE"
+          echo "========================================"
+
+          if [ -f out/drivers/kernelsu/built-in.a ]; then
+
+            ar t \
+              out/drivers/kernelsu/built-in.a
+
+          else
+
+            echo "KSU built-in.a does not exist yet."
+
+          fi
+
+
+          echo
+          echo "========================================"
+          echo "KSU SYMBOLS FROM ARCHIVE"
+          echo "========================================"
+
+          if [ -f out/drivers/kernelsu/built-in.a ]; then
+
+            nm -A \
+              out/drivers/kernelsu/built-in.a \
+              2>/dev/null |
+              grep -E \
+              'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
+              || true
+
+          else
+
+            echo "No KSU archive available."
+
+          fi
+
+        fi
 
 
         # ========================================================
@@ -561,9 +621,6 @@ jobs:
 
         # ========================================================
         # Save FULL final configuration
-        #
-        # This is the complete active .config.
-        # It is NOT savedefconfig.
         # ========================================================
 
         echo
@@ -584,51 +641,40 @@ jobs:
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
-
         echo
-        echo "========================================"
         echo "LINE COUNT"
-        echo "========================================"
 
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
 
         echo
-        echo "========================================"
         echo "KERNELSU CONFIG"
-        echo "========================================"
 
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
 
 
         echo
-        echo "========================================"
         echo "SUSFS CONFIG"
-        echo "========================================"
 
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
 
 
         echo
-        echo "========================================"
         echo "NOMOUNT CONFIG"
-        echo "========================================"
 
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
 
 
         echo
-        echo "========================================"
         echo "FULL FINAL DEFCONFIG READY"
-        echo "========================================"
 
 
     # ============================================================
-    # 10. Upload Full Final Defconfig BEFORE BUILD
+    # 10. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -640,7 +686,7 @@ jobs:
 
 
     # ============================================================
-    # 11. Verify the exact config used for build
+    # 11. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
@@ -790,11 +836,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Full Active .config
-    #
-    # IMPORTANT:
-    # .config is a hidden file.
-    # include-hidden-files is required by upload-artifact@v4.
+    # 16. Upload Full Active Config
     # ============================================================
 
     - name: Upload Full Active Config
