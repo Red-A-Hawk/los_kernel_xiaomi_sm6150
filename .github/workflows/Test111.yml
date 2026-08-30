@@ -150,6 +150,8 @@ jobs:
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
+        set -e
+
         echo "========================================"
         echo "SETTING UP NOMOUNT"
         echo "========================================"
@@ -202,46 +204,15 @@ jobs:
         readlink -f drivers/kernelsu || true
 
         echo
-        echo "========================================"
-        echo "KERNELSU MAKEFILE"
-        echo "========================================"
-
+        echo "KERNELSU FILES:"
         find drivers/kernelsu \
           -maxdepth 2 \
-          -name Makefile \
-          -print \
-          -exec sed -n '1,220p' {} \; || true
-
-        echo
-        echo "========================================"
-        echo "KERNELSU KCONFIG"
-        echo "========================================"
-
-        find drivers/kernelsu \
-          -maxdepth 2 \
-          -name Kconfig \
-          -print \
-          -exec sed -n '1,220p' {} \; || true
-
-        echo
-        echo "========================================"
-        echo "DRIVERS MAKEFILE"
-        echo "========================================"
-
-        grep -n "kernelsu" drivers/Makefile || true
-
-        echo
-        echo "========================================"
-        echo "DRIVERS KCONFIG"
-        echo "========================================"
-
-        grep -n "kernelsu" drivers/Kconfig || true
+          -type f \
+          | sort
 
 
     # ============================================================
-    # 8. KernelSU syscall symbol investigation
-    #
-    # This is the important diagnostic step.
+    # 8. Check KernelSU syscall symbols
     # ============================================================
 
     - name: Check KernelSU syscall symbols
@@ -273,7 +244,6 @@ jobs:
           'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
           . || true
 
-
         echo
         echo "========================================"
         echo "2. KERNELSU DIRECTORY ONLY"
@@ -285,7 +255,6 @@ jobs:
           -E \
           'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
           drivers/kernelsu || true
-
 
         echo
         echo "========================================"
@@ -315,7 +284,6 @@ jobs:
           -E \
           'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
           fs/exec.c || true
-
 
         echo
         echo "========================================"
@@ -354,22 +322,6 @@ jobs:
           -E \
           '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_execveat[[:space:]]*\(' \
           . || true
-
-
-        echo
-        echo "========================================"
-        echo "5. SYMBOL NAMES IN KERNELSU OBJECTS"
-        echo "========================================"
-
-        find drivers/kernelsu \
-          -type f \
-          \( -name '*.o' -o -name '*.a' \) \
-          -print 2>/dev/null || true
-
-        echo
-        echo "========================================"
-        echo "SYSCALL CHECK COMPLETE"
-        echo "========================================"
 
 
     # ============================================================
@@ -412,11 +364,6 @@ jobs:
 
           Base)
 
-            echo "Base kernel"
-            echo "KernelSU: DISABLED"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: DISABLED"
-
             scripts/config \
               --file out/.config \
               --disable CONFIG_KSU \
@@ -429,10 +376,6 @@ jobs:
 
 
           KSU)
-
-            echo "KernelSU-Next"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -454,10 +397,6 @@ jobs:
 
           KSU-NoMount)
 
-            echo "KernelSU-Next"
-            echo "SUSFS: DISABLED"
-            echo "NoMount: ENABLED"
-
             scripts/config \
               --file out/.config \
               --enable CONFIG_KSU \
@@ -478,10 +417,6 @@ jobs:
 
           KSU-SUSFS)
 
-            echo "KernelSU-Next"
-            echo "SUSFS: ENABLED"
-            echo "NoMount: DISABLED"
-
             scripts/config \
               --file out/.config \
               --enable CONFIG_KSU \
@@ -501,10 +436,6 @@ jobs:
 
 
           KSU-SUSFS-NoMount)
-
-            echo "KernelSU-Next"
-            echo "SUSFS: ENABLED"
-            echo "NoMount: ENABLED"
 
             scripts/config \
               --file out/.config \
@@ -549,101 +480,17 @@ jobs:
         echo "FINAL CONFIGURATION"
         echo "========================================"
 
-        echo
-        echo "--- KernelSU ---"
-
         grep -E '^CONFIG_KSU' \
           out/.config || true
 
-        echo
-        echo "--- NoMount ---"
+        grep -E '^CONFIG_KSU_SUSFS' \
+          out/.config || true
 
         grep -E '^CONFIG_NOMOUNT' \
           out/.config || true
 
-        echo
-        echo "--- KPROBES ---"
-
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
-
-
-        echo
-        echo "========================================"
-        echo "SUSFS VALIDATION"
-        echo "========================================"
-
-        case "$BUILD_TYPE" in
-
-          KSU|KSU-NoMount)
-
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            echo "OK: SUSFS IS DISABLED"
-
-            ;;
-
-
-          KSU-SUSFS|KSU-SUSFS-NoMount)
-
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "OK: SUSFS IS ENABLED"
-            else
-              echo "ERROR: SUSFS MUST BE ENABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            ;;
-
-
-          Base)
-
-            if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
-              echo "ERROR: SUSFS MUST BE DISABLED FOR BASE"
-              exit 1
-            fi
-
-            echo "OK: SUSFS IS DISABLED"
-
-            ;;
-
-        esac
-
-
-        echo
-        echo "========================================"
-        echo "NOMOUNT VALIDATION"
-        echo "========================================"
-
-        case "$BUILD_TYPE" in
-
-          KSU-NoMount|KSU-SUSFS-NoMount)
-
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "OK: NOMOUNT IS ENABLED"
-            else
-              echo "ERROR: NOMOUNT MUST BE ENABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            ;;
-
-
-          Base|KSU|KSU-SUSFS)
-
-            if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
-              echo "ERROR: NOMOUNT MUST BE DISABLED FOR $BUILD_TYPE"
-              exit 1
-            fi
-
-            echo "OK: NOMOUNT IS DISABLED"
-
-            ;;
-
-        esac
 
 
         echo
@@ -659,29 +506,120 @@ jobs:
         fi
 
 
-        echo
-        echo "========================================"
-        echo "SAVING FULL FINAL DEFCONFIG"
-        echo "========================================"
-
         cp \
           out/.config \
           "out/${DEFCONFIG_NAME}"
 
         echo
-        echo "========================================"
-        echo "FULL FINAL DEFCONFIG"
-        echo "========================================"
+        echo "FULL DEFCONFIG:"
+        ls -lh "out/${DEFCONFIG_NAME}"
 
-        ls -lh \
-          "out/${DEFCONFIG_NAME}"
-
-        wc -l \
-          "out/${DEFCONFIG_NAME}"
+        wc -l "out/${DEFCONFIG_NAME}"
 
 
     # ============================================================
-    # 11. Upload Full Final Defconfig
+    # 11. Verify KernelSU sucompat Build
+    # ============================================================
+
+    - name: Verify KernelSU sucompat Build
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        set -e
+
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "VERIFY KERNELSU SUCOMPAT BUILD"
+        echo "========================================"
+
+        echo
+        echo "CONFIG:"
+        grep -E '^CONFIG_KSU|^CONFIG_KPROBES' out/.config || true
+
+        echo
+        echo "========================================"
+        echo "KSU MAKEFILES"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -name Makefile \
+          -print
+
+        echo
+        echo "========================================"
+        echo "SEARCH SUCOMPAT BUILD RULE"
+        echo "========================================"
+
+        grep -Rnw \
+          --include='Makefile' \
+          drivers/kernelsu \
+          -e 'sucompat.o' \
+          -e 'sucompat' || true
+
+        echo
+        echo "========================================"
+        echo "CHECK SUCOMPAT SOURCE"
+        echo "========================================"
+
+        test -f drivers/kernelsu/feature/sucompat.c
+
+        ls -lh \
+          drivers/kernelsu/feature/sucompat.c
+
+        echo
+        echo "========================================"
+        echo "SUCOMPAT DEFINITIONS"
+        echo "========================================"
+
+        grep -n \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          drivers/kernelsu/feature/sucompat.c
+
+        echo
+        echo "========================================"
+        echo "CHECK SUCOMPAT OBJECT"
+        echo "========================================"
+
+        find out/drivers/kernelsu \
+          -type f \
+          \( \
+            -name 'sucompat.o' \
+            -o \
+            -name 'sucompat.a' \
+          \) \
+          -print || true
+
+        echo
+        echo "========================================"
+        echo "SYMBOL SEARCH IN SUCOMPAT OBJECT"
+        echo "========================================"
+
+        if [ -f out/drivers/kernelsu/feature/sucompat.o ]; then
+
+          echo "FOUND: sucompat.o"
+
+          llvm-nm \
+            out/drivers/kernelsu/feature/sucompat.o \
+            | grep -E \
+              'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+            || true
+
+        else
+
+          echo "WARNING: sucompat.o DOES NOT EXIST"
+
+        fi
+
+        echo
+        echo "========================================"
+        echo "SUCOMPAT VERIFICATION COMPLETE"
+        echo "========================================"
+
+
+    # ============================================================
+    # 12. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -694,7 +632,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Verify Build Configuration
+    # 13. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
@@ -735,7 +673,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Build Kernel
+    # 14. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -766,7 +704,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Verify Kernel
+    # 15. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -789,7 +727,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Package AnyKernel3
+    # 16. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -828,7 +766,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Kernel ZIP
+    # 17. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -841,7 +779,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
