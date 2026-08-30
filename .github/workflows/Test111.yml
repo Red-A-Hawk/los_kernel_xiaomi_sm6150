@@ -145,6 +145,8 @@ jobs:
 
     # ============================================================
     # 6. Setup NoMount
+    #
+    # Only installed for NoMount variants.
     # ============================================================
 
     - name: Setup NoMount
@@ -173,6 +175,9 @@ jobs:
 
     # ============================================================
     # 7. Setup KernelSU-Next
+    #
+    # syscall is intentionally used for ALL KSU variants.
+    # Base does not install KernelSU.
     # ============================================================
 
     - name: Setup KernelSU-Next
@@ -203,135 +208,7 @@ jobs:
 
 
     # ============================================================
-    # 8. CAPTURE COMPLETE KERNELSU SOURCE
-    #
-    # This runs immediately after syscall setup.
-    # It captures exactly what syscall installed.
-    # ============================================================
-
-    - name: Capture KernelSU Source
-      if: ${{ matrix.build_type != 'Base' }}
-      run: |
-        set +e
-
-        echo "========================================"
-        echo "KERNELSU SOURCE CAPTURE"
-        echo "========================================"
-
-        mkdir -p kernelsu-artifact
-
-        echo
-        echo "========================================"
-        echo "KERNELSU DIRECTORY"
-        echo "========================================"
-
-        if [ -d drivers/kernelsu ]; then
-          find drivers/kernelsu \
-            -type f \
-            -print | sort
-
-          cp -a \
-            drivers/kernelsu \
-            kernelsu-artifact/
-
-        else
-          echo "ERROR: drivers/kernelsu DOES NOT EXIST"
-          exit 1
-        fi
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU FILE COUNT"
-        echo "========================================"
-
-        find drivers/kernelsu \
-          -type f \
-          | wc -l
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU SOURCE FILES"
-        echo "========================================"
-
-        find drivers/kernelsu \
-          -type f \
-          -print \
-          | sort \
-          > kernelsu-artifact/kernelsu-files.txt
-
-        cat kernelsu-artifact/kernelsu-files.txt
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU MAKEFILE"
-        echo "========================================"
-
-        if [ -f drivers/kernelsu/Makefile ]; then
-          cp drivers/kernelsu/Makefile kernelsu-artifact/
-          cat drivers/kernelsu/Makefile
-        else
-          echo "NO KERNELSU MAKEFILE"
-        fi
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU KCONFIG"
-        echo "========================================"
-
-        if [ -f drivers/kernelsu/Kconfig ]; then
-          cp drivers/kernelsu/Kconfig kernelsu-artifact/
-          cat drivers/kernelsu/Kconfig
-        else
-          echo "NO KERNELSU KCONFIG"
-        fi
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU SOURCE TREE"
-        echo "========================================"
-
-        find drivers/kernelsu \
-          -maxdepth 4 \
-          -print \
-          | sort \
-          > kernelsu-artifact/kernelsu-tree.txt
-
-        cat kernelsu-artifact/kernelsu-tree.txt
-
-
-        echo
-        echo "========================================"
-        echo "KERNELSU SOURCE CAPTURE COMPLETE"
-        echo "========================================"
-
-        ls -lah kernelsu-artifact/
-
-        exit 0
-
-
-    # ============================================================
-    # 9. Upload COMPLETE KernelSU source
-    #
-    # Uploaded BEFORE configuration and BEFORE build.
-    # ============================================================
-
-    - name: Upload KernelSU Source Artifact
-      if: ${{ matrix.build_type != 'Base' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: KernelSU-source-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: kernelsu-artifact/
-        include-hidden-files: true
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 10. Load Original violet-perf defconfig
+    # 8. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
@@ -351,7 +228,7 @@ jobs:
 
 
     # ============================================================
-    # 11. Configure Matrix
+    # 9. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
@@ -367,6 +244,10 @@ jobs:
         echo "========================================"
 
         case "$BUILD_TYPE" in
+
+          # ------------------------------------------------------
+          # BASE
+          # ------------------------------------------------------
 
           Base)
 
@@ -385,6 +266,10 @@ jobs:
 
             ;;
 
+
+          # ------------------------------------------------------
+          # KSU
+          # ------------------------------------------------------
 
           KSU)
 
@@ -410,6 +295,10 @@ jobs:
             ;;
 
 
+          # ------------------------------------------------------
+          # KSU + NOMOUNT
+          # ------------------------------------------------------
+
           KSU-NoMount)
 
             echo "KernelSU-Next"
@@ -434,6 +323,10 @@ jobs:
             ;;
 
 
+          # ------------------------------------------------------
+          # KSU + SUSFS
+          # ------------------------------------------------------
+
           KSU-SUSFS)
 
             echo "KernelSU-Next"
@@ -457,6 +350,10 @@ jobs:
 
             ;;
 
+
+          # ------------------------------------------------------
+          # KSU + SUSFS + NOMOUNT
+          # ------------------------------------------------------
 
           KSU-SUSFS-NoMount)
 
@@ -639,6 +536,10 @@ jobs:
 
         # ========================================================
         # Save FULL final configuration
+        #
+        # IMPORTANT:
+        # This is NOT savedefconfig.
+        # It is the complete active .config.
         # ========================================================
 
         echo
@@ -650,6 +551,7 @@ jobs:
           out/.config \
           "out/${DEFCONFIG_NAME}"
 
+
         echo
         echo "========================================"
         echo "FULL FINAL DEFCONFIG"
@@ -658,9 +560,15 @@ jobs:
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
+
         echo
+        echo "========================================"
+        echo "LINE COUNT"
+        echo "========================================"
+
         wc -l \
           "out/${DEFCONFIG_NAME}"
+
 
         echo
         echo "========================================"
@@ -670,6 +578,7 @@ jobs:
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
 
+
         echo
         echo "========================================"
         echo "SUSFS CONFIG"
@@ -677,6 +586,7 @@ jobs:
 
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
+
 
         echo
         echo "========================================"
@@ -686,6 +596,7 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
 
+
         echo
         echo "========================================"
         echo "FULL FINAL DEFCONFIG READY"
@@ -693,7 +604,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Upload Full Final Defconfig BEFORE BUILD
+    # 10. Upload Full Final Defconfig BEFORE BUILD
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -705,7 +616,10 @@ jobs:
 
 
     # ============================================================
-    # 13. Verify exact build configuration
+    # 11. Verify the exact config used for build
+    #
+    # Do NOT clean the source tree.
+    # The active out/.config remains untouched.
     # ============================================================
 
     - name: Verify Build Configuration
@@ -740,17 +654,13 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
-        echo "STACK PROTECTOR:"
-        grep -E '^CONFIG_CC_STACKPROTECTOR' out/.config || true
-
-        echo
         echo "========================================"
         echo "BUILD CONFIG READY"
         echo "========================================"
 
 
     # ============================================================
-    # 14. Build Kernel
+    # 12. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -781,7 +691,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Check Build Output
+    # 13. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -804,7 +714,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Package AnyKernel3
+    # 14. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -843,7 +753,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Kernel ZIP
+    # 15. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -855,20 +765,7 @@ jobs:
 
 
     # ============================================================
-    # 18. Upload Full Active .config
-    # ============================================================
-
-    - name: Upload Full Active Config
-      uses: actions/upload-artifact@v4
-      with:
-        name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: out/.config
-        include-hidden-files: true
-        if-no-files-found: error
-
-
-    # ============================================================
-    # 19. Upload Build Log
+    # 16. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
