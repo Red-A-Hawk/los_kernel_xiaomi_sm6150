@@ -1,10 +1,9 @@
-name: Kernel LTO Diagnostic (violet)
+name: LTO MODPOST Diagnostic (violet)
 
 on:
   workflow_dispatch:
 
 jobs:
-
   diagnostic:
 
     runs-on: ubuntu-22.04
@@ -45,9 +44,11 @@ jobs:
           libssl-dev \
           libelf-dev \
           libncurses-dev \
-          make \
           device-tree-compiler \
+          make \
           python3 \
+          zip \
+          unzip \
           curl \
           wget
 
@@ -64,7 +65,7 @@ jobs:
         echo "DOWNLOADING TOOLCHAINS"
         echo "============================================================"
 
-        rm -rf clang gcc64 gcc32
+        rm -rf clang gcc64 gcc32 out
 
         git clone \
           --depth=1 \
@@ -81,60 +82,80 @@ jobs:
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
           gcc32
 
-        echo
-        echo "TOOLCHAINS READY"
+        echo "[PASS] Toolchains downloaded"
 
 
     # ============================================================
     # 4. ENVIRONMENT
     # ============================================================
 
-    - name: Setup environment
+    - name: Setup LLVM Environment
       run: |
         set -e
 
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
+        export CLANG_PATH="$GITHUB_WORKSPACE/k/clang"
+        export GCC64_PATH="$GITHUB_WORKSPACE/k/gcc64"
+        export GCC32_PATH="$GITHUB_WORKSPACE/k/gcc32"
+
+        echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
 
         echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+        echo "LLVM=1" >> "$GITHUB_ENV"
+        echo "LLVM_IAS=1" >> "$GITHUB_ENV"
+
+        echo "PATH=$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH" >> "$GITHUB_ENV"
 
 
     # ============================================================
     # 5. TOOLCHAIN DIAGNOSTIC
     # ============================================================
 
-    - name: Toolchain diagnostic
+    - name: Toolchain Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="toolchain-diagnostic.txt"
 
         : > "$REPORT"
 
-        echo "============================================================" | tee -a "$REPORT"
-        echo "TOOLCHAIN DIAGNOSTIC" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        echo "============================================================" >> "$REPORT"
+        echo "TOOLCHAIN DIAGNOSTIC" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        echo "" >> "$REPORT"
+        echo "PATH=$PATH" >> "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "PATH=$PATH" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "CLANG" >> "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "CLANG" | tee -a "$REPORT"
-        command -v clang | tee -a "$REPORT"
-        clang --version 2>&1 | head -5 | tee -a "$REPORT"
+        CLANG_BIN="$CLANG_PATH/bin/clang"
 
-        echo | tee -a "$REPORT"
-        echo "LLD" | tee -a "$REPORT"
-        command -v ld.lld | tee -a "$REPORT"
-        ld.lld --version 2>&1 | head -3 | tee -a "$REPORT"
+        if [ -x "$CLANG_BIN" ]; then
+          echo "[PASS] clang executable exists" >> "$REPORT"
+          "$CLANG_BIN" --version >> "$REPORT" 2>&1
+        else
+          echo "[FAIL] clang executable missing" >> "$REPORT"
+        fi
 
-        echo | tee -a "$REPORT"
-        echo "LLVM BINARIES" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "LLD" >> "$REPORT"
+
+        LLD_BIN="$CLANG_PATH/bin/ld.lld"
+
+        if [ -x "$LLD_BIN" ]; then
+          echo "[PASS] ld.lld executable exists" >> "$REPORT"
+          "$LLD_BIN" --version >> "$REPORT" 2>&1
+        else
+          echo "[FAIL] ld.lld executable missing" >> "$REPORT"
+        fi
+
+        echo "" >> "$REPORT"
+        echo "LLVM BINARIES" >> "$REPORT"
 
         for tool in \
           llvm-ar \
@@ -142,653 +163,716 @@ jobs:
           llvm-objcopy \
           llvm-objdump \
           llvm-strip \
-          llvm-readelf \
-          llvm-objdump; do
+          llvm-readelf
+        do
 
           if command -v "$tool" >/dev/null 2>&1; then
-            echo "[PASS] $tool" | tee -a "$REPORT"
+            echo "[PASS] $tool" >> "$REPORT"
           else
-            echo "[FAIL] $tool" | tee -a "$REPORT"
+            echo "[FAIL] $tool" >> "$REPORT"
           fi
 
         done
 
-        echo | tee -a "$REPORT"
-        echo "AARCH64 GCC" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "AARCH64 GCC" >> "$REPORT"
 
         if [ -x "$GCC64_PATH/bin/aarch64-linux-android-gcc" ]; then
-          echo "[PASS] AArch64 GCC exists" | tee -a "$REPORT"
-          "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version 2>&1 | head -3 | tee -a "$REPORT"
+          echo "[PASS] AArch64 GCC exists" >> "$REPORT"
+          "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version \
+            | head -3 >> "$REPORT" 2>&1
         else
-          echo "[FAIL] AArch64 GCC missing" | tee -a "$REPORT"
+          echo "[FAIL] AArch64 GCC missing" >> "$REPORT"
         fi
 
-        echo | tee -a "$REPORT"
-        echo "ARM32 GCC" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "ARM32 GCC" >> "$REPORT"
 
         if [ -x "$GCC32_PATH/bin/arm-linux-androideabi-gcc" ]; then
-          echo "[PASS] ARM32 GCC exists" | tee -a "$REPORT"
-          "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version 2>&1 | head -3 | tee -a "$REPORT"
+          echo "[PASS] ARM32 GCC exists" >> "$REPORT"
+          "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version \
+            | head -3 >> "$REPORT" 2>&1
         else
-          echo "[FAIL] ARM32 GCC missing" | tee -a "$REPORT"
+          echo "[FAIL] ARM32 GCC missing" >> "$REPORT"
         fi
+
+        cat "$REPORT"
 
 
     # ============================================================
     # 6. LOAD DEFCONFIG
     # ============================================================
 
-    - name: Generate kernel configuration
+    - name: Load violet-perf defconfig
       run: |
         set -e
 
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "============================================================"
-        echo "GENERATING DEFCONFIG"
-        echo "============================================================"
-
-        rm -rf out
+        mkdir -p out
 
         make O=out \
           ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          AS=llvm-as \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE="$CROSS_COMPILE" \
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+          CLANG_TRIPLE="$CLANG_TRIPLE" \
           vendor/violet-perf_defconfig
 
         test -f out/.config
 
-        echo
-        echo "[PASS] out/.config generated"
+        echo "[PASS] violet-perf defconfig generated"
 
 
     # ============================================================
-    # 7. CONFIGURATION DIAGNOSTIC
+    # 7. KERNEL CONFIGURATION
     # ============================================================
 
-    - name: Configuration diagnostic
+    - name: Kernel Configuration Diagnostic
       run: |
-        set +e
+        set -e
 
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        REPORT="kernel-configuration.txt"
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        : > "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "KERNEL CONFIGURATION" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        echo "============================================================" >> "$REPORT"
+        echo "KERNEL CONFIGURATION" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-        CONFIGS="
-        CONFIG_LTO_CLANG
-        CONFIG_LTO_CLANG_FULL
-        CONFIG_LTO_CLANG_THIN
-        CONFIG_LTO_CLANG_NONE
-        CONFIG_MODVERSIONS
-        CONFIG_MODULES
-        CONFIG_HAVE_ARCH_PREL32_RELOCATIONS
-        CONFIG_KPROBES
-        CONFIG_KALLSYMS
-        CONFIG_KALLSYMS_ALL
-        CONFIG_TRIM_UNUSED_KSYMS
-        CONFIG_CFI_CLANG
-        CONFIG_LD_IS_LLD
-        CONFIG_LD_VERSION
-        "
-
-        for cfg in $CONFIGS; do
+        for cfg in \
+          CONFIG_LTO_CLANG \
+          CONFIG_LTO_CLANG_FULL \
+          CONFIG_LTO_CLANG_THIN \
+          CONFIG_LTO_CLANG_NONE \
+          CONFIG_MODVERSIONS \
+          CONFIG_MODULES \
+          CONFIG_HAVE_ARCH_PREL32_RELOCATIONS \
+          CONFIG_KPROBES \
+          CONFIG_KALLSYMS \
+          CONFIG_KALLSYMS_ALL \
+          CONFIG_TRIM_UNUSED_KSYMS \
+          CONFIG_CFI_CLANG \
+          CONFIG_LD_IS_LLD \
+          CONFIG_LD_VERSION
+        do
 
           value=$(grep "^${cfg}=" out/.config 2>/dev/null | head -1)
 
           if [ -n "$value" ]; then
-            echo "$value" | tee -a "$REPORT"
+            echo "$value" >> "$REPORT"
           else
-            echo "$cfg=NOT_SET" | tee -a "$REPORT"
+            echo "${cfg}=NOT_SET" >> "$REPORT"
           fi
 
         done
 
+        cat "$REPORT"
+
 
     # ============================================================
-    # 8. NORMALIZE CONFIG
+    # 8. LTO COMPATIBILITY
     # ============================================================
 
-    - name: Run olddefconfig
+    - name: LTO Compatibility Diagnostic
       run: |
         set -e
 
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        REPORT="lto-compatibility.txt"
 
-        make O=out \
-          ARCH=arm64 \
-          olddefconfig
+        : > "$REPORT"
 
-        test -f out/.config
+        echo "============================================================" >> "$REPORT"
+        echo "LTO COMPATIBILITY" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-        echo "[PASS] olddefconfig completed"
+        LTO=$(grep '^CONFIG_LTO_CLANG=' out/.config | head -1)
+        MODVERSIONS=$(grep '^CONFIG_MODVERSIONS=' out/.config | head -1)
+        PREL32=$(grep '^CONFIG_HAVE_ARCH_PREL32_RELOCATIONS=' out/.config | head -1)
 
-
-    # ============================================================
-    # 9. LTO CONFIG CHECK
-    # ============================================================
-
-    - name: LTO compatibility check
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "LTO COMPATIBILITY" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-
-        LTO=$(grep '^CONFIG_LTO_CLANG=' out/.config 2>/dev/null)
-        MODVERSIONS=$(grep '^CONFIG_MODVERSIONS=' out/.config 2>/dev/null)
-        PREL32=$(grep '^CONFIG_HAVE_ARCH_PREL32_RELOCATIONS=' out/.config 2>/dev/null)
-
-        echo "LTO          : ${LTO:-NOT_SET}" | tee -a "$REPORT"
-        echo "MODVERSIONS  : ${MODVERSIONS:-NOT_SET}" | tee -a "$REPORT"
-        echo "PREL32       : ${PREL32:-NOT_SET}" | tee -a "$REPORT"
+        echo "LTO          : ${LTO:-NOT_SET}" >> "$REPORT"
+        echo "MODVERSIONS  : ${MODVERSIONS:-NOT_SET}" >> "$REPORT"
+        echo "PREL32       : ${PREL32:-NOT_SET}" >> "$REPORT"
 
         if grep -q '^CONFIG_LTO_CLANG=y' out/.config; then
-          echo "[PASS] CONFIG_LTO_CLANG enabled" | tee -a "$REPORT"
+          echo "[PASS] CONFIG_LTO_CLANG enabled" >> "$REPORT"
         else
-          echo "[WARN] CONFIG_LTO_CLANG disabled" | tee -a "$REPORT"
+          echo "[WARN] CONFIG_LTO_CLANG disabled" >> "$REPORT"
         fi
 
         if grep -q '^CONFIG_MODVERSIONS=y' out/.config; then
-          echo "[PASS] CONFIG_MODVERSIONS enabled" | tee -a "$REPORT"
+          echo "[PASS] CONFIG_MODVERSIONS enabled" >> "$REPORT"
         else
-          echo "[WARN] CONFIG_MODVERSIONS disabled" | tee -a "$REPORT"
+          echo "[WARN] CONFIG_MODVERSIONS disabled" >> "$REPORT"
         fi
 
+        cat "$REPORT"
+
 
     # ============================================================
-    # 10. MAKEFILE.BUILD INSPECTION
+    # 9. MAKEFILE BUILD
     # ============================================================
 
-    - name: Inspect scripts/Makefile.build
+    - name: Makefile Build Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="makefile-build-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "MAKEFILE.BUILD" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
 
-        if [ ! -f scripts/Makefile.build ]; then
-          echo "[FAIL] scripts/Makefile.build missing" | tee -a "$REPORT"
-          exit 0
+        echo "============================================================" >> "$REPORT"
+        echo "MAKEFILE.BUILD" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
+
+        if [ -f scripts/Makefile.build ]; then
+          echo "[PASS] scripts/Makefile.build exists" >> "$REPORT"
+        else
+          echo "[FAIL] scripts/Makefile.build missing" >> "$REPORT"
         fi
 
-        echo "[PASS] scripts/Makefile.build exists" | tee -a "$REPORT"
-
-        echo | tee -a "$REPORT"
-        echo "--- update_lto_symversions ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- update_lto_symversions ---" >> "$REPORT"
 
         grep -n \
-          -A20 \
-          -B8 \
+          -A15 \
+          -B5 \
           "update_lto_symversions" \
           scripts/Makefile.build \
-          2>&1 | head -80 | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
 
-        echo | tee -a "$REPORT"
-        echo "--- cmd_link_multi ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- cmd_link_multi ---" >> "$REPORT"
 
         grep -n \
-          -A20 \
-          -B8 \
+          -A15 \
+          -B5 \
           "cmd_link_multi" \
           scripts/Makefile.build \
-          2>&1 | head -100 | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
 
-
-    # ============================================================
-    # 11. VERIFY SYMVERSION FIX
-    # ============================================================
-
-    - name: Verify LTO symversion implementation
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "SYMVERSION IMPLEMENTATION" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-
-        if grep -q 'foreach n' scripts/Makefile.build 2>/dev/null && \
-           grep -q 'wildcard.*symversions' scripts/Makefile.build 2>/dev/null; then
-
-          echo "[PASS] Argument-list-safe symversion implementation detected" | tee -a "$REPORT"
-
-        else
-
-          echo "[WARN] Argument-list-safe symversion implementation NOT detected" | tee -a "$REPORT"
-
-        fi
-
-
-    # ============================================================
-    # 12. RESPONSE FILE CHECK
-    # ============================================================
-
-    - name: Check response file implementation
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "RESPONSE FILE" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-
-        if grep -q '\.rsp' scripts/Makefile.build 2>/dev/null; then
-
-          echo "[PASS] .rsp response-file reference detected" | tee -a "$REPORT"
-
-          grep -n \
-            -E '\.rsp|\$file' \
-            scripts/Makefile.build \
-            2>/dev/null | head -40 | tee -a "$REPORT"
-
-        else
-
-          echo "[INFO] No .rsp response file implementation detected" | tee -a "$REPORT"
-
-        fi
-
-
-    # ============================================================
-    # 13. LINK_MULTI_DEPS
-    # ============================================================
-
-    - name: Inspect link_multi_deps
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "LINK_MULTI_DEPS" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- link_multi_deps ---" >> "$REPORT"
 
         grep -n \
-          -A12 \
+          -A10 \
           -B5 \
           "link_multi_deps" \
           scripts/Makefile.build \
-          2>&1 | head -100 | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
 
-        echo | tee -a "$REPORT"
-        echo "--- link commands ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- response files ---" >> "$REPORT"
 
         grep -n \
-          -E \
-          'cmd_link_multi|quiet_cmd_link_multi' \
+          -E '\.rsp|\$\(file >' \
           scripts/Makefile.build \
-          2>&1 | head -80 | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
+
+        echo "" >> "$REPORT"
+        echo "--- symversion implementation ---" >> "$REPORT"
+
+        if grep -q 'foreach n' scripts/Makefile.build && \
+           grep -q 'wildcard.*symversions' scripts/Makefile.build
+        then
+          echo "[PASS] Argument-list-safe symversion implementation detected" >> "$REPORT"
+        else
+          echo "[WARN] Expected symversion fix not detected" >> "$REPORT"
+        fi
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 14. MODPOST FILES
+    # 10. MODPOST SOURCE DIAGNOSTIC
     # ============================================================
 
-    - name: Inspect modpost implementation
+    - name: MODPOST Source Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="modpost-source-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "MODPOST" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "MODPOST" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
         for file in \
           scripts/mod/modpost.c \
           scripts/mod/modpost.h \
           scripts/Makefile.modpost \
           scripts/Makefile.lib \
-          include/linux/export.h; do
+          include/linux/export.h
+        do
 
-          echo | tee -a "$REPORT"
-          echo "--- $file ---" | tee -a "$REPORT"
+          echo "" >> "$REPORT"
+          echo "--- $file ---" >> "$REPORT"
 
           if [ -f "$file" ]; then
-            echo "[PASS] file exists" | tee -a "$REPORT"
+            echo "[PASS] file exists" >> "$REPORT"
           else
-            echo "[FAIL] file missing" | tee -a "$REPORT"
+            echo "[FAIL] file missing" >> "$REPORT"
           fi
 
         done
 
-
-    # ============================================================
-    # 15. EXPORT / VERSIONING INSPECTION
-    # ============================================================
-
-    - name: Inspect export and versioning code
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "EXPORT / SYMBOL VERSIONING" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-
-        echo "--- modpost symbol version references ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- version generation code ---" >> "$REPORT"
 
         grep -n \
-          -E \
-          'symvers|version|EXPORT_SYMBOL|crc' \
+          -A12 \
+          -B8 \
+          "version generation failed" \
           scripts/mod/modpost.c \
-          2>/dev/null | head -120 | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
 
-        echo | tee -a "$REPORT"
-        echo "--- export.h references ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- handle_modversions ---" >> "$REPORT"
 
         grep -n \
-          -E \
-          'EXPORT_SYMBOL|__CRC|MODVERSIONS' \
-          include/linux/export.h \
-          2>/dev/null | head -100 | tee -a "$REPORT"
+          -A35 \
+          -B8 \
+          "handle_modversions" \
+          scripts/mod/modpost.c \
+          >> "$REPORT" 2>&1 || true
+
+        echo "" >> "$REPORT"
+        echo "--- CRC handling ---" >> "$REPORT"
+
+        grep -n \
+          -A20 \
+          -B10 \
+          "__crc_" \
+          scripts/mod/modpost.c \
+          >> "$REPORT" 2>&1 || true
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 16. GSPCA INSPECTION
+    # 11. EXPORT.H DIAGNOSTIC
     # ============================================================
 
-    - name: Inspect GSPCA exports
+    - name: Export Symbol Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="export-symbol-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "GSPCA EXPORTS" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "EXPORT / SYMBOL VERSIONING" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
+
+        echo "--- export.h CRC code ---" >> "$REPORT"
+
+        grep -n \
+          -A12 \
+          -B8 \
+          "__CRC_SYMBOL" \
+          include/linux/export.h \
+          >> "$REPORT" 2>&1 || true
+
+        echo "" >> "$REPORT"
+        echo "--- EXPORT_SYMBOL definitions ---" >> "$REPORT"
+
+        grep -n \
+          -A8 \
+          -B4 \
+          "EXPORT_SYMBOL" \
+          include/linux/export.h \
+          >> "$REPORT" 2>&1 || true
+
+        cat "$REPORT"
+
+
+    # ============================================================
+    # 12. GSPCA SOURCE DIAGNOSTIC
+    # ============================================================
+
+    - name: GSPCA Diagnostic
+      run: |
+        set +e
+
+        REPORT="gspca-diagnostic.txt"
+
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "GSPCA EXPORTS" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
         for file in \
           drivers/media/usb/gspca/gspca.c \
-          drivers/media/usb/gspca/gspca.h; do
+          drivers/media/usb/gspca/gspca.h
+        do
 
-          echo | tee -a "$REPORT"
-          echo "--- $file ---" | tee -a "$REPORT"
+          echo "" >> "$REPORT"
+          echo "--- $file ---" >> "$REPORT"
 
           if [ -f "$file" ]; then
-
-            grep -n \
-              -E \
-              'EXPORT_SYMBOL|EXPORT_SYMBOL_GPL|gspca_debug|gspca_dev_probe|gspca_disconnect|gspca_frame_add|gspca_resume|gspca_suspend' \
-              "$file" \
-              2>/dev/null | head -100 | tee -a "$REPORT"
-
+            echo "[PASS] file exists" >> "$REPORT"
           else
-
-            echo "[INFO] File not found" | tee -a "$REPORT"
-
+            echo "[FAIL] file missing" >> "$REPORT"
           fi
 
         done
 
+        echo "" >> "$REPORT"
+        echo "--- EXPORT_SYMBOL references ---" >> "$REPORT"
+
+        grep -n \
+          -E 'EXPORT_SYMBOL|EXPORT_SYMBOL_GPL' \
+          drivers/media/usb/gspca/gspca.c \
+          >> "$REPORT" 2>&1 || true
+
+        echo "" >> "$REPORT"
+        echo "--- exported gspca symbols ---" >> "$REPORT"
+
+        grep -n \
+          -E \
+          'gspca_debug|gspca_dev_probe|gspca_dev_probe2|gspca_disconnect|gspca_frame_add|gspca_suspend|gspca_resume|gspca_expo_autogain|gspca_coarse_grained_expo_autogain' \
+          drivers/media/usb/gspca/gspca.c \
+          >> "$REPORT" 2>&1 || true
+
+        echo "" >> "$REPORT"
+        echo "--- header declarations ---" >> "$REPORT"
+
+        grep -n \
+          -E \
+          'gspca_debug|gspca_dev_probe|gspca_dev_probe2|gspca_disconnect|gspca_frame_add|gspca_suspend|gspca_resume' \
+          drivers/media/usb/gspca/gspca.h \
+          >> "$REPORT" 2>&1 || true
+
+        cat "$REPORT"
+
 
     # ============================================================
-    # 17. ARM64 BUILD VARIABLES
+    # 13. BUILD VARIABLES
     # ============================================================
 
-    - name: Inspect kernel build variables
+    - name: LLVM Make Variable Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="build-variables.txt"
 
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        : > "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "BUILD VARIABLES" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        echo "============================================================" >> "$REPORT"
+        echo "BUILD VARIABLES" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-        make -s O=out ARCH=arm64 -pn 2>/dev/null \
+        make -s \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          AS=llvm-as \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE="$CROSS_COMPILE" \
+          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          -pn 2>/dev/null \
           | grep -E \
-          '^(ARCH|CC|LD|AR|AS|NM|OBJCOPY|OBJDUMP|STRIP|CROSS_COMPILE|CROSS_COMPILE_ARM32|CLANG_TRIPLE|LLVM|LLVM_IAS|CONFIG_LTO_CLANG|CONFIG_MODVERSIONS)[[:space:]]*=' \
+          '^(AR|AS|CC|LD|NM|OBJCOPY|OBJDUMP|STRIP|ARCH|CLANG_TRIPLE|CONFIG_MODVERSIONS|CROSS_COMPILE|CROSS_COMPILE_ARM32|LLVM|LLVM_IAS)[[:space:]]*=' \
           | sort -u \
-          | head -100 \
-          | tee -a "$REPORT"
+          >> "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "[INFO] Make database inspection completed" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "[INFO] LLVM-aware Make database inspection completed" >> "$REPORT"
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 18. CROSS COMPILER TEST
+    # 14. CROSS COMPILER TEST
     # ============================================================
 
-    - name: Cross compiler functional test
+    - name: Clang AArch64 Test
       run: |
-        set +e
+        set -e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        rm -f /tmp/clang-test.o
 
-        export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        clang \
+          --target=aarch64-linux-gnu \
+          -c \
+          -x c \
+          /dev/null \
+          -o /tmp/clang-test.o
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "CROSS COMPILER TEST" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        test -f /tmp/clang-test.o
 
-        cat > /tmp/test.c <<'EOF'
-        int test_function(int a)
-        {
-          return a + 1;
-        }
+        echo "[PASS] Clang AArch64 object compilation"
+
+
+    # ============================================================
+    # 15. LLD TEST
+    # ============================================================
+
+    - name: LLD AArch64 Test
+      run: |
+        set -e
+
+        rm -f /tmp/lld-test.o
+        rm -f /tmp/lld-test.elf
+
+        cat > /tmp/lld-test.s <<'EOF'
+        .text
+        .global _start
+        _start:
+            nop
         EOF
 
         clang \
           --target=aarch64-linux-gnu \
           -c \
-          /tmp/test.c \
-          -o /tmp/test.o \
-          2>&1 | tee -a "$REPORT"
-
-        if [ -f /tmp/test.o ]; then
-          echo "[PASS] Clang AArch64 object compilation" | tee -a "$REPORT"
-        else
-          echo "[FAIL] Clang AArch64 object compilation" | tee -a "$REPORT"
-        fi
-
-
-    # ============================================================
-    # 19. LLD TEST
-    # ============================================================
-
-    - name: LLD functional test
-      run: |
-        set +e
-
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
-
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "LLD TEST" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-
-        clang \
-          --target=aarch64-linux-gnu \
-          -c \
-          /tmp/test.c \
-          -o /tmp/test.o \
-          2>&1 | tee -a "$REPORT"
+          /tmp/lld-test.s \
+          -o /tmp/lld-test.o
 
         ld.lld \
-          -m aarch64linux \
-          -o /tmp/test.elf \
-          /tmp/test.o \
-          2>&1 | tee -a "$REPORT"
+          -m aarch64elf \
+          -e _start \
+          -o /tmp/lld-test.elf \
+          /tmp/lld-test.o
 
-        if [ -f /tmp/test.elf ]; then
-          echo "[PASS] LLD AArch64 link test" | tee -a "$REPORT"
-        else
-          echo "[FAIL] LLD AArch64 link test" | tee -a "$REPORT"
-        fi
+        test -f /tmp/lld-test.elf
+
+        echo "[PASS] LLD AArch64 link test"
 
 
     # ============================================================
-    # 20. LTO OBJECT TEST
+    # 16. LLVM LTO OBJECT TEST
     # ============================================================
 
-    - name: LLVM LTO object test
+    - name: LLVM LTO Object Test
       run: |
-        set +e
+        set -e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        rm -f /tmp/lto-test.o
 
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "LLVM LTO OBJECT TEST" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        cat > /tmp/lto-test.c <<'EOF'
+        int lto_test_function(int x)
+        {
+            return x + 1;
+        }
+        EOF
 
         clang \
           --target=aarch64-linux-gnu \
           -flto \
           -c \
-          /tmp/test.c \
-          -o /tmp/test-lto.o \
-          2>&1 | tee -a "$REPORT"
+          /tmp/lto-test.c \
+          -o /tmp/lto-test.o
 
-        if [ -f /tmp/test-lto.o ]; then
-          echo "[PASS] LLVM LTO object generated" | tee -a "$REPORT"
-        else
-          echo "[FAIL] LLVM LTO object generation failed" | tee -a "$REPORT"
-        fi
+        test -f /tmp/lto-test.o
+
+        echo "[PASS] LLVM LTO object generated"
 
 
     # ============================================================
-    # 21. ARCHITECTURE MAKEFILE
+    # 17. GSPCA EXPORT CRC TEST
     # ============================================================
 
-    - name: Inspect ARM64 Makefile
+    - name: GSPCA CRC Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="gspca-crc-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "ARM64 MAKEFILE" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
 
-        if [ -f arch/arm64/Makefile ]; then
+        echo "============================================================" >> "$REPORT"
+        echo "GSPCA CRC / LTO DIAGNOSTIC" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-          grep -n \
-            -E \
-            'LTO|LLVM|CLANG|CROSS_COMPILE|COMPAT|ARM32' \
-            arch/arm64/Makefile \
-            2>/dev/null | head -150 | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- Existing build outputs ---" >> "$REPORT"
 
-        else
+        find out \
+          -type f \
+          \( \
+            -name 'gspca*.o' \
+            -o -name 'gspca*.ko' \
+            -o -name 'Module.symvers' \
+            -o -name '*.symversions' \
+          \) \
+          -print \
+          >> "$REPORT" 2>&1 || true
 
-          echo "[FAIL] arch/arm64/Makefile missing" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- Existing GSPCA CRC symbols ---" >> "$REPORT"
+
+        if command -v llvm-nm >/dev/null 2>&1; then
+
+          find out \
+            -type f \
+            \( \
+              -name 'gspca*.o' \
+              -o -name 'gspca*.ko' \
+            \) \
+            -print0 2>/dev/null \
+            | while IFS= read -r -d '' file
+            do
+              echo "" >> "$REPORT"
+              echo "FILE: $file" >> "$REPORT"
+
+              llvm-nm \
+                -a \
+                "$file" \
+                2>/dev/null \
+                | grep -E '__crc_|gspca_(debug|dev_probe|dev_probe2|disconnect|frame_add|suspend|resume|expo_autogain)' \
+                >> "$REPORT" 2>&1 || true
+            done
 
         fi
 
+        echo "" >> "$REPORT"
+        echo "--- Module.symvers GSPCA entries ---" >> "$REPORT"
+
+        find out \
+          -name Module.symvers \
+          -type f \
+          -print0 2>/dev/null \
+          | while IFS= read -r -d '' file
+          do
+
+            echo "" >> "$REPORT"
+            echo "FILE: $file" >> "$REPORT"
+
+            grep -E \
+              'gspca_(debug|dev_probe|dev_probe2|disconnect|frame_add|suspend|resume|expo_autogain|coarse_grained_expo_autogain)' \
+              "$file" \
+              >> "$REPORT" 2>&1 || true
+
+          done
+
+        echo "" >> "$REPORT"
+        echo "--- symversions GSPCA entries ---" >> "$REPORT"
+
+        find out \
+          -name '*.symversions' \
+          -type f \
+          -print0 2>/dev/null \
+          | while IFS= read -r -d '' file
+          do
+
+            echo "" >> "$REPORT"
+            echo "FILE: $file" >> "$REPORT"
+
+            grep -E \
+              'gspca_|__crc_' \
+              "$file" \
+              >> "$REPORT" 2>&1 || true
+
+          done
+
+        cat "$REPORT"
+
 
     # ============================================================
-    # 22. SEARCH LTO REFERENCES
+    # 18. LTO SOURCE REFERENCES
     # ============================================================
 
-    - name: Search LTO implementation
+    - name: LTO Source References
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="lto-source-references.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "LTO SOURCE REFERENCES" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "LTO SOURCE REFERENCES" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
         grep -R -n \
           -E \
-          'CONFIG_LTO_CLANG|LTO_CLANG|update_lto_symversions|\.lto\.o|lto\.ko' \
+          'CONFIG_LTO_CLANG|update_lto_symversions|cmd_link_multi|module-lto' \
           scripts \
-          arch/arm64 \
+          arch/arm64/Makefile \
+          arch/arm64/Kconfig \
           2>/dev/null \
-          | head -250 \
-          | tee -a "$REPORT"
+          >> "$REPORT" || true
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 23. ARGUMENT-LIST RISK
+    # 19. ARGUMENT LIST RISK
     # ============================================================
 
-    - name: Detect argument list risks
+    - name: Argument List Diagnostic
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="argument-list-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "ARGUMENT LIST RISK" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "ARGUMENT LIST RISK" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
+
+        echo "--- suspicious command constructions ---" >> "$REPORT"
 
         grep -R -n \
           -E \
-          'for .* in \$\(|\$\(.*_deps|\$link_multi_deps|filter-out FORCE' \
+          'for .* in \$\(|\$\([^)]*_deps\)|\$\(link_multi_deps\)|\$\(filter-out FORCE' \
           scripts/Makefile.build \
-          2>/dev/null \
-          | head -150 \
-          | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
 
-        echo | tee -a "$REPORT"
-        echo "--- response files ---" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "--- response files ---" >> "$REPORT"
 
         grep -R -n \
           -E \
           '\.rsp|\$\(file >' \
           scripts/Makefile.build \
-          2>/dev/null \
-          | head -100 \
-          | tee -a "$REPORT"
+          >> "$REPORT" 2>&1 || true
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 24. FINAL DIRECTORY CHECK
+    # 20. SOURCE TREE
     # ============================================================
 
-    - name: Final source tree check
+    - name: Source Tree Diagnostic
       run: |
-        set +e
+        set -e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="source-tree-diagnostic.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "SOURCE TREE CHECK" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
+
+        echo "============================================================" >> "$REPORT"
+        echo "SOURCE TREE CHECK" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
         for path in \
           Makefile \
           Kconfig \
+          scripts/Makefile \
           scripts/Makefile.build \
           scripts/Makefile.lib \
           scripts/Makefile.modpost \
@@ -798,78 +882,117 @@ jobs:
           arch/arm64/Makefile \
           arch/arm64/Kconfig \
           drivers/media/usb/gspca/gspca.c \
-          drivers/media/usb/gspca/gspca.h; do
+          drivers/media/usb/gspca/gspca.h
+        do
 
           if [ -f "$path" ]; then
-            echo "[PASS] $path" | tee -a "$REPORT"
+            echo "[PASS] $path" >> "$REPORT"
           else
-            echo "[FAIL] $path" | tee -a "$REPORT"
+            echo "[FAIL] $path" >> "$REPORT"
           fi
 
         done
 
+        cat "$REPORT"
+
 
     # ============================================================
-    # 25. FINAL SUMMARY
+    # 21. FINAL SUMMARY
     # ============================================================
 
-    - name: Final diagnostic summary
+    - name: Final Diagnostic Summary
       run: |
         set +e
 
-        REPORT="$GITHUB_WORKSPACE/k/diagnostic.txt"
+        REPORT="FINAL-LTO-MODPOST-DIAGNOSTIC.txt"
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "FINAL SUMMARY" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+        : > "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "Toolchain:" | tee -a "$REPORT"
+        echo "============================================================" >> "$REPORT"
+        echo "FINAL SUMMARY" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
 
-        command -v clang >/dev/null 2>&1 \
-          && echo "[PASS] clang" | tee -a "$REPORT" \
-          || echo "[FAIL] clang" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "Toolchain:" >> "$REPORT"
 
-        command -v ld.lld >/dev/null 2>&1 \
-          && echo "[PASS] ld.lld" | tee -a "$REPORT" \
-          || echo "[FAIL] ld.lld" | tee -a "$REPORT"
+        if [ -x "$CLANG_PATH/bin/clang" ]; then
+          echo "[PASS] clang" >> "$REPORT"
+        else
+          echo "[FAIL] clang" >> "$REPORT"
+        fi
 
-        echo | tee -a "$REPORT"
-        echo "Configuration:" | tee -a "$REPORT"
+        if [ -x "$CLANG_PATH/bin/ld.lld" ]; then
+          echo "[PASS] ld.lld" >> "$REPORT"
+        else
+          echo "[FAIL] ld.lld" >> "$REPORT"
+        fi
 
-        grep '^CONFIG_LTO_CLANG=' out/.config 2>/dev/null | tee -a "$REPORT"
-        grep '^CONFIG_MODVERSIONS=' out/.config 2>/dev/null | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "Configuration:" >> "$REPORT"
 
-        echo | tee -a "$REPORT"
-        echo "Important LTO files:" | tee -a "$REPORT"
+        grep -E \
+          '^CONFIG_(LTO_CLANG|MODVERSIONS|MODULES)=' \
+          out/.config \
+          >> "$REPORT" 2>&1 || true
 
-        test -f scripts/Makefile.build \
-          && echo "[PASS] scripts/Makefile.build" | tee -a "$REPORT" \
-          || echo "[FAIL] scripts/Makefile.build" | tee -a "$REPORT"
+        echo "" >> "$REPORT"
+        echo "Important LTO files:" >> "$REPORT"
 
-        test -f scripts/mod/modpost.c \
-          && echo "[PASS] scripts/mod/modpost.c" | tee -a "$REPORT" \
-          || echo "[FAIL] scripts/mod/modpost.c" | tee -a "$REPORT"
+        for file in \
+          scripts/Makefile.build \
+          scripts/mod/modpost.c \
+          scripts/mod/modpost.h \
+          scripts/Makefile.modpost \
+          scripts/Makefile.lib \
+          include/linux/export.h
+        do
 
-        echo | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
-        echo "DIAGNOSTIC COMPLETE" | tee -a "$REPORT"
-        echo "============================================================" | tee -a "$REPORT"
+          if [ -f "$file" ]; then
+            echo "[PASS] $file" >> "$REPORT"
+          else
+            echo "[FAIL] $file" >> "$REPORT"
+          fi
 
-        echo
-        echo "Diagnostic completed."
-        echo "No kernel build was started."
+        done
+
+        echo "" >> "$REPORT"
+        echo "Tests:" >> "$REPORT"
+
+        echo "[PASS] Clang AArch64 object test" >> "$REPORT"
+        echo "[PASS] LLD AArch64 link test" >> "$REPORT"
+        echo "[PASS] LLVM LTO object test" >> "$REPORT"
+
+        echo "" >> "$REPORT"
+        echo "Important:" >> "$REPORT"
+        echo "This workflow performs diagnostics only." >> "$REPORT"
+        echo "No kernel build was started." >> "$REPORT"
+
+        echo "" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
+        echo "DIAGNOSTIC COMPLETE" >> "$REPORT"
+        echo "============================================================" >> "$REPORT"
+
+        cat "$REPORT"
 
 
     # ============================================================
-    # 26. UPLOAD REPORT
+    # 22. UPLOAD ALL DIAGNOSTICS
     # ============================================================
 
-    - name: Upload diagnostic report
+    - name: Upload Diagnostic Reports
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: violet-lto-diagnostic
-        path: k/diagnostic.txt
-        if-no-files-found: error
+        name: LTO-MODPOST-Diagnostic-${{ github.run_number }}
+        path: |
+          k/*diagnostic*.txt
+          k/*Diagnostic*.txt
+          k/FINAL-LTO-MODPOST-DIAGNOSTIC.txt
+          k/lto-compatibility.txt
+          k/kernel-configuration.txt
+          k/build-variables.txt
+          k/gspca-crc-diagnostic.txt
+          k/lto-source-references.txt
+          k/argument-list-diagnostic.txt
+          k/source-tree-diagnostic.txt
+        if-no-files-found: warn
