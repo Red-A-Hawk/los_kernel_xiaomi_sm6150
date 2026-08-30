@@ -40,6 +40,8 @@ jobs:
 
     - name: Install dependencies
       run: |
+        set -e
+
         sudo apt update
 
         sudo apt install -y \
@@ -67,6 +69,8 @@ jobs:
 
     - name: Clone Toolchains
       run: |
+        set -e
+
         mkdir -p clang
         cd clang
 
@@ -111,6 +115,8 @@ jobs:
 
     - name: Verify toolchains
       run: |
+        set -e
+
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
@@ -204,15 +210,15 @@ jobs:
         readlink -f drivers/kernelsu || true
 
         echo
-        echo "KERNELSU FILES:"
+        echo "KERNELSU TOP LEVEL:"
         find drivers/kernelsu \
           -maxdepth 2 \
           -type f \
-          | sort
+          -print | sort
 
 
     # ============================================================
-    # 8. Check KernelSU syscall symbols
+    # 8. KernelSU Source / Symbol Check
     # ============================================================
 
     - name: Check KernelSU syscall symbols
@@ -232,7 +238,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "1. ALL SOURCE DEFINITIONS / REFERENCES"
+        echo "ALL SOURCE DEFINITIONS / REFERENCES"
         echo "========================================"
 
         grep -Rnw \
@@ -246,7 +252,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "2. KERNELSU DIRECTORY ONLY"
+        echo "KERNELSU DIRECTORY ONLY"
         echo "========================================"
 
         grep -Rnw \
@@ -258,36 +264,7 @@ jobs:
 
         echo
         echo "========================================"
-        echo "3. FS HOOKS"
-        echo "========================================"
-
-        echo
-        echo "--- fs/stat.c ---"
-
-        grep -n \
-          -E \
-          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
-          fs/stat.c || true
-
-        echo
-        echo "--- fs/open.c ---"
-
-        grep -n \
-          -E \
-          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
-          fs/open.c || true
-
-        echo
-        echo "--- fs/exec.c ---"
-
-        grep -n \
-          -E \
-          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
-          fs/exec.c || true
-
-        echo
-        echo "========================================"
-        echo "4. EXACT FUNCTION DEFINITIONS"
+        echo "EXACT FUNCTION DEFINITIONS"
         echo "========================================"
 
         echo
@@ -298,8 +275,8 @@ jobs:
           --exclude-dir=out \
           --include='*.c' \
           -E \
-          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_stat[[:space:]]*\(' \
-          . || true
+          'ksu_handle_stat[[:space:]]*\(' \
+          drivers/kernelsu || true
 
         echo
         echo "ksu_handle_faccessat definitions:"
@@ -309,8 +286,8 @@ jobs:
           --exclude-dir=out \
           --include='*.c' \
           -E \
-          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_faccessat[[:space:]]*\(' \
-          . || true
+          'ksu_handle_faccessat[[:space:]]*\(' \
+          drivers/kernelsu || true
 
         echo
         echo "ksu_handle_execveat definitions:"
@@ -320,16 +297,149 @@ jobs:
           --exclude-dir=out \
           --include='*.c' \
           -E \
-          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_execveat[[:space:]]*\(' \
-          . || true
+          'ksu_handle_execveat[[:space:]]*\(' \
+          drivers/kernelsu || true
 
 
     # ============================================================
-    # 9. Load Original violet-perf defconfig
+    # 9. Diagnose KernelSU Kbuild
+    #
+    # IMPORTANT:
+    # This happens BEFORE kernel compilation.
+    # We do NOT expect sucompat.o to exist yet.
+    # We inspect how Kbuild intends to compile it.
+    # ============================================================
+
+    - name: Diagnose KernelSU Kbuild
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "KERNELSU KBUILD DIAGNOSTIC"
+        echo "========================================"
+
+        echo
+        echo "========================================"
+        echo "KERNELSU DIRECTORY"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -maxdepth 4 \
+          -type f \
+          -print | sort
+
+        echo
+        echo "========================================"
+        echo "KERNELSU DIRECTORIES"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -maxdepth 4 \
+          -type d \
+          -print | sort
+
+        echo
+        echo "========================================"
+        echo "KERNELSU MAKEFILE / KBUILD FILES"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -type f \
+          \( \
+            -name 'Makefile' \
+            -o \
+            -name 'Kbuild' \
+          \) \
+          -print | sort
+
+        echo
+        echo "========================================"
+        echo "ALL MAKEFILE REFERENCES TO KSU"
+        echo "========================================"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          --include='Makefile' \
+          --include='Kbuild' \
+          -E \
+          'kernelsu|sucompat|CONFIG_KSU' \
+          drivers \
+          2>/dev/null || true
+
+        echo
+        echo "========================================"
+        echo "SUCOMPAT BUILD REFERENCES"
+        echo "========================================"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          -E \
+          'sucompat\.o|feature/sucompat|feature.*sucompat' \
+          . \
+          2>/dev/null || true
+
+        echo
+        echo "========================================"
+        echo "KERNELSU OBJ REFERENCES"
+        echo "========================================"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          -E \
+          'obj-\$\(CONFIG_KSU\)|obj-y.*kernelsu|kernelsu.*obj-y' \
+          drivers \
+          2>/dev/null || true
+
+        echo
+        echo "========================================"
+        echo "KSU CONFIG REFERENCES"
+        echo "========================================"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          -E \
+          'config KSU|CONFIG_KSU' \
+          drivers/kernelsu \
+          2>/dev/null || true
+
+        echo
+        echo "========================================"
+        echo "ROOT DRIVER KCONFIG / MAKEFILE"
+        echo "========================================"
+
+        if [ -f drivers/Makefile ]; then
+          grep -n \
+            -E \
+            'kernelsu|CONFIG_KSU' \
+            drivers/Makefile || true
+        fi
+
+        if [ -f drivers/Kconfig ]; then
+          grep -n \
+            -E \
+            'kernelsu|CONFIG_KSU' \
+            drivers/Kconfig || true
+        fi
+
+        echo
+        echo "========================================"
+        echo "KBUILD DIAGNOSTIC COMPLETE"
+        echo "========================================"
+
+
+    # ============================================================
+    # 10. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
       run: |
+        set -e
+
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -345,11 +455,13 @@ jobs:
 
 
     # ============================================================
-    # 10. Configure Matrix
+    # 11. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
       run: |
+        set -e
+
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -364,6 +476,10 @@ jobs:
 
           Base)
 
+            echo "KernelSU: DISABLED"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: DISABLED"
+
             scripts/config \
               --file out/.config \
               --disable CONFIG_KSU \
@@ -376,6 +492,10 @@ jobs:
 
 
           KSU)
+
+            echo "KernelSU: ENABLED"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -397,6 +517,10 @@ jobs:
 
           KSU-NoMount)
 
+            echo "KernelSU: ENABLED"
+            echo "SUSFS: DISABLED"
+            echo "NoMount: ENABLED"
+
             scripts/config \
               --file out/.config \
               --enable CONFIG_KSU \
@@ -417,6 +541,10 @@ jobs:
 
           KSU-SUSFS)
 
+            echo "KernelSU: ENABLED"
+            echo "SUSFS: ENABLED"
+            echo "NoMount: DISABLED"
+
             scripts/config \
               --file out/.config \
               --enable CONFIG_KSU \
@@ -436,6 +564,10 @@ jobs:
 
 
           KSU-SUSFS-NoMount)
+
+            echo "KernelSU: ENABLED"
+            echo "SUSFS: ENABLED"
+            echo "NoMount: ENABLED"
 
             scripts/config \
               --file out/.config \
@@ -480,14 +612,26 @@ jobs:
         echo "FINAL CONFIGURATION"
         echo "========================================"
 
+        echo
+        echo "--- KernelSU ---"
+
         grep -E '^CONFIG_KSU' \
           out/.config || true
+
+        echo
+        echo "--- SUSFS ---"
 
         grep -E '^CONFIG_KSU_SUSFS' \
           out/.config || true
 
+        echo
+        echo "--- NoMount ---"
+
         grep -E '^CONFIG_NOMOUNT' \
           out/.config || true
+
+        echo
+        echo "--- KPROBES ---"
 
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
@@ -511,17 +655,26 @@ jobs:
           "out/${DEFCONFIG_NAME}"
 
         echo
-        echo "FULL DEFCONFIG:"
-        ls -lh "out/${DEFCONFIG_NAME}"
+        echo "========================================"
+        echo "FULL FINAL DEFCONFIG"
+        echo "========================================"
 
-        wc -l "out/${DEFCONFIG_NAME}"
+        ls -lh \
+          "out/${DEFCONFIG_NAME}"
+
+        wc -l \
+          "out/${DEFCONFIG_NAME}"
 
 
     # ============================================================
-    # 11. Verify KernelSU sucompat Build
+    # 12. Pre-Build Kbuild Test
+    #
+    # Compile only the KernelSU directory.
+    # This allows us to detect sucompat problems before
+    # spending time on the full kernel build.
     # ============================================================
 
-    - name: Verify KernelSU sucompat Build
+    - name: Pre-Build KernelSU Test
       if: ${{ matrix.build_type != 'Base' }}
       run: |
         set -e
@@ -530,56 +683,43 @@ jobs:
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "VERIFY KERNELSU SUCOMPAT BUILD"
+        echo "PRE-BUILD KERNELSU TEST"
         echo "========================================"
 
         echo
-        echo "CONFIG:"
-        grep -E '^CONFIG_KSU|^CONFIG_KPROBES' out/.config || true
+        echo "CONFIG_KSU:"
+        grep '^CONFIG_KSU=' out/.config || true
 
         echo
         echo "========================================"
-        echo "KSU MAKEFILES"
+        echo "KERNELSU BUILD"
         echo "========================================"
 
-        find drivers/kernelsu \
-          -name Makefile \
-          -print
+        make \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          drivers/kernelsu/ \
+          V=1
 
         echo
         echo "========================================"
-        echo "SEARCH SUCOMPAT BUILD RULE"
+        echo "SEARCHING GENERATED OBJECTS"
         echo "========================================"
 
-        grep -Rnw \
-          --include='Makefile' \
-          drivers/kernelsu \
-          -e 'sucompat.o' \
-          -e 'sucompat' || true
+        find out/drivers/kernelsu \
+          -type f \
+          -name '*.o' \
+          -print | sort || true
 
         echo
         echo "========================================"
-        echo "CHECK SUCOMPAT SOURCE"
-        echo "========================================"
-
-        test -f drivers/kernelsu/feature/sucompat.c
-
-        ls -lh \
-          drivers/kernelsu/feature/sucompat.c
-
-        echo
-        echo "========================================"
-        echo "SUCOMPAT DEFINITIONS"
-        echo "========================================"
-
-        grep -n \
-          -E \
-          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
-          drivers/kernelsu/feature/sucompat.c
-
-        echo
-        echo "========================================"
-        echo "CHECK SUCOMPAT OBJECT"
+        echo "SEARCHING SUCOMPAT OBJECT"
         echo "========================================"
 
         find out/drivers/kernelsu \
@@ -587,18 +727,18 @@ jobs:
           \( \
             -name 'sucompat.o' \
             -o \
-            -name 'sucompat.a' \
+            -name 'built-in.a' \
           \) \
           -print || true
 
         echo
         echo "========================================"
-        echo "SYMBOL SEARCH IN SUCOMPAT OBJECT"
+        echo "CHECKING SUCOMPAT SYMBOLS"
         echo "========================================"
 
         if [ -f out/drivers/kernelsu/feature/sucompat.o ]; then
 
-          echo "FOUND: sucompat.o"
+          echo "FOUND sucompat.o"
 
           llvm-nm \
             out/drivers/kernelsu/feature/sucompat.o \
@@ -608,18 +748,18 @@ jobs:
 
         else
 
-          echo "WARNING: sucompat.o DOES NOT EXIST"
+          echo "WARNING: sucompat.o NOT FOUND"
 
         fi
 
         echo
         echo "========================================"
-        echo "SUCOMPAT VERIFICATION COMPLETE"
+        echo "PRE-BUILD TEST COMPLETE"
         echo "========================================"
 
 
     # ============================================================
-    # 12. Upload Full Final Defconfig
+    # 13. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -632,11 +772,13 @@ jobs:
 
 
     # ============================================================
-    # 13. Verify Build Configuration
+    # 14. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
       run: |
+        set -e
+
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -673,11 +815,13 @@ jobs:
 
 
     # ============================================================
-    # 14. Build Kernel
+    # 15. Build Kernel
     # ============================================================
 
     - name: Build Kernel
       run: |
+        set -o pipefail
+
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -704,11 +848,13 @@ jobs:
 
 
     # ============================================================
-    # 15. Verify Kernel
+    # 16. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
       run: |
+        set -e
+
         echo "========================================"
         echo "CHECKING BUILD"
         echo "========================================"
@@ -727,11 +873,13 @@ jobs:
 
 
     # ============================================================
-    # 16. Package AnyKernel3
+    # 17. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
       run: |
+        set -e
+
         echo "========================================"
         echo "PACKAGING ANYKERNEL3"
         echo "========================================"
@@ -766,7 +914,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Kernel ZIP
+    # 18. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -779,7 +927,7 @@ jobs:
 
 
     # ============================================================
-    # 18. Upload Build Log
+    # 19. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
