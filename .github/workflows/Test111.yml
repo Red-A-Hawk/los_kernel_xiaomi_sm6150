@@ -145,8 +145,6 @@ jobs:
 
     # ============================================================
     # 6. Setup NoMount
-    #
-    # Only installed for NoMount variants.
     # ============================================================
 
     - name: Setup NoMount
@@ -175,14 +173,13 @@ jobs:
 
     # ============================================================
     # 7. Setup KernelSU-Next
-    #
-    # syscall is intentionally used for ALL KSU variants.
-    # Base does not install KernelSU.
     # ============================================================
 
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
       run: |
+        set -e
+
         echo "========================================"
         echo "SETTING UP KERNELSU-NEXT"
         echo "========================================"
@@ -201,14 +198,182 @@ jobs:
         ls -ld drivers/kernelsu
 
         echo
+        echo "KERNELSU PATH:"
+        readlink -f drivers/kernelsu || true
+
+        echo
+        echo "========================================"
+        echo "KERNELSU MAKEFILE"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -maxdepth 2 \
+          -name Makefile \
+          -print \
+          -exec sed -n '1,220p' {} \; || true
+
+        echo
+        echo "========================================"
+        echo "KERNELSU KCONFIG"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -maxdepth 2 \
+          -name Kconfig \
+          -print \
+          -exec sed -n '1,220p' {} \; || true
+
+        echo
+        echo "========================================"
+        echo "DRIVERS MAKEFILE"
+        echo "========================================"
+
         grep -n "kernelsu" drivers/Makefile || true
 
         echo
+        echo "========================================"
+        echo "DRIVERS KCONFIG"
+        echo "========================================"
+
         grep -n "kernelsu" drivers/Kconfig || true
 
 
     # ============================================================
-    # 8. Load Original violet-perf defconfig
+    # 8. KernelSU syscall symbol investigation
+    #
+    # This is the important diagnostic step.
+    # ============================================================
+
+    - name: Check KernelSU syscall symbols
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "KERNELSU SYSCALL SYMBOL CHECK"
+        echo "========================================"
+
+        echo
+        echo "Searching for:"
+        echo "  ksu_handle_stat"
+        echo "  ksu_handle_faccessat"
+        echo "  ksu_handle_execveat"
+
+        echo
+        echo "========================================"
+        echo "1. ALL SOURCE DEFINITIONS / REFERENCES"
+        echo "========================================"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          --include='*.c' \
+          --include='*.h' \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          . || true
+
+
+        echo
+        echo "========================================"
+        echo "2. KERNELSU DIRECTORY ONLY"
+        echo "========================================"
+
+        grep -Rnw \
+          --include='*.c' \
+          --include='*.h' \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          drivers/kernelsu || true
+
+
+        echo
+        echo "========================================"
+        echo "3. FS HOOKS"
+        echo "========================================"
+
+        echo
+        echo "--- fs/stat.c ---"
+
+        grep -n \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          fs/stat.c || true
+
+        echo
+        echo "--- fs/open.c ---"
+
+        grep -n \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          fs/open.c || true
+
+        echo
+        echo "--- fs/exec.c ---"
+
+        grep -n \
+          -E \
+          'ksu_handle_stat|ksu_handle_faccessat|ksu_handle_execveat' \
+          fs/exec.c || true
+
+
+        echo
+        echo "========================================"
+        echo "4. EXACT FUNCTION DEFINITIONS"
+        echo "========================================"
+
+        echo
+        echo "ksu_handle_stat definitions:"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          --include='*.c' \
+          -E \
+          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_stat[[:space:]]*\(' \
+          . || true
+
+        echo
+        echo "ksu_handle_faccessat definitions:"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          --include='*.c' \
+          -E \
+          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_faccessat[[:space:]]*\(' \
+          . || true
+
+        echo
+        echo "ksu_handle_execveat definitions:"
+
+        grep -Rnw \
+          --exclude-dir=.git \
+          --exclude-dir=out \
+          --include='*.c' \
+          -E \
+          '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|long|void|bool)[[:space:]]+ksu_handle_execveat[[:space:]]*\(' \
+          . || true
+
+
+        echo
+        echo "========================================"
+        echo "5. SYMBOL NAMES IN KERNELSU OBJECTS"
+        echo "========================================"
+
+        find drivers/kernelsu \
+          -type f \
+          \( -name '*.o' -o -name '*.a' \) \
+          -print 2>/dev/null || true
+
+        echo
+        echo "========================================"
+        echo "SYSCALL CHECK COMPLETE"
+        echo "========================================"
+
+
+    # ============================================================
+    # 9. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
@@ -228,7 +393,7 @@ jobs:
 
 
     # ============================================================
-    # 9. Configure Matrix
+    # 10. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
@@ -244,10 +409,6 @@ jobs:
         echo "========================================"
 
         case "$BUILD_TYPE" in
-
-          # ------------------------------------------------------
-          # BASE
-          # ------------------------------------------------------
 
           Base)
 
@@ -266,10 +427,6 @@ jobs:
 
             ;;
 
-
-          # ------------------------------------------------------
-          # KSU
-          # ------------------------------------------------------
 
           KSU)
 
@@ -295,10 +452,6 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
-          # KSU + NOMOUNT
-          # ------------------------------------------------------
-
           KSU-NoMount)
 
             echo "KernelSU-Next"
@@ -323,10 +476,6 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
-          # KSU + SUSFS
-          # ------------------------------------------------------
-
           KSU-SUSFS)
 
             echo "KernelSU-Next"
@@ -350,10 +499,6 @@ jobs:
 
             ;;
 
-
-          # ------------------------------------------------------
-          # KSU + SUSFS + NOMOUNT
-          # ------------------------------------------------------
 
           KSU-SUSFS-NoMount)
 
@@ -389,10 +534,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # Resolve Kconfig dependencies
-        # ========================================================
-
         echo
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
@@ -402,10 +543,6 @@ jobs:
           ARCH=arm64 \
           olddefconfig
 
-
-        # ========================================================
-        # Verify final configuration
-        # ========================================================
 
         echo
         echo "========================================"
@@ -430,10 +567,6 @@ jobs:
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
 
-
-        # ========================================================
-        # SUSFS validation
-        # ========================================================
 
         echo
         echo "========================================"
@@ -480,10 +613,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # NoMount validation
-        # ========================================================
-
         echo
         echo "========================================"
         echo "NOMOUNT VALIDATION"
@@ -517,10 +646,6 @@ jobs:
         esac
 
 
-        # ========================================================
-        # KPROBES validation
-        # ========================================================
-
         echo
         echo "========================================"
         echo "KPROBES VALIDATION"
@@ -534,14 +659,6 @@ jobs:
         fi
 
 
-        # ========================================================
-        # Save FULL final configuration
-        #
-        # IMPORTANT:
-        # This is NOT savedefconfig.
-        # It is the complete active .config.
-        # ========================================================
-
         echo
         echo "========================================"
         echo "SAVING FULL FINAL DEFCONFIG"
@@ -551,7 +668,6 @@ jobs:
           out/.config \
           "out/${DEFCONFIG_NAME}"
 
-
         echo
         echo "========================================"
         echo "FULL FINAL DEFCONFIG"
@@ -560,51 +676,12 @@ jobs:
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
-
-        echo
-        echo "========================================"
-        echo "LINE COUNT"
-        echo "========================================"
-
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
 
-        echo
-        echo "========================================"
-        echo "KERNELSU CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU' \
-          "out/${DEFCONFIG_NAME}" || true
-
-
-        echo
-        echo "========================================"
-        echo "SUSFS CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_KSU_SUSFS' \
-          "out/${DEFCONFIG_NAME}" || true
-
-
-        echo
-        echo "========================================"
-        echo "NOMOUNT CONFIG"
-        echo "========================================"
-
-        grep -E '^CONFIG_NOMOUNT' \
-          "out/${DEFCONFIG_NAME}" || true
-
-
-        echo
-        echo "========================================"
-        echo "FULL FINAL DEFCONFIG READY"
-        echo "========================================"
-
-
     # ============================================================
-    # 10. Upload Full Final Defconfig BEFORE BUILD
+    # 11. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -613,13 +690,11 @@ jobs:
         name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: out/*-full_defconfig
         if-no-files-found: error
+        retention-days: 7
 
 
     # ============================================================
-    # 11. Verify the exact config used for build
-    #
-    # Do NOT clean the source tree.
-    # The active out/.config remains untouched.
+    # 12. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
@@ -660,7 +735,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Build Kernel
+    # 13. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -691,7 +766,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 14. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -714,7 +789,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 15. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -753,7 +828,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 16. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -762,10 +837,11 @@ jobs:
         name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
         if-no-files-found: error
+        retention-days: 7
 
 
     # ============================================================
-    # 16. Upload Build Log
+    # 17. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
@@ -775,3 +851,4 @@ jobs:
         name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
         path: build.log
         if-no-files-found: warn
+        retention-days: 7
