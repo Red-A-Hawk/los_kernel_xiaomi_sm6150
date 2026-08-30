@@ -40,6 +40,8 @@ jobs:
 
     - name: Install dependencies
       run: |
+        set -e
+
         sudo apt update
 
         sudo apt install -y \
@@ -63,96 +65,272 @@ jobs:
 
 
     # ============================================================
-    # 3. Toolchains
+    # 3. Setup Toolchains
     #
-    # AOSP Clang
-    # LineageOS GCC 4.9 AArch64
-    # LineageOS GCC 4.9 ARM32
+    # AOSP Clang + GCC64 + GCC32
     # ============================================================
 
-    - name: Clone Toolchains
+    - name: Setup Toolchains
       run: |
+        set -e
+
         echo "========================================"
         echo "SETTING UP TOOLCHAINS"
         echo "========================================"
 
         # --------------------------------------------------------
-        # AOSP Clang Latest
+        # AOSP Clang
         # --------------------------------------------------------
 
+        CLANG_URL="https://github.com/bachnxuan/aosp_clang_mirror/releases/download/clang-r614150-16165221/clang-r614150.tar.gz"
+
         echo
-        echo "Downloading latest AOSP Clang..."
+        echo "========================================"
+        echo "DOWNLOADING AOSP CLANG"
+        echo "========================================"
 
-        AOSP_CLANG_URL=$(curl -fsSL \
-          https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest \
-          | jq -r '
-              .assets[]
-              | select(.browser_download_url | test("\\.(tar\\.gz|tgz)$"))
-              | .browser_download_url
-            ' \
-          | head -n 1)
+        echo "AOSP Clang URL:"
+        echo "$CLANG_URL"
 
-        if [ -z "$AOSP_CLANG_URL" ] || [ "$AOSP_CLANG_URL" = "null" ]; then
-          echo "ERROR: Failed to obtain AOSP Clang download URL"
+        rm -rf clang
+        rm -f clang-r614150.tar.gz
+
+        if ! curl -L \
+          --fail \
+          --retry 3 \
+          --retry-delay 2 \
+          -o clang-r614150.tar.gz \
+          "$CLANG_URL"; then
+
+          echo "ERROR: Failed to download AOSP Clang"
           exit 1
         fi
 
-        echo "AOSP Clang URL:"
-        echo "$AOSP_CLANG_URL"
+        echo
+        echo "========================================"
+        echo "VERIFYING CLANG ARCHIVE"
+        echo "========================================"
+
+        ls -lh clang-r614150.tar.gz
+
+        test -s clang-r614150.tar.gz
+
+        echo "Testing gzip archive..."
+
+        gzip -t clang-r614150.tar.gz
+
+        echo "Archive integrity: OK"
+
+
+        # --------------------------------------------------------
+        # Extract AOSP Clang
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "EXTRACTING AOSP CLANG"
+        echo "========================================"
 
         mkdir -p clang
 
-        curl -fL \
-          "$AOSP_CLANG_URL" \
-          -o clang.tar.gz
+        if ! tar -C clang -xf clang-r614150.tar.gz; then
+
+          echo
+          echo "ERROR: AOSP Clang extraction failed"
+          echo "Cleaning incomplete extraction..."
+
+          rm -rf clang
+          rm -f clang-r614150.tar.gz
+
+          exit 1
+        fi
+
+        rm -f clang-r614150.tar.gz
+
+
+        # --------------------------------------------------------
+        # Normalize possible top-level directory
+        # --------------------------------------------------------
+
+        if [ ! -d "clang/bin" ]; then
+
+          echo
+          echo "Clang archive contains a top-level directory."
+          echo "Searching for clang/bin..."
+
+          CLANG_SUBDIR="$(find clang \
+            -mindepth 1 \
+            -maxdepth 1 \
+            -type d \
+            | head -n 1)"
+
+          if [ -n "$CLANG_SUBDIR" ] && [ -d "$CLANG_SUBDIR/bin" ]; then
+
+            echo "Found:"
+            echo "$CLANG_SUBDIR"
+
+            shopt -s dotglob
+
+            mv "$CLANG_SUBDIR"/* clang/
+
+            rmdir "$CLANG_SUBDIR"
+
+          fi
+        fi
+
+
+        # --------------------------------------------------------
+        # Validate Clang
+        # --------------------------------------------------------
 
         echo
-        echo "Extracting AOSP Clang..."
+        echo "========================================"
+        echo "CHECKING AOSP CLANG"
+        echo "========================================"
 
-        tar -xzf clang.tar.gz \
-          -C clang \
-          --strip-components=1
-
-        rm -f clang.tar.gz
-
+        test -d clang/bin
         test -x clang/bin/clang
         test -x clang/bin/ld.lld
 
-        echo "AOSP Clang installed successfully."
+        echo "Clang directory: OK"
+        echo "clang binary: OK"
+        echo "ld.lld binary: OK"
 
 
         # --------------------------------------------------------
-        # LineageOS GCC64
+        # GCC64
         # --------------------------------------------------------
 
         echo
-        echo "Cloning LineageOS GCC64..."
+        echo "========================================"
+        echo "CLONING GCC64"
+        echo "========================================"
+
+        rm -rf gcc64
 
         git clone \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
           --depth=1 \
+          -b main \
+          https://github.com/greenforce-project/gcc-arm64.git \
           gcc64
 
-        test -x gcc64/bin/aarch64-linux-android-gcc
+        test -d gcc64
 
-        echo "GCC64 installed successfully."
+        echo "GCC64: OK"
 
 
         # --------------------------------------------------------
-        # LineageOS GCC32
+        # GCC32
         # --------------------------------------------------------
 
         echo
-        echo "Cloning LineageOS GCC32..."
+        echo "========================================"
+        echo "CLONING GCC32"
+        echo "========================================"
+
+        rm -rf gcc32
 
         git clone \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
           --depth=1 \
+          -b main \
+          https://github.com/greenforce-project/gcc-arm.git \
           gcc32
 
-        test -x gcc32/bin/arm-linux-androideabi-gcc
+        test -d gcc32
 
-        echo "GCC32 installed successfully."
+        echo "GCC32: OK"
+
+
+        # --------------------------------------------------------
+        # Environment
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "SETTING ENVIRONMENT"
+        echo "========================================"
+
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+
+        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
+
+
+        # --------------------------------------------------------
+        # PATH
+        # --------------------------------------------------------
+
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+
+        # --------------------------------------------------------
+        # Verify Clang
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "AOSP CLANG VERSION"
+        echo "========================================"
+
+        command -v clang
+        clang --version
+
+
+        # --------------------------------------------------------
+        # Verify LLD
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "LLD VERSION"
+        echo "========================================"
+
+        command -v ld.lld
+        ld.lld --version
+
+
+        # --------------------------------------------------------
+        # Verify LLVM tools
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "LLVM TOOLS"
+        echo "========================================"
+
+        command -v llvm-ar
+        command -v llvm-as
+        command -v llvm-nm
+        command -v llvm-objcopy
+        command -v llvm-objdump
+        command -v llvm-strip
+
+        echo "LLVM tools: OK"
+
+
+        # --------------------------------------------------------
+        # GCC64 inspection
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "GCC64 BINARIES"
+        echo "========================================"
+
+        ls -la "$GITHUB_WORKSPACE/gcc64/bin" | head -50
+
+
+        # --------------------------------------------------------
+        # GCC32 inspection
+        # --------------------------------------------------------
+
+        echo
+        echo "========================================"
+        echo "GCC32 BINARIES"
+        echo "========================================"
+
+        ls -la "$GITHUB_WORKSPACE/gcc32/bin" | head -50
 
 
         echo
@@ -162,100 +340,14 @@ jobs:
 
 
     # ============================================================
-    # 4. Environment
-    # ============================================================
-
-    - name: Setup Environment
-      run: |
-        echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
-
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
-
-
-    # ============================================================
-    # 5. Verify toolchains
-    # ============================================================
-
-    - name: Verify toolchains
-      run: |
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-        echo "========================================"
-        echo "AOSP CLANG"
-        echo "========================================"
-
-        which clang
-        clang --version
-
-        echo
-        echo "========================================"
-        echo "LLD"
-        echo "========================================"
-
-        which ld.lld
-        ld.lld --version
-
-        echo
-        echo "========================================"
-        echo "LLVM TOOLS"
-        echo "========================================"
-
-        which llvm-ar
-        which llvm-as
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
-
-        echo
-        echo "========================================"
-        echo "GCC64"
-        echo "========================================"
-
-        test -x "$GCC64_PATH/bin/aarch64-linux-android-gcc"
-
-        "$GCC64_PATH/bin/aarch64-linux-android-gcc" \
-          --version | head -n 1
-
-        echo
-        echo "========================================"
-        echo "GCC32"
-        echo "========================================"
-
-        test -x "$GCC32_PATH/bin/arm-linux-androideabi-gcc"
-
-        "$GCC32_PATH/bin/arm-linux-androideabi-gcc" \
-          --version | head -n 1
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILE TOOLS"
-        echo "========================================"
-
-        echo "AARCH64:"
-        ls -l "$GCC64_PATH/bin/aarch64-linux-android-"* | head -n 20
-
-        echo
-        echo "ARM32:"
-        ls -l "$GCC32_PATH/bin/arm-linux-androideabi-"* | head -n 20
-
-        echo
-        echo "========================================"
-        echo "TOOLCHAIN VERIFICATION PASSED"
-        echo "========================================"
-
-
-    # ============================================================
-    # 6. Setup NoMount
-    #
-    # Only installed for NoMount variants.
+    # 4. Setup NoMount
     # ============================================================
 
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
+        set -e
+
         echo "========================================"
         echo "SETTING UP NOMOUNT"
         echo "========================================"
@@ -278,15 +370,14 @@ jobs:
 
 
     # ============================================================
-    # 7. Setup KernelSU-Next
-    #
-    # syscall is intentionally used for ALL KSU variants.
-    # Base does not install KernelSU.
+    # 5. Setup KernelSU-Next
     # ============================================================
 
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
       run: |
+        set -e
+
         echo "========================================"
         echo "SETTING UP KERNELSU-NEXT"
         echo "========================================"
@@ -312,12 +403,15 @@ jobs:
 
 
     # ============================================================
-    # 8. Load Original violet-perf defconfig
+    # 6. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
       run: |
+        set -e
+
         export ARCH=arm64
+
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
@@ -332,12 +426,15 @@ jobs:
 
 
     # ============================================================
-    # 9. Configure Matrix
+    # 7. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
       run: |
+        set -e
+
         export ARCH=arm64
+
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         BUILD_TYPE="${{ matrix.build_type }}"
@@ -347,15 +444,15 @@ jobs:
         echo "$BUILD_TYPE"
         echo "========================================"
 
+
         case "$BUILD_TYPE" in
 
-          # ------------------------------------------------------
+          # ======================================================
           # BASE
-          # ------------------------------------------------------
+          # ======================================================
 
           Base)
 
-            echo "Base kernel"
             echo "KernelSU: DISABLED"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
@@ -371,13 +468,13 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
+          # ======================================================
           # KSU
-          # ------------------------------------------------------
+          # ======================================================
 
           KSU)
 
-            echo "KernelSU-Next"
+            echo "KernelSU: ENABLED"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
 
@@ -399,13 +496,13 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
+          # ======================================================
           # KSU + NOMOUNT
-          # ------------------------------------------------------
+          # ======================================================
 
           KSU-NoMount)
 
-            echo "KernelSU-Next"
+            echo "KernelSU: ENABLED"
             echo "SUSFS: DISABLED"
             echo "NoMount: ENABLED"
 
@@ -427,13 +524,13 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
+          # ======================================================
           # KSU + SUSFS
-          # ------------------------------------------------------
+          # ======================================================
 
           KSU-SUSFS)
 
-            echo "KernelSU-Next"
+            echo "KernelSU: ENABLED"
             echo "SUSFS: ENABLED"
             echo "NoMount: DISABLED"
 
@@ -455,13 +552,13 @@ jobs:
             ;;
 
 
-          # ------------------------------------------------------
+          # ======================================================
           # KSU + SUSFS + NOMOUNT
-          # ------------------------------------------------------
+          # ======================================================
 
           KSU-SUSFS-NoMount)
 
-            echo "KernelSU-Next"
+            echo "KernelSU: ENABLED"
             echo "SUSFS: ENABLED"
             echo "NoMount: ENABLED"
 
@@ -508,7 +605,7 @@ jobs:
 
 
         # ========================================================
-        # Verify final configuration
+        # Final configuration
         # ========================================================
 
         echo
@@ -520,6 +617,12 @@ jobs:
         echo "--- KernelSU ---"
 
         grep -E '^CONFIG_KSU' \
+          out/.config || true
+
+        echo
+        echo "--- SUSFS ---"
+
+        grep -E '^CONFIG_KSU_SUSFS' \
           out/.config || true
 
         echo
@@ -640,9 +743,6 @@ jobs:
 
         # ========================================================
         # Save FULL final configuration
-        #
-        # This is the complete active .config.
-        # It is NOT savedefconfig.
         # ========================================================
 
         echo
@@ -663,12 +763,8 @@ jobs:
         ls -lh \
           "out/${DEFCONFIG_NAME}"
 
-
         echo
-        echo "========================================"
-        echo "LINE COUNT"
-        echo "========================================"
-
+        echo "LINE COUNT:"
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
@@ -707,7 +803,7 @@ jobs:
 
 
     # ============================================================
-    # 10. Upload Full Final Defconfig BEFORE BUILD
+    # 8. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -719,12 +815,15 @@ jobs:
 
 
     # ============================================================
-    # 11. Verify the exact config used for build
+    # 9. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
       run: |
+        set -e
+
         export ARCH=arm64
+
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         echo "========================================"
@@ -754,17 +853,79 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
+        echo "KPROBES:"
+        grep -E '^CONFIG_KPROBES' out/.config || true
+
+
+        echo
         echo "========================================"
         echo "BUILD CONFIG READY"
         echo "========================================"
 
 
     # ============================================================
-    # 12. Build Kernel
+    # 10. Verify Cross Compiler
+    # ============================================================
+
+    - name: Verify Cross Compiler
+      run: |
+        set -e
+
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        echo "========================================"
+        echo "VERIFYING CROSS COMPILERS"
+        echo "========================================"
+
+        echo
+        echo "--- GCC64 ---"
+
+        command -v aarch64-linux-android-gcc || true
+        command -v aarch64-linux-android-ld || true
+        command -v aarch64-linux-android-as || true
+
+        echo
+        echo "--- GCC32 ---"
+
+        command -v arm-linux-androideabi-gcc || true
+        command -v arm-linux-androideabi-ld || true
+        command -v arm-linux-androideabi-as || true
+
+        echo
+        echo "========================================"
+        echo "CROSS COMPILER PATHS"
+        echo "========================================"
+
+        find "$GCC64_PATH/bin" \
+          -maxdepth 1 \
+          -type f \
+          | grep 'aarch64-linux-android' \
+          | head -30 || true
+
+        find "$GCC32_PATH/bin" \
+          -maxdepth 1 \
+          -type f \
+          | grep 'arm-linux-androideabi' \
+          | head -30 || true
+
+        echo
+        echo "========================================"
+        echo "CROSS COMPILER CHECK COMPLETE"
+        echo "========================================"
+
+
+    # ============================================================
+    # 11. Build Kernel
+    #
+    # AOSP Clang
+    # GCC64 Android 4.9
+    # GCC32 Android 4.9
     # ============================================================
 
     - name: Build Kernel
       run: |
+        set -o pipefail
+
         export ARCH=arm64
 
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
@@ -773,36 +934,59 @@ jobs:
         export KBUILD_BUILD_HOST=LineageOS
         export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
 
+
         echo "========================================"
         echo "BUILDING KERNEL"
         echo "========================================"
 
-        echo "BUILD TYPE: ${{ matrix.build_type }}"
+        echo "BUILD TYPE:"
+        echo "${{ matrix.build_type }}"
 
         echo
         echo "========================================"
-        echo "TOOLCHAIN"
+        echo "CLANG"
         echo "========================================"
 
-        clang --version | head -n 1
-        ld.lld --version | head -n 1
+        clang --version
 
         echo
         echo "========================================"
-        echo "CROSS COMPILE"
+        echo "LLD"
         echo "========================================"
 
+        ld.lld --version
+
+        echo
+        echo "========================================"
+        echo "CROSS COMPILE SETTINGS"
+        echo "========================================"
+
+        echo "ARCH=arm64"
+        echo "LLVM=1"
+        echo "LLVM_IAS=1"
+        echo "CC=clang"
+        echo "LD=ld.lld"
+        echo "AR=llvm-ar"
+        echo "AS=llvm-as"
+        echo "NM=llvm-nm"
+        echo "OBJCOPY=llvm-objcopy"
+        echo "OBJDUMP=llvm-objdump"
+        echo "STRIP=llvm-strip"
+
+        echo
         echo "CROSS_COMPILE=aarch64-linux-android-"
         echo "CROSS_COMPILE_COMPAT=arm-linux-androideabi-"
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-"
         echo "CLANG_TRIPLE=aarch64-linux-gnu-"
 
+
         echo
         echo "========================================"
-        echo "STARTING BUILD"
+        echo "STARTING KERNEL BUILD"
         echo "========================================"
 
-        make -j$(nproc --all) \
+
+        make -j"$(nproc --all)" \
           O=out \
           ARCH=arm64 \
           LLVM=1 \
@@ -815,19 +999,21 @@ jobs:
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
           2>&1 | tee build.log
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 12. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
       run: |
+        set -e
+
         echo "========================================"
         echo "CHECKING BUILD"
         echo "========================================"
@@ -839,21 +1025,28 @@ jobs:
         echo "BUILD SUCCESS"
         echo "========================================"
 
-        echo "TYPE: ${{ matrix.build_type }}"
+        echo "TYPE:"
+        echo "${{ matrix.build_type }}"
 
+        echo
+        echo "KERNEL:"
         ls -lh \
           out/arch/arm64/boot/Image.gz
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 13. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
       run: |
+        set -e
+
         echo "========================================"
         echo "PACKAGING ANYKERNEL3"
         echo "========================================"
+
+        rm -rf AK3
 
         git clone \
           --depth=1 \
@@ -861,15 +1054,21 @@ jobs:
           https://github.com/Joker-V2/AnyKernel3.git \
           AK3
 
+        test -d AK3
+
         cp \
           out/arch/arm64/boot/Image.gz \
           AK3/
 
+
         if [ -f out/arch/arm64/boot/dtbo.img ]; then
+
           cp \
             out/arch/arm64/boot/dtbo.img \
             AK3/
+
         fi
+
 
         cd AK3
 
@@ -879,13 +1078,18 @@ jobs:
 
         cd ..
 
+
         echo
+        echo "========================================"
+        echo "ANYKERNEL3 PACKAGE"
+        echo "========================================"
+
         ls -lh \
           "Kernel-violet-${{ matrix.build_type }}-${BUILD_TIME}.zip"
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 14. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -897,11 +1101,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Full Active .config
-    #
-    # IMPORTANT:
-    # .config is a hidden file.
-    # include-hidden-files is required by upload-artifact@v4.
+    # 15. Upload Full Active .config
     # ============================================================
 
     - name: Upload Full Active Config
@@ -914,7 +1114,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 16. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
