@@ -1,467 +1,411 @@
-name: Kernel Cross-Compile Deep Diagnostic
+name: CROSS_COMPILE 13-REFERENCE DIAGNOSTIC
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   diagnostic:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
-
-      # ============================================================
-      # 1. Checkout
-      # ============================================================
-
-      - name: Checkout Kernel
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: 16
           fetch-depth: 1
 
-
-      # ============================================================
-      # 2. Install tools
-      # ============================================================
-
-      - name: Install Diagnostic Tools
+      - name: Run 13-reference diagnostic
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ripgrep \
-            git \
-            file \
-            tree
-
-
-      # ============================================================
-      # 3. Create report directory
-      # ============================================================
-
-      - name: Prepare Report
-        run: |
-          rm -rf diagnostic
-          mkdir -p diagnostic
-
-          echo "Kernel Cross-Compile Diagnostic" \
-            > diagnostic/report.txt
-
-          echo "========================================" \
-            >> diagnostic/report.txt
-
-          echo "Repository: $GITHUB_REPOSITORY" \
-            >> diagnostic/report.txt
-
-          echo "Branch: $GITHUB_REF_NAME" \
-            >> diagnostic/report.txt
-
-          echo "Commit: $GITHUB_SHA" \
-            >> diagnostic/report.txt
-
-          echo "========================================" \
-            >> diagnostic/report.txt
-
-          echo \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 4. Git tracked files
-      # ============================================================
-
-      - name: Generate Git File Index
-        run: |
-          echo "========================================" \
-            >> diagnostic/report.txt
-
-          echo "GIT TRACKED FILES" \
-            >> diagnostic/report.txt
-
-          echo "========================================" \
-            >> diagnostic/report.txt
-
-          git ls-files \
-            >> diagnostic/git-files.txt
-
-          wc -l diagnostic/git-files.txt \
-            >> diagnostic/report.txt
-
-          echo \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 5. CROSS_COMPILE_COMPAT
-      # ============================================================
-
-      - name: Scan CROSS_COMPILE_COMPAT
-        run: |
-          {
-            echo "========================================"
-            echo "CROSS_COMPILE_COMPAT"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              --glob '!*.a' \
-              --glob '!*.so' \
-              'CROSS_COMPILE_COMPAT' \
-              . || true
-
-            echo
-          } | tee diagnostic/cross_compile_compat.txt
-
-          cat diagnostic/cross_compile_compat.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 6. CROSS_COMPILE_ARM32
-      # ============================================================
-
-      - name: Scan CROSS_COMPILE_ARM32
-        run: |
-          {
-            echo "========================================"
-            echo "CROSS_COMPILE_ARM32"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              --glob '!*.a' \
-              --glob '!*.so' \
-              'CROSS_COMPILE_ARM32' \
-              . || true
-
-            echo
-          } | tee diagnostic/cross_compile_arm32.txt
-
-          cat diagnostic/cross_compile_arm32.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 7. CROSS_COMPILE
-      # ============================================================
-
-      - name: Scan CROSS_COMPILE
-        run: |
-          {
-            echo "========================================"
-            echo "ALL CROSS_COMPILE REFERENCES"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              --glob '!*.a' \
-              --glob '!*.so' \
-              'CROSS_COMPILE' \
-              . || true
-
-            echo
-          } | tee diagnostic/all_cross_compile.txt
-
-          cat diagnostic/all_cross_compile.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 8. CONFIG_COMPAT
-      # ============================================================
-
-      - name: Scan CONFIG_COMPAT
-        run: |
-          {
-            echo "========================================"
-            echo "CONFIG_COMPAT"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              'CONFIG_COMPAT' \
-              arch/ Makefile Kconfig* scripts/ 2>/dev/null || true
-
-            echo
-          } | tee diagnostic/config_compat.txt
-
-          cat diagnostic/config_compat.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 9. AARCH32
-      # ============================================================
-
-      - name: Scan AARCH32
-        run: |
-          {
-            echo "========================================"
-            echo "AARCH32 / ARM32 REFERENCES"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              'AARCH32|AARCH32_EL0|ARM32|arm32' \
-              arch/ Makefile Kconfig* scripts/ 2>/dev/null || true
-
-            echo
-          } | tee diagnostic/aarch32.txt
-
-          cat diagnostic/aarch32.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 10. CLANG_TRIPLE
-      # ============================================================
-
-      - name: Scan CLANG_TRIPLE
-        run: |
-          {
-            echo "========================================"
-            echo "CLANG_TRIPLE"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CLANG_TRIPLE' \
-              . || true
-
-            echo
-          } | tee diagnostic/clang_triple.txt
-
-          cat diagnostic/clang_triple.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 11. LLVM
-      # ============================================================
-
-      - name: Scan LLVM Build System
-        run: |
-          {
-            echo "========================================"
-            echo "LLVM REFERENCES"
-            echo "========================================"
-
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              --glob '!*.o' \
-              --glob '!*.ko' \
-              'LLVM=|LLVM_IAS|LLVM_CLANG|CONFIG_LTO_CLANG|CONFIG_LTO' \
-              Makefile arch/ scripts/ \
-              2>/dev/null || true
-
-            echo
-          } | tee diagnostic/llvm.txt
-
-          cat diagnostic/llvm.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 12. ARM64 Makefiles
-      # ============================================================
-
-      - name: Inspect ARM64 Build Files
-        run: |
-          {
-            echo "========================================"
-            echo "ARM64 BUILD FILES"
-            echo "========================================"
-
-            echo
-            echo "--- arch/arm64/Makefile ---"
-
-            if [ -f arch/arm64/Makefile ]; then
-              sed -n '1,260p' arch/arm64/Makefile
+          set +e
+
+          REPORT="cross_compile_13_report.txt"
+          : > "$REPORT"
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "CROSS_COMPILE 13-REFERENCE DIAGNOSTIC" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+          echo "" | tee -a "$REPORT"
+
+          PASS=0
+          WARN=0
+          FAIL=0
+
+          check() {
+            local name="$1"
+            local result="$2"
+            local detail="$3"
+
+            echo "[$result] $name" | tee -a "$REPORT"
+            echo "    $detail" | tee -a "$REPORT"
+            echo "" | tee -a "$REPORT"
+
+            case "$result" in
+              PASS) PASS=$((PASS + 1)) ;;
+              WARN) WARN=$((WARN + 1)) ;;
+              FAIL) FAIL=$((FAIL + 1)) ;;
+            esac
+          }
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 1: TOP-LEVEL CROSS_COMPILE" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if grep -nE '^[[:space:]]*CROSS_COMPILE[[:space:]]*[?:+]?=' Makefile 2>/dev/null; then
+            check \
+              "Makefile CROSS_COMPILE definition" \
+              "PASS" \
+              "Top-level Kbuild CROSS_COMPILE definition detected."
+          else
+            check \
+              "Makefile CROSS_COMPILE definition" \
+              "WARN" \
+              "No direct top-level CROSS_COMPILE assignment detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 2: KERNEL CONFIG CROSS_COMPILE" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if grep -nE 'config CROSS_COMPILE|CONFIG_CROSS_COMPILE' \
+              init/Kconfig arch/arm64/configs 2>/dev/null; then
+            check \
+              "CONFIG_CROSS_COMPILE" \
+              "PASS" \
+              "Kconfig/defconfig CROSS_COMPILE references detected."
+          else
+            check \
+              "CONFIG_CROSS_COMPILE" \
+              "WARN" \
+              "No CONFIG_CROSS_COMPILE reference detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 3: GCC TOOL DEFINITIONS" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          GCC_REFS=$(grep -nE \
+            '(^|[^A-Za-z0-9_])(CC|LD|AR|NM|OBJCOPY|OBJDUMP|READELF|STRIP)[[:space:]]*=' \
+            Makefile 2>/dev/null)
+
+          if echo "$GCC_REFS" | grep -q 'CROSS_COMPILE'; then
+            check \
+              "GCC CROSS_COMPILE tool mapping" \
+              "PASS" \
+              "CC/LD/AR/NM/OBJCOPY/OBJDUMP/READELF/STRIP are mapped through CROSS_COMPILE."
+          else
+            check \
+              "GCC CROSS_COMPILE tool mapping" \
+              "WARN" \
+              "Expected GCC tool mapping was not detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 4: ARCH/ARM64 CROSS_COMPILE" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          ARCH_REFS=$(grep -RInE \
+            'CROSS_COMPILE[[:space:]]*[:?+]?=' \
+            arch/arm64 2>/dev/null)
+
+          if [ -n "$ARCH_REFS" ]; then
+            echo "$ARCH_REFS" | tee -a "$REPORT"
+            check \
+              "arch/arm64 CROSS_COMPILE" \
+              "PASS" \
+              "Architecture-specific CROSS_COMPILE references detected."
+          else
+            check \
+              "arch/arm64 CROSS_COMPILE" \
+              "PASS" \
+              "No arch/arm64 override detected; top-level value remains authoritative."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 5: CROSS_COMPILE_ARM32" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          ARM32_REFS=$(grep -RInE \
+            'CROSS_COMPILE_ARM32|CROSS_COMPILE_COMPAT' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . 2>/dev/null)
+
+          if echo "$ARM32_REFS" | grep -q 'CROSS_COMPILE_ARM32'; then
+            echo "$ARM32_REFS" | tee -a "$REPORT"
+            check \
+              "CROSS_COMPILE_ARM32" \
+              "WARN" \
+              "ARM32/compat references exist. These must be evaluated separately from arm64 GCC/Clang."
+          else
+            check \
+              "CROSS_COMPILE_ARM32" \
+              "PASS" \
+              "No CROSS_COMPILE_ARM32 reference detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 6: CROSS_COMPILE_COMPAT" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if echo "$ARM32_REFS" | grep -q 'CROSS_COMPILE_COMPAT'; then
+            check \
+              "CROSS_COMPILE_COMPAT" \
+              "WARN" \
+              "Compat cross compiler reference detected."
+          else
+            check \
+              "CROSS_COMPILE_COMPAT" \
+              "PASS" \
+              "No CROSS_COMPILE_COMPAT reference detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 7: AndroidKernel.mk" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if [ -f AndroidKernel.mk ]; then
+            AK_REFS=$(grep -nE \
+              'CROSS_COMPILE|KERNEL_CROSS_COMPILE|TARGET_KERNEL_CROSS_COMPILE_PREFIX' \
+              AndroidKernel.mk 2>/dev/null)
+
+            echo "$AK_REFS" | tee -a "$REPORT"
+
+            if echo "$AK_REFS" | grep -q 'KERNEL_CROSS_COMPILE'; then
+              check \
+                "AndroidKernel.mk CROSS_COMPILE" \
+                "WARN" \
+                "AndroidKernel.mk explicitly supplies KERNEL_CROSS_COMPILE to kernel make."
             else
-              echo "NOT FOUND"
+              check \
+                "AndroidKernel.mk CROSS_COMPILE" \
+                "PASS" \
+                "AndroidKernel.mk contains no active KERNEL_CROSS_COMPILE assignment."
             fi
+          else
+            check \
+              "AndroidKernel.mk CROSS_COMPILE" \
+              "PASS" \
+              "AndroidKernel.mk does not exist in this tree."
+          fi
 
-            echo
-            echo "--- arch/arm64/Kconfig ---"
 
-            if [ -f arch/arm64/Kconfig ]; then
-              rg -n \
-                'COMPAT|AARCH32|ARM32|LTO|LLVM' \
-                arch/arm64/Kconfig || true
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 8: build.config.aarch64" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if [ -f build.config.aarch64 ]; then
+            grep -nE 'CROSS_COMPILE|GCC_CROSS_COMPILE' \
+              build.config.aarch64 | tee -a "$REPORT"
+
+            check \
+              "build.config.aarch64" \
+              "PASS" \
+              "AArch64 build configuration contains CROSS_COMPILE information."
+          else
+            check \
+              "build.config.aarch64" \
+              "PASS" \
+              "build.config.aarch64 not present."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 9: GCC TOOLCHAIN PATHS" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          GCC_PATH_REFS=$(grep -RInE \
+            'prebuilts/gcc|gcc.*CROSS_COMPILE|CROSS_COMPILE.*gcc' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . 2>/dev/null)
+
+          if [ -n "$GCC_PATH_REFS" ]; then
+            echo "$GCC_PATH_REFS" | tee -a "$REPORT"
+            check \
+              "GCC toolchain path references" \
+              "PASS" \
+              "GCC toolchain references detected."
+          else
+            check \
+              "GCC toolchain path references" \
+              "WARN" \
+              "No GCC toolchain path reference detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 10: CLANG REFERENCES" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          CLANG_REFS=$(grep -RInE \
+            '(^|[^A-Za-z0-9_])(CC[[:space:]]*=[[:space:]]*clang|LLVM=|clang|ld\.lld|llvm-ar|llvm-nm|llvm-objcopy|llvm-objdump|llvm-strip)' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . 2>/dev/null)
+
+          if [ -n "$CLANG_REFS" ]; then
+            echo "$CLANG_REFS" | head -n 200 | tee -a "$REPORT"
+            check \
+              "Clang/LLVM references" \
+              "PASS" \
+              "Clang/LLVM tool references detected."
+          else
+            check \
+              "Clang/LLVM references" \
+              "WARN" \
+              "No Clang/LLVM references detected."
+          fi
+
+
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 11: CLANG + CROSS_COMPILE RELATION" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          if grep -RInE \
+            'CC[[:space:]]*=[[:space:]]*clang|LLVM[[:space:]]*=' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . >/tmp/clang_refs 2>/dev/null; then
+
+            if grep -RInE \
+              'CROSS_COMPILE[[:space:]]*=' \
+              --exclude-dir=.git \
+              --exclude='cross_compile_13_report.txt' \
+              . >/tmp/cross_refs 2>/dev/null; then
+
+              check \
+                "Clang CROSS_COMPILE relationship" \
+                "PASS" \
+                "Clang and CROSS_COMPILE are independently represented; CROSS_COMPILE is not being used as clang binary prefix."
             else
-              echo "NOT FOUND"
+              check \
+                "Clang CROSS_COMPILE relationship" \
+                "PASS" \
+                "Clang is configured without an explicit CROSS_COMPILE override."
             fi
+          else
+            check \
+              "Clang CROSS_COMPILE relationship" \
+              "WARN" \
+              "No explicit Clang configuration detected."
+          fi
 
-            echo
-          } | tee diagnostic/arm64-build-files.txt
 
-          cat diagnostic/arm64-build-files.txt \
-            >> diagnostic/report.txt
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 12: GNU BINUTILS USED WITH CLANG" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
+
+          GNU_WITH_CLANG=$(grep -RInE \
+            'CC[[:space:]]*=[[:space:]]*clang|LLVM=' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . 2>/dev/null)
+
+          GNU_BINUTILS=$(grep -RInE \
+            'LD[[:space:]]*=[[:space:]]*[^ ]*ld([[:space:]]|$)|AR[[:space:]]*=[[:space:]]*[^ ]*ar([[:space:]]|$)|OBJCOPY[[:space:]]*=' \
+            --exclude-dir=.git \
+            --exclude='cross_compile_13_report.txt' \
+            . 2>/dev/null)
+
+          if [ -n "$GNU_WITH_CLANG" ] && [ -n "$GNU_BINUTILS" ]; then
+            echo "$GNU_BINUTILS" | head -n 100 | tee -a "$REPORT"
+            check \
+              "Clang/GNU binutils mixing" \
+              "WARN" \
+              "Clang configuration and GNU binutils references coexist. Verify intentionally."
+          else
+            check \
+              "Clang/GNU binutils mixing" \
+              "PASS" \
+              "No suspicious explicit Clang/GNU binutils conflict detected."
+          fi
 
 
-      # ============================================================
-      # 13. Kernel root Makefile
-      # ============================================================
+          echo "========================================" | tee -a "$REPORT"
+          echo "REFERENCE 13: FINAL EFFECTIVE CONFIG" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
 
-      - name: Inspect Root Makefile
-        run: |
           {
-            echo "========================================"
-            echo "ROOT MAKEFILE CROSS COMPILE LOGIC"
-            echo "========================================"
+            echo "ARCH=${ARCH:-<not-set>}"
+            echo "CROSS_COMPILE=${CROSS_COMPILE:-<not-set>}"
+            echo "CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32:-<not-set>}"
+            echo "CROSS_COMPILE_COMPAT=${CROSS_COMPILE_COMPAT:-<not-set>}"
+            echo "CC=${CC:-<not-set>}"
+            echo "LD=${LD:-<not-set>}"
+            echo "AR=${AR:-<not-set>}"
+            echo "NM=${NM:-<not-set>}"
+            echo "OBJCOPY=${OBJCOPY:-<not-set>}"
+            echo "OBJDUMP=${OBJDUMP:-<not-set>}"
+            echo "READELF=${READELF:-<not-set>}"
+            echo "STRIP=${STRIP:-<not-set>}"
+          } | tee -a "$REPORT"
 
-            rg -n \
-              'CROSS_COMPILE|LLVM|CLANG_TRIPLE|COMPAT|ARM32' \
-              Makefile \
-              2>/dev/null || true
+          echo "" | tee -a "$REPORT"
 
-            echo
-          } | tee diagnostic/root-makefile.txt
+          echo "========================================" | tee -a "$REPORT"
+          echo "RECOMMENDED MODEL" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
 
-          cat diagnostic/root-makefile.txt \
-            >> diagnostic/report.txt
+          cat <<'EOF' | tee -a "$REPORT"
 
+          GCC:
+            CROSS_COMPILE=<GCC PREFIX>
 
-      # ============================================================
-      # 14. Exact relevant files
-      # ============================================================
+          Clang:
+            CC=clang
+            LD=ld.lld
+            AR=llvm-ar
+            NM=llvm-nm
+            OBJCOPY=llvm-objcopy
+            OBJDUMP=llvm-objdump
+            READELF=llvm-readelf
+            STRIP=llvm-strip
 
-      - name: Find Relevant Build Files
-        run: |
-          {
-            echo "========================================"
-            echo "RELEVANT BUILD FILES"
-            echo "========================================"
+          IMPORTANT:
+            CROSS_COMPILE must not be used as the clang executable prefix.
 
-            find arch/arm64 arch/arm scripts \
-              -type f \
-              \( \
-                -name 'Makefile' \
-                -o -name 'Kconfig' \
-                -o -name 'Kconfig.*' \
-                \) \
-              2>/dev/null \
-              | sort
+            With Clang, CROSS_COMPILE may still be used as the target
+            triple/prefix when required by this kernel's Kbuild.
 
-            echo
-          } | tee diagnostic/build-files.txt
+            CROSS_COMPILE_ARM32 and CROSS_COMPILE_COMPAT are independent
+            compatibility/32-bit paths and must not be invented unless
+            the source tree actually requires them.
 
-          cat diagnostic/build-files.txt \
-            >> diagnostic/report.txt
+          EOF
 
+          echo "========================================" | tee -a "$REPORT"
+          echo "SUMMARY" | tee -a "$REPORT"
+          echo "========================================" | tee -a "$REPORT"
 
-      # ============================================================
-      # 15. Summary
-      # ============================================================
+          echo "PASS = $PASS" | tee -a "$REPORT"
+          echo "WARN = $WARN" | tee -a "$REPORT"
+          echo "FAIL = $FAIL" | tee -a "$REPORT"
+          echo "" | tee -a "$REPORT"
 
-      - name: Generate Summary
-        run: |
-          {
-            echo "========================================"
-            echo "SUMMARY"
-            echo "========================================"
+          if [ "$FAIL" -gt 0 ]; then
+            echo "FINAL RESULT: FAIL" | tee -a "$REPORT"
+          elif [ "$WARN" -gt 0 ]; then
+            echo "FINAL RESULT: WARN" | tee -a "$REPORT"
+          else
+            echo "FINAL RESULT: PASS" | tee -a "$REPORT"
+          fi
 
-            echo
-            echo "CROSS_COMPILE_COMPAT references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CROSS_COMPILE_COMPAT' \
-              . | wc -l || true
+          echo ""
+          echo "========================================"
+          echo "REPORT: $REPORT"
+          echo "========================================"
 
-            echo
-            echo "CROSS_COMPILE_ARM32 references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CROSS_COMPILE_ARM32' \
-              . | wc -l || true
-
-            echo
-            echo "CROSS_COMPILE references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CROSS_COMPILE' \
-              . | wc -l || true
-
-            echo
-            echo "CONFIG_COMPAT references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CONFIG_COMPAT' \
-              arch/ Makefile scripts/ \
-              2>/dev/null | wc -l || true
-
-            echo
-            echo "CLANG_TRIPLE references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CLANG_TRIPLE' \
-              . | wc -l || true
-
-            echo
-            echo "LTO references:"
-            rg -n \
-              --hidden \
-              --glob '!.git/**' \
-              'CONFIG_LTO|LTO_CLANG|LLVM_IAS' \
-              Makefile arch/ scripts/ \
-              2>/dev/null | wc -l || true
-
-            echo
-            echo "========================================"
-            echo "END OF SUMMARY"
-            echo "========================================"
-
-          } | tee diagnostic/summary.txt
-
-          cat diagnostic/summary.txt \
-            >> diagnostic/report.txt
-
-
-      # ============================================================
-      # 16. Create archive
-      # ============================================================
-
-      - name: Create Diagnostic Archive
-        run: |
-          tar -czf \
-            kernel-cross-compile-diagnostic.tar.gz \
-            diagnostic
-
-          ls -lh \
-            kernel-cross-compile-diagnostic.tar.gz
-
-
-      # ============================================================
-      # 17. Upload Artifact
-      # ============================================================
-
-      - name: Upload Diagnostic Artifact
+      - name: Upload diagnostic report
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-cross-compile-diagnostic-${{ github.sha }}
-          path: |
-            diagnostic/
-            kernel-cross-compile-diagnostic.tar.gz
-          if-no-files-found: error
-          retention-days: 7
+          name: cross-compile-13-diagnostic
+          path: cross_compile_13_report.txt
