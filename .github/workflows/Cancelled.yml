@@ -1,0 +1,45 @@
+name: Delete Cancelled Builds
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: write
+
+    steps:
+      - name: Delete cancelled workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "DELETE CANCELLED WORKFLOW RUNS"
+          echo "========================================"
+
+          gh run list \
+            --repo "$REPO" \
+            --status cancelled \
+            --limit 100 \
+            --json databaseId,name,status \
+            --jq '.[] | "\(.databaseId)|\(.name)|\(.status)"' |
+          while IFS='|' read -r RUN_ID NAME STATUS; do
+            [ -z "$RUN_ID" ] && continue
+
+            echo "Deleting:"
+            echo "  ID:     $RUN_ID"
+            echo "  Name:   $NAME"
+            echo "  Status: $STATUS"
+
+            gh run delete "$RUN_ID" --repo "$REPO"
+          done
+
+          echo
+          echo "========================================"
+          echo "CLEANUP COMPLETE"
+          echo "========================================"
