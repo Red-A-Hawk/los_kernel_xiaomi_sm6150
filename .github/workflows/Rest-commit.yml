@@ -1,0 +1,37 @@
+name: Reset Branch to Commit
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'اسم الفرع اللي تبي ترجعه'
+        required: true
+        default: 'اسم_الفرع'
+      target_commit:
+        description: 'هاش الكومِت اللي تبي ترجع له'
+        required: true
+        default: '23c3875'
+
+jobs:
+  reset-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.target_branch }}
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Reset to target commit
+        run: |
+          git reset --hard ${{ github.event.inputs.target_commit }}
+
+      - name: Force push
+        run: |
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/Red-A-Hawk/los_kernel_xiaomi_sm6150.git HEAD:${{ github.event.inputs.target_branch }} --force
