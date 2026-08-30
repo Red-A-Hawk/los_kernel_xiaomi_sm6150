@@ -434,89 +434,6 @@ jobs:
 
 
         # ========================================================
-        # KSU SYMBOL DIAGNOSTIC
-        # ========================================================
-
-        if [ "$BUILD_TYPE" != "Base" ]; then
-
-          echo
-          echo "========================================"
-          echo "KSU FUNCTION DEFINITIONS"
-          echo "========================================"
-
-          grep -Rns \
-            --include='*.c' \
-            --include='*.h' \
-            -E \
-            'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
-            drivers/kernelsu KernelSU 2>/dev/null || true
-
-
-          echo
-          echo "========================================"
-          echo "KERNELSU MAKEFILE"
-          echo "========================================"
-
-          cat drivers/kernelsu/Makefile
-
-
-          echo
-          echo "========================================"
-          echo "KERNELSU SOURCE FILES"
-          echo "========================================"
-
-          find drivers/kernelsu \
-            -type f \
-            \( \
-              -name '*.c' \
-              -o -name '*.h' \
-              -o -name 'Makefile' \
-              -o -name 'Kconfig' \
-            \) \
-            -print | sort
-
-
-          echo
-          echo "========================================"
-          echo "KSU BUILT-IN ARCHIVE"
-          echo "========================================"
-
-          if [ -f out/drivers/kernelsu/built-in.a ]; then
-
-            ar t \
-              out/drivers/kernelsu/built-in.a
-
-          else
-
-            echo "KSU built-in.a does not exist yet."
-
-          fi
-
-
-          echo
-          echo "========================================"
-          echo "KSU SYMBOLS FROM ARCHIVE"
-          echo "========================================"
-
-          if [ -f out/drivers/kernelsu/built-in.a ]; then
-
-            nm -A \
-              out/drivers/kernelsu/built-in.a \
-              2>/dev/null |
-              grep -E \
-              'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
-              || true
-
-          else
-
-            echo "No KSU archive available."
-
-          fi
-
-        fi
-
-
-        # ========================================================
         # SUSFS validation
         # ========================================================
 
@@ -647,13 +564,11 @@ jobs:
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
-
         echo
         echo "KERNELSU CONFIG"
 
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
-
 
         echo
         echo "SUSFS CONFIG"
@@ -661,13 +576,11 @@ jobs:
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
 
-
         echo
         echo "NOMOUNT CONFIG"
 
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
-
 
         echo
         echo "FULL FINAL DEFCONFIG READY"
@@ -731,7 +644,128 @@ jobs:
 
 
     # ============================================================
-    # 12. Build Kernel
+    # 12. Build KernelSU ONLY
+    #
+    # This is diagnostic.
+    # It forces Kbuild to create drivers/kernelsu/built-in.a
+    # before the complete kernel build.
+    # ============================================================
+
+    - name: Build KernelSU Diagnostic
+      if: ${{ matrix.build_type != 'Base' }}
+      run: |
+        export ARCH=arm64
+        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+        export KBUILD_BUILD_USER=Manipulator
+        export KBUILD_BUILD_HOST=LineageOS
+        export KBUILD_COMPILER_STRING="$CLANG_PATH/clang"
+
+        echo "========================================"
+        echo "BUILDING KERNELSU ONLY"
+        echo "========================================"
+
+        make -j$(nproc --all) \
+          O=out \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CC=clang \
+          CLANG_TRIPLE=$CLANG_PATH/aarch64-linux-gnu- \
+          CROSS_COMPILE=$GCC64_PATH/bin/aarch64-elf- \
+          CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-eabi- \
+          drivers/kernelsu/
+
+
+        echo
+        echo "========================================"
+        echo "KSU BUILD COMPLETE"
+        echo "========================================"
+
+        if [ -f out/drivers/kernelsu/built-in.a ]; then
+          echo "KSU ARCHIVE FOUND:"
+          ls -lh out/drivers/kernelsu/built-in.a
+        else
+          echo "ERROR: KSU ARCHIVE WAS NOT CREATED"
+          exit 1
+        fi
+
+
+        echo
+        echo "========================================"
+        echo "KSU ARCHIVE OBJECTS"
+        echo "========================================"
+
+        ar t \
+          out/drivers/kernelsu/built-in.a
+
+
+        echo
+        echo "========================================"
+        echo "KSU SYMBOL SEARCH"
+        echo "========================================"
+
+        nm -A \
+          out/drivers/kernelsu/built-in.a \
+          2>/dev/null |
+          grep -E \
+          'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
+          || true
+
+
+        echo
+        echo "========================================"
+        echo "EXPECTED SYMBOL STATUS"
+        echo "========================================"
+
+        for symbol in \
+          ksu_handle_stat \
+          ksu_handle_execveat \
+          ksu_handle_faccessat
+        do
+
+          echo
+          echo "SYMBOL: $symbol"
+
+          nm -A \
+            out/drivers/kernelsu/built-in.a \
+            2>/dev/null |
+            grep -E \
+            "[[:space:]][TUWB][[:space:]]${symbol}$" \
+            || echo "NOT DEFINED IN KSU ARCHIVE"
+
+        done
+
+
+        echo
+        echo "========================================"
+        echo "KSU OBJECT SYMBOL DETAILS"
+        echo "========================================"
+
+        for obj in $(ar t out/drivers/kernelsu/built-in.a); do
+
+          echo
+          echo "OBJECT: $obj"
+
+          ar p \
+            out/drivers/kernelsu/built-in.a \
+            "$obj" |
+            nm - 2>/dev/null |
+            grep -E \
+            'ksu_handle_stat|ksu_handle_execveat|ksu_handle_faccessat' \
+            || true
+
+        done
+
+
+        echo
+        echo "========================================"
+        echo "KSU DIAGNOSTIC COMPLETE"
+        echo "========================================"
+
+
+    # ============================================================
+    # 13. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -762,7 +796,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 14. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -785,7 +819,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 15. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -824,7 +858,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 16. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -836,7 +870,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Full Active Config
+    # 17. Upload Full Active Config
     # ============================================================
 
     - name: Upload Full Active Config
@@ -849,7 +883,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
