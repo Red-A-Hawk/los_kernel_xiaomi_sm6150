@@ -1,57 +1,467 @@
-name: Scan Cross Compile Variables
+name: Kernel Cross-Compile Deep Diagnostic
 
 on:
   workflow_dispatch:
 
 jobs:
-  scan:
+  diagnostic:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================================================
+      # 1. Checkout
+      # ============================================================
+
       - name: Checkout Kernel
         uses: actions/checkout@v4
         with:
+          ref: 16
           fetch-depth: 1
 
-      - name: Scan CROSS_COMPILE Variables
+
+      # ============================================================
+      # 2. Install tools
+      # ============================================================
+
+      - name: Install Diagnostic Tools
         run: |
-          echo "========================================"
-          echo "CROSS COMPILE TREE SCAN"
-          echo "========================================"
+          sudo apt-get update
+          sudo apt-get install -y \
+            ripgrep \
+            git \
+            file \
+            tree
 
-          echo
-          echo "=== CROSS_COMPILE_COMPAT ==="
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            'CROSS_COMPILE_COMPAT' . || true
 
-          echo
-          echo "=== CROSS_COMPILE_ARM32 ==="
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            'CROSS_COMPILE_ARM32' . || true
+      # ============================================================
+      # 3. Create report directory
+      # ============================================================
 
-          echo
-          echo "=== CROSS_COMPILE ==="
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            'CROSS_COMPILE' . || true
+      - name: Prepare Report
+        run: |
+          rm -rf diagnostic
+          mkdir -p diagnostic
 
-          echo
-          echo "=== CONFIG_COMPAT ==="
-          grep -RIn \
-            --exclude-dir=.git \
-            --exclude='*.o' \
-            --exclude='*.ko' \
-            'CONFIG_COMPAT' arch/ Makefile scripts/ 2>/dev/null || true
+          echo "Kernel Cross-Compile Diagnostic" \
+            > diagnostic/report.txt
 
-          echo
-          echo "========================================"
-          echo "SCAN COMPLETE"
-          echo "========================================"
+          echo "========================================" \
+            >> diagnostic/report.txt
+
+          echo "Repository: $GITHUB_REPOSITORY" \
+            >> diagnostic/report.txt
+
+          echo "Branch: $GITHUB_REF_NAME" \
+            >> diagnostic/report.txt
+
+          echo "Commit: $GITHUB_SHA" \
+            >> diagnostic/report.txt
+
+          echo "========================================" \
+            >> diagnostic/report.txt
+
+          echo \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 4. Git tracked files
+      # ============================================================
+
+      - name: Generate Git File Index
+        run: |
+          echo "========================================" \
+            >> diagnostic/report.txt
+
+          echo "GIT TRACKED FILES" \
+            >> diagnostic/report.txt
+
+          echo "========================================" \
+            >> diagnostic/report.txt
+
+          git ls-files \
+            >> diagnostic/git-files.txt
+
+          wc -l diagnostic/git-files.txt \
+            >> diagnostic/report.txt
+
+          echo \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 5. CROSS_COMPILE_COMPAT
+      # ============================================================
+
+      - name: Scan CROSS_COMPILE_COMPAT
+        run: |
+          {
+            echo "========================================"
+            echo "CROSS_COMPILE_COMPAT"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              --glob '!*.a' \
+              --glob '!*.so' \
+              'CROSS_COMPILE_COMPAT' \
+              . || true
+
+            echo
+          } | tee diagnostic/cross_compile_compat.txt
+
+          cat diagnostic/cross_compile_compat.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 6. CROSS_COMPILE_ARM32
+      # ============================================================
+
+      - name: Scan CROSS_COMPILE_ARM32
+        run: |
+          {
+            echo "========================================"
+            echo "CROSS_COMPILE_ARM32"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              --glob '!*.a' \
+              --glob '!*.so' \
+              'CROSS_COMPILE_ARM32' \
+              . || true
+
+            echo
+          } | tee diagnostic/cross_compile_arm32.txt
+
+          cat diagnostic/cross_compile_arm32.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 7. CROSS_COMPILE
+      # ============================================================
+
+      - name: Scan CROSS_COMPILE
+        run: |
+          {
+            echo "========================================"
+            echo "ALL CROSS_COMPILE REFERENCES"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              --glob '!*.a' \
+              --glob '!*.so' \
+              'CROSS_COMPILE' \
+              . || true
+
+            echo
+          } | tee diagnostic/all_cross_compile.txt
+
+          cat diagnostic/all_cross_compile.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 8. CONFIG_COMPAT
+      # ============================================================
+
+      - name: Scan CONFIG_COMPAT
+        run: |
+          {
+            echo "========================================"
+            echo "CONFIG_COMPAT"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              'CONFIG_COMPAT' \
+              arch/ Makefile Kconfig* scripts/ 2>/dev/null || true
+
+            echo
+          } | tee diagnostic/config_compat.txt
+
+          cat diagnostic/config_compat.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 9. AARCH32
+      # ============================================================
+
+      - name: Scan AARCH32
+        run: |
+          {
+            echo "========================================"
+            echo "AARCH32 / ARM32 REFERENCES"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              'AARCH32|AARCH32_EL0|ARM32|arm32' \
+              arch/ Makefile Kconfig* scripts/ 2>/dev/null || true
+
+            echo
+          } | tee diagnostic/aarch32.txt
+
+          cat diagnostic/aarch32.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 10. CLANG_TRIPLE
+      # ============================================================
+
+      - name: Scan CLANG_TRIPLE
+        run: |
+          {
+            echo "========================================"
+            echo "CLANG_TRIPLE"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CLANG_TRIPLE' \
+              . || true
+
+            echo
+          } | tee diagnostic/clang_triple.txt
+
+          cat diagnostic/clang_triple.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 11. LLVM
+      # ============================================================
+
+      - name: Scan LLVM Build System
+        run: |
+          {
+            echo "========================================"
+            echo "LLVM REFERENCES"
+            echo "========================================"
+
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              --glob '!*.o' \
+              --glob '!*.ko' \
+              'LLVM=|LLVM_IAS|LLVM_CLANG|CONFIG_LTO_CLANG|CONFIG_LTO' \
+              Makefile arch/ scripts/ \
+              2>/dev/null || true
+
+            echo
+          } | tee diagnostic/llvm.txt
+
+          cat diagnostic/llvm.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 12. ARM64 Makefiles
+      # ============================================================
+
+      - name: Inspect ARM64 Build Files
+        run: |
+          {
+            echo "========================================"
+            echo "ARM64 BUILD FILES"
+            echo "========================================"
+
+            echo
+            echo "--- arch/arm64/Makefile ---"
+
+            if [ -f arch/arm64/Makefile ]; then
+              sed -n '1,260p' arch/arm64/Makefile
+            else
+              echo "NOT FOUND"
+            fi
+
+            echo
+            echo "--- arch/arm64/Kconfig ---"
+
+            if [ -f arch/arm64/Kconfig ]; then
+              rg -n \
+                'COMPAT|AARCH32|ARM32|LTO|LLVM' \
+                arch/arm64/Kconfig || true
+            else
+              echo "NOT FOUND"
+            fi
+
+            echo
+          } | tee diagnostic/arm64-build-files.txt
+
+          cat diagnostic/arm64-build-files.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 13. Kernel root Makefile
+      # ============================================================
+
+      - name: Inspect Root Makefile
+        run: |
+          {
+            echo "========================================"
+            echo "ROOT MAKEFILE CROSS COMPILE LOGIC"
+            echo "========================================"
+
+            rg -n \
+              'CROSS_COMPILE|LLVM|CLANG_TRIPLE|COMPAT|ARM32' \
+              Makefile \
+              2>/dev/null || true
+
+            echo
+          } | tee diagnostic/root-makefile.txt
+
+          cat diagnostic/root-makefile.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 14. Exact relevant files
+      # ============================================================
+
+      - name: Find Relevant Build Files
+        run: |
+          {
+            echo "========================================"
+            echo "RELEVANT BUILD FILES"
+            echo "========================================"
+
+            find arch/arm64 arch/arm scripts \
+              -type f \
+              \( \
+                -name 'Makefile' \
+                -o -name 'Kconfig' \
+                -o -name 'Kconfig.*' \
+                \) \
+              2>/dev/null \
+              | sort
+
+            echo
+          } | tee diagnostic/build-files.txt
+
+          cat diagnostic/build-files.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 15. Summary
+      # ============================================================
+
+      - name: Generate Summary
+        run: |
+          {
+            echo "========================================"
+            echo "SUMMARY"
+            echo "========================================"
+
+            echo
+            echo "CROSS_COMPILE_COMPAT references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CROSS_COMPILE_COMPAT' \
+              . | wc -l || true
+
+            echo
+            echo "CROSS_COMPILE_ARM32 references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CROSS_COMPILE_ARM32' \
+              . | wc -l || true
+
+            echo
+            echo "CROSS_COMPILE references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CROSS_COMPILE' \
+              . | wc -l || true
+
+            echo
+            echo "CONFIG_COMPAT references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CONFIG_COMPAT' \
+              arch/ Makefile scripts/ \
+              2>/dev/null | wc -l || true
+
+            echo
+            echo "CLANG_TRIPLE references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CLANG_TRIPLE' \
+              . | wc -l || true
+
+            echo
+            echo "LTO references:"
+            rg -n \
+              --hidden \
+              --glob '!.git/**' \
+              'CONFIG_LTO|LTO_CLANG|LLVM_IAS' \
+              Makefile arch/ scripts/ \
+              2>/dev/null | wc -l || true
+
+            echo
+            echo "========================================"
+            echo "END OF SUMMARY"
+            echo "========================================"
+
+          } | tee diagnostic/summary.txt
+
+          cat diagnostic/summary.txt \
+            >> diagnostic/report.txt
+
+
+      # ============================================================
+      # 16. Create archive
+      # ============================================================
+
+      - name: Create Diagnostic Archive
+        run: |
+          tar -czf \
+            kernel-cross-compile-diagnostic.tar.gz \
+            diagnostic
+
+          ls -lh \
+            kernel-cross-compile-diagnostic.tar.gz
+
+
+      # ============================================================
+      # 17. Upload Artifact
+      # ============================================================
+
+      - name: Upload Diagnostic Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-cross-compile-diagnostic-${{ github.sha }}
+          path: |
+            diagnostic/
+            kernel-cross-compile-diagnostic.tar.gz
+          if-no-files-found: error
+          retention-days: 7
