@@ -56,20 +56,21 @@ jobs:
           libelf-dev \
           libncurses-dev \
           python3 \
+          jq \
+          gcc-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi \
+          python3 \
           openjdk-17-jre-headless
 
 
     # ============================================================
     # 3. Toolchains
     #
-    # Exact LineageOS toolchains:
-    #
     # Clang r416183b
-    # GCC 4.9 AArch64
-    # GCC 4.9 ARM32
+    # GCC64 / GCC32 from LineageOS
     # ============================================================
 
-    - name: Clone LineageOS Toolchains
+    - name: Clone Toolchains
       run: |
         set -e
 
@@ -77,42 +78,33 @@ jobs:
         echo "SETTING UP TOOLCHAINS"
         echo "========================================"
 
-        rm -rf clang gcc64 gcc32
-
         echo
-        echo "========================================"
-        echo "CLANG r416183b"
-        echo "========================================"
+        echo "Downloading Clang r416183b..."
 
         git clone \
-          --depth=1 \
           https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+          -b lineage-16.0 \
+          --depth=1 \
           clang
 
         echo
-        echo "========================================"
-        echo "GCC64 4.9"
-        echo "========================================"
+        echo "Downloading GCC64..."
 
         git clone \
-          --depth=1 \
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+          --depth=1 \
           gcc64
 
         echo
-        echo "========================================"
-        echo "GCC32 4.9"
-        echo "========================================"
+        echo "Downloading GCC32..."
 
         git clone \
-          --depth=1 \
           https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+          --depth=1 \
           gcc32
 
         echo
-        echo "========================================"
-        echo "TOOLCHAINS DOWNLOADED"
-        echo "========================================"
+        echo "TOOLCHAINS READY"
 
 
     # ============================================================
@@ -127,9 +119,7 @@ jobs:
         echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
         echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
 
-        echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+        echo "PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH" >> "$GITHUB_ENV"
 
 
     # ============================================================
@@ -142,11 +132,6 @@ jobs:
 
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
-        echo "========================================"
-        echo "VERIFYING TOOLCHAINS"
-        echo "========================================"
-
-        echo
         echo "========================================"
         echo "CLANG"
         echo "========================================"
@@ -164,14 +149,11 @@ jobs:
 
         echo
         echo "========================================"
-        echo "LLVM TOOLS"
+        echo "LLVM AR"
         echo "========================================"
 
         which llvm-ar
-        which llvm-nm
-        which llvm-objcopy
-        which llvm-objdump
-        which llvm-strip
+        llvm-ar --version
 
         echo
         echo "========================================"
@@ -181,41 +163,104 @@ jobs:
         ls -la "$GCC64_PATH/bin"
 
         echo
-        echo "Checking AArch64 GCC:"
-
-        "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version || true
-
-        echo
         echo "========================================"
         echo "GCC32"
         echo "========================================"
 
         ls -la "$GCC32_PATH/bin"
 
-        echo
-        echo "Checking ARM GCC:"
 
-        "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version || true
+    # ============================================================
+    # 6. Fix Kbuild Argument List Too Long
+    #
+    # ONLY FIX:
+    # Composite object linker commands can contain thousands
+    # of object files. Passing all objects directly through
+    # /bin/sh can exceed ARG_MAX.
+    #
+    # We make Kbuild generate an ld response file instead.
+    #
+    # No kernel configuration is changed.
+    # No compiler is changed.
+    # No source driver is changed.
+    # ============================================================
+
+    - name: Fix Kbuild Argument List Too Long
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "FIXING KBUILD ARGUMENT LIST TOO LONG"
+        echo "========================================"
+
+        test -f scripts/Makefile.build
+
+        cp \
+          scripts/Makefile.build \
+          scripts/Makefile.build.original
+
+        python3 <<'PY'
+        from pathlib import Path
+
+        path = Path("scripts/Makefile.build")
+        text = path.read_text()
+
+        old = """cmd_link_multi-link = $(LD) $(ld_flags) -r -o $@ $(link_multi_deps) $(cmd_secanalysis)"""
+
+        new = """cmd_link_multi-link = $(file >$@.rsp,$(link_multi_deps)) $(LD) $(ld_flags) -r -o $@ @$@.rsp $(cmd_secanalysis); rm -f $@.rsp"""
+
+        if old not in text:
+            raise SystemExit(
+                "ERROR: Expected cmd_link_multi-link definition was not found"
+            )
+
+        text = text.replace(old, new, 1)
+
+        path.write_text(text)
+        PY
 
         echo
         echo "========================================"
-        echo "CROSS COMPILE"
+        echo "KBUILD PATCH CHECK"
         echo "========================================"
 
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+        grep -n \
+          "cmd_link_multi-link" \
+          scripts/Makefile.build
+
+        echo
+        echo "========================================"
+        echo "VERIFYING PATCH"
+        echo "========================================"
+
+        grep -q \
+          '$(file >$@.rsp,$(link_multi_deps))' \
+          scripts/Makefile.build
+
+        grep -q \
+          '@$@.rsp' \
+          scripts/Makefile.build
+
+        echo "OK: RESPONSE FILE LINKING ENABLED"
+
+        echo
+        echo "========================================"
+        echo "ORIGINAL FILE BACKUP"
+        echo "========================================"
+
+        ls -lh scripts/Makefile.build.original
+
+        echo
+        echo "KBUILD ARGUMENT LIMIT FIX READY"
 
 
     # ============================================================
-    # 6. Setup NoMount
+    # 7. Setup NoMount
     # ============================================================
 
     - name: Setup NoMount
       if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
       run: |
-        set -e
-
         echo "========================================"
         echo "SETTING UP NOMOUNT"
         echo "========================================"
@@ -238,14 +283,12 @@ jobs:
 
 
     # ============================================================
-    # 7. Setup KernelSU-Next
+    # 8. Setup KernelSU-Next
     # ============================================================
 
     - name: Setup KernelSU-Next
       if: ${{ matrix.build_type != 'Base' }}
       run: |
-        set -e
-
         echo "========================================"
         echo "SETTING UP KERNELSU-NEXT"
         echo "========================================"
@@ -271,13 +314,11 @@ jobs:
 
 
     # ============================================================
-    # 8. Load Original violet-perf defconfig
+    # 9. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
       run: |
-        set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -293,13 +334,11 @@ jobs:
 
 
     # ============================================================
-    # 9. Configure Matrix
+    # 10. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
       run: |
-        set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -436,6 +475,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # Resolve Kconfig dependencies
+        # ========================================================
+
         echo
         echo "========================================"
         echo "RUNNING OLDDEFCONFIG"
@@ -445,6 +488,10 @@ jobs:
           ARCH=arm64 \
           olddefconfig
 
+
+        # ========================================================
+        # Verify final configuration
+        # ========================================================
 
         echo
         echo "========================================"
@@ -469,6 +516,10 @@ jobs:
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
 
+
+        # ========================================================
+        # SUSFS validation
+        # ========================================================
 
         echo
         echo "========================================"
@@ -515,6 +566,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # NoMount validation
+        # ========================================================
+
         echo
         echo "========================================"
         echo "NOMOUNT VALIDATION"
@@ -548,6 +603,10 @@ jobs:
         esac
 
 
+        # ========================================================
+        # KPROBES validation
+        # ========================================================
+
         echo
         echo "========================================"
         echo "KPROBES VALIDATION"
@@ -560,6 +619,10 @@ jobs:
           echo "OK: CONFIG_KPROBES IS NOT ENABLED"
         fi
 
+
+        # ========================================================
+        # Save FULL final configuration
+        # ========================================================
 
         echo
         echo "========================================"
@@ -580,32 +643,41 @@ jobs:
           "out/${DEFCONFIG_NAME}"
 
         echo
-        echo "LINE COUNT"
-
         wc -l \
           "out/${DEFCONFIG_NAME}"
 
         echo
+        echo "========================================"
         echo "KERNELSU CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_KSU' \
           "out/${DEFCONFIG_NAME}" || true
 
         echo
+        echo "========================================"
         echo "SUSFS CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_KSU_SUSFS' \
           "out/${DEFCONFIG_NAME}" || true
 
         echo
+        echo "========================================"
         echo "NOMOUNT CONFIG"
+        echo "========================================"
 
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
 
+        echo
+        echo "========================================"
+        echo "FULL FINAL DEFCONFIG READY"
+        echo "========================================"
+
 
     # ============================================================
-    # 10. Upload Full Final Defconfig
+    # 11. Upload Full Final Defconfig BEFORE BUILD
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -617,13 +689,11 @@ jobs:
 
 
     # ============================================================
-    # 11. Verify Build Configuration
+    # 12. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
       run: |
-        set -e
-
         export ARCH=arm64
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
@@ -660,14 +730,7 @@ jobs:
 
 
     # ============================================================
-    # 12. Build Kernel
-    #
-    # Exact toolchain arrangement:
-    #
-    # Clang r416183b
-    # GCC64 Android 4.9
-    # GCC32 Android 4.9
-    #
+    # 13. Build Kernel
     # ============================================================
 
     - name: Build Kernel
@@ -675,7 +738,6 @@ jobs:
         set -o pipefail
 
         export ARCH=arm64
-
         export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
         export KBUILD_BUILD_USER=Manipulator
@@ -693,7 +755,6 @@ jobs:
         echo "COMPILER"
         echo "========================================"
 
-        which clang
         clang --version
 
         echo
@@ -701,7 +762,6 @@ jobs:
         echo "LINKER"
         echo "========================================"
 
-        which ld.lld
         ld.lld --version
 
         echo
@@ -709,13 +769,13 @@ jobs:
         echo "CROSS COMPILE"
         echo "========================================"
 
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+        echo "CROSS_COMPILE=$GCC64_PATH/bin/aarch64-linux-android-"
+        echo "CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-linux-androideabi-"
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-"
 
         echo
         echo "========================================"
-        echo "BUILD START"
+        echo "STARTING BUILD"
         echo "========================================"
 
         make -j$(nproc --all) \
@@ -731,20 +791,19 @@ jobs:
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-" \
+          CROSS_COMPILE_COMPAT="$GCC32_PATH/bin/arm-linux-androideabi-" \
+          CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-" \
           2>&1 | tee build.log
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 14. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
       run: |
-        set -e
-
         echo "========================================"
         echo "CHECKING BUILD"
         echo "========================================"
@@ -763,13 +822,11 @@ jobs:
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 15. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
       run: |
-        set -e
-
         echo "========================================"
         echo "PACKAGING ANYKERNEL3"
         echo "========================================"
@@ -804,7 +861,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 16. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -816,7 +873,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Full Active .config
+    # 17. Upload Full Active .config
     # ============================================================
 
     - name: Upload Full Active Config
@@ -829,7 +886,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
