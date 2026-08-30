@@ -11,10 +11,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: k
-
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +32,6 @@ jobs:
       with:
         ref: 16
         fetch-depth: 1
-        path: k
 
 
     # ============================================================
@@ -65,59 +60,81 @@ jobs:
 
 
     # ============================================================
-    # 3. Toolchains
-    #
-    # Exact LineageOS toolchains:
-    #
-    # Clang r416183b
-    # GCC 4.9 AArch64
-    # GCC 4.9 ARM32
+    # 3. AOSP Clang Only
     # ============================================================
 
-    - name: Clone LineageOS Toolchains
+    - name: Setup AOSP Clang
       run: |
         set -e
 
         echo "========================================"
-        echo "SETTING UP TOOLCHAINS"
+        echo "SETTING UP AOSP CLANG ONLY"
         echo "========================================"
 
-        rm -rf clang gcc64 gcc32
-
-        echo
-        echo "========================================"
-        echo "CLANG r416183b"
-        echo "========================================"
-
-        git clone \
-          --depth=1 \
-          https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
-          clang
+        rm -rf clang
 
         echo
         echo "========================================"
-        echo "GCC64 4.9"
+        echo "DOWNLOADING AOSP CLANG"
         echo "========================================"
 
-        git clone \
-          --depth=1 \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
-          gcc64
+        TC_URL=$(curl -fsSL \
+          https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest \
+          | grep '"browser_download_url"' \
+          | head -n 1 \
+          | cut -d '"' -f 4)
+
+        if [ -z "$TC_URL" ]; then
+          echo "ERROR: Failed to obtain AOSP Clang download URL"
+          exit 1
+        fi
+
+        echo "AOSP CLANG URL:"
+        echo "$TC_URL"
 
         echo
         echo "========================================"
-        echo "GCC32 4.9"
+        echo "DOWNLOAD"
         echo "========================================"
 
-        git clone \
-          --depth=1 \
-          https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
-          gcc32
+        curl -L \
+          --fail \
+          --retry 3 \
+          -o clang.tar.gz \
+          "$TC_URL"
 
         echo
         echo "========================================"
-        echo "TOOLCHAINS DOWNLOADED"
+        echo "EXTRACTING CLANG"
         echo "========================================"
+
+        mkdir -p clang
+
+        if ! tar \
+          -C clang \
+          -xf clang.tar.gz; then
+
+          echo "ERROR: Clang extraction failed"
+          rm -rf clang clang.tar.gz
+          exit 1
+        fi
+
+        rm -f clang.tar.gz
+
+        echo
+        echo "========================================"
+        echo "CLANG DIRECTORY"
+        echo "========================================"
+
+        ls -la clang
+
+        if [ ! -d clang/bin ]; then
+          echo "ERROR: clang/bin does not exist"
+          exit 1
+        fi
+
+        echo
+        echo "AOSP CLANG SETUP COMPLETE"
 
 
     # ============================================================
@@ -128,27 +145,25 @@ jobs:
       run: |
         echo "BUILD_TIME=$(TZ=Asia/Jakarta date '+%d%m%Y-%H%M')" >> "$GITHUB_ENV"
 
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/k/clang" >> "$GITHUB_ENV"
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/k/gcc64" >> "$GITHUB_ENV"
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/k/gcc32" >> "$GITHUB_ENV"
+        echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
 
-        echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-" >> "$GITHUB_ENV"
+        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> "$GITHUB_ENV"
 
 
     # ============================================================
-    # 5. Verify toolchains
+    # 5. Verify AOSP Clang
     # ============================================================
 
-    - name: Verify toolchains
+    - name: Verify AOSP Clang
       run: |
         set -e
 
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$PATH"
 
         echo "========================================"
-        echo "VERIFYING TOOLCHAINS"
+        echo "VERIFYING AOSP CLANG"
         echo "========================================"
 
         echo
@@ -180,36 +195,13 @@ jobs:
 
         echo
         echo "========================================"
-        echo "GCC64"
+        echo "AOSP CLANG ONLY"
         echo "========================================"
 
-        ls -la "$GCC64_PATH/bin"
-
-        echo
-        echo "Checking AArch64 GCC:"
-
-        "$GCC64_PATH/bin/aarch64-linux-android-gcc" --version || true
-
-        echo
-        echo "========================================"
-        echo "GCC32"
-        echo "========================================"
-
-        ls -la "$GCC32_PATH/bin"
-
-        echo
-        echo "Checking ARM GCC:"
-
-        "$GCC32_PATH/bin/arm-linux-androideabi-gcc" --version || true
-
-        echo
-        echo "========================================"
-        echo "CROSS COMPILE"
-        echo "========================================"
-
+        echo "CLANG_PATH=$CLANG_PATH"
         echo "CROSS_COMPILE=$CROSS_COMPILE"
+        echo "CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
         echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
 
 
     # ============================================================
@@ -284,7 +276,7 @@ jobs:
         set -e
 
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$PATH"
 
         echo "========================================"
         echo "LOADING ORIGINAL VIOLET-PERF DEFCONFIG"
@@ -306,7 +298,7 @@ jobs:
         set -e
 
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$PATH"
 
         BUILD_TYPE="${{ matrix.build_type }}"
 
@@ -617,7 +609,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: full-final-defconfig-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/out/*-full_defconfig
+        path: out/*-full_defconfig
         if-no-files-found: error
 
 
@@ -630,7 +622,7 @@ jobs:
         set -e
 
         export ARCH=arm64
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_PATH/bin:$PATH"
 
         echo "========================================"
         echo "VERIFYING ACTIVE BUILD CONFIG"
@@ -667,12 +659,9 @@ jobs:
     # ============================================================
     # 12. Build Kernel
     #
-    # Exact toolchain arrangement:
+    # AOSP Clang Only
     #
-    # Clang r416183b
-    # GCC64 Android 4.9
-    # GCC32 Android 4.9
-    #
+    # MAKE_ARGS method
     # ============================================================
 
     - name: Build Kernel
@@ -680,18 +669,26 @@ jobs:
         set -o pipefail
 
         export ARCH=arm64
+        export CLANG_ROOT="$CLANG_PATH"
 
-        export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+        export PATH="$CLANG_ROOT/bin:$PATH"
 
         export KBUILD_BUILD_USER=Manipulator
         export KBUILD_BUILD_HOST=LineageOS
-        export KBUILD_COMPILER_STRING="$CLANG_PATH/bin/clang"
+        export KBUILD_COMPILER_STRING="$CLANG_ROOT/bin/clang"
 
         echo "========================================"
         echo "BUILDING KERNEL"
         echo "========================================"
 
         echo "BUILD TYPE: ${{ matrix.build_type }}"
+
+        echo
+        echo "========================================"
+        echo "AOSP CLANG ONLY"
+        echo "========================================"
+
+        echo "CLANG_ROOT=$CLANG_ROOT"
 
         echo
         echo "========================================"
@@ -711,12 +708,40 @@ jobs:
 
         echo
         echo "========================================"
+        echo "LLVM TOOLS"
+        echo "========================================"
+
+        which llvm-ar
+        which llvm-nm
+        which llvm-objcopy
+        which llvm-objdump
+        which llvm-strip
+
+        echo
+        echo "========================================"
+        echo "MAKE_ARGS"
+        echo "========================================"
+
+        export MAKE_ARGS=(
+          ARCH=arm64
+          LLVM=1
+          LLVM_IAS=1
+          LD=ld.lld
+          CROSS_COMPILE=aarch64-linux-gnu-
+          CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        )
+
+        printf '%s\n' "${MAKE_ARGS[@]}"
+
+        echo
+        echo "========================================"
         echo "CROSS COMPILE"
         echo "========================================"
 
-        echo "CROSS_COMPILE=$CROSS_COMPILE"
-        echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-        echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+        echo "CROSS_COMPILE=aarch64-linux-gnu-"
+        echo "CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
+        echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
 
         echo
         echo "========================================"
@@ -725,20 +750,7 @@ jobs:
 
         make -j$(nproc --all) \
           O=out \
-          ARCH=arm64 \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          AS=llvm-as \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
-          CROSS_COMPILE="$CROSS_COMPILE" \
-          CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-          CLANG_TRIPLE="$CLANG_TRIPLE" \
+          "${MAKE_ARGS[@]}" \
           2>&1 | tee build.log
 
 
@@ -816,7 +828,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
+        path: Kernel-violet-${{ matrix.build_type }}-${{ env.BUILD_TIME }}.zip
         if-no-files-found: error
 
 
@@ -828,7 +840,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: active-config-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/out/.config
+        path: out/.config
         include-hidden-files: true
         if-no-files-found: error
 
@@ -842,5 +854,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: build-log-${{ matrix.build_type }}-${{ env.BUILD_TIME }}
-        path: k/build.log
+        path: build.log
         if-no-files-found: warn
