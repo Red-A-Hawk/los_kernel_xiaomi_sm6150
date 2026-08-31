@@ -1,10 +1,10 @@
-name: Build Test Baseband-guard 4.14
+name: Build BBG Only - Linux 4.14
 
 on:
   workflow_dispatch:
 
 jobs:
-  bbg-test:
+  bbg-only:
     runs-on: ubuntu-22.04
 
     steps:
@@ -23,6 +23,7 @@ jobs:
 
           sudo apt install -y \
             git \
+            curl \
             bc \
             bison \
             flex \
@@ -31,39 +32,57 @@ jobs:
             device-tree-compiler \
             build-essential \
             make \
-            curl \
-            python3 \
-            rsync \
-            cpio
+            gcc \
+            g++ \
+            python3
 
-      - name: Show kernel version
+      - name: Show default Make
         run: |
           set -e
 
           echo "========================================"
-          echo "KERNEL VERSION"
+          echo "DEFAULT MAKE"
           echo "========================================"
 
-          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' Makefile
+          which make
+          make --version
 
-          make ARCH=arm64 kernelversion
-
-      - name: Clone Baseband-guard
+      - name: Build and install GNU Make 4.4.1
         run: |
           set -e
 
           echo "========================================"
-          echo "CLONING BASEBAND-GUARD"
+          echo "BUILDING GNU MAKE 4.4.1"
           echo "========================================"
 
-          git clone \
-            --depth=1 \
-            https://github.com/vc-teahouse/Baseband-guard.git \
-            Baseband-guard
+          cd /tmp
 
-          echo
-          echo "BBG COMMIT:"
-          git -C Baseband-guard rev-parse --short=12 HEAD
+          curl -LO https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
+
+          tar xzf make-4.4.1.tar.gz
+
+          cd make-4.4.1
+
+          ./configure --prefix=/usr/local
+
+          make -j"$(nproc)"
+
+          sudo make install
+
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Make 4.4.1
+        run: |
+          set -e
+
+          export PATH="/usr/local/bin:$PATH"
+
+          echo "========================================"
+          echo "UPDATED MAKE"
+          echo "========================================"
+
+          which make
+          make --version
 
       - name: Clone LineageOS Toolchains
         run: |
@@ -97,7 +116,9 @@ jobs:
           echo "PATH=$PATH" >> "$GITHUB_ENV"
 
           echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+
           echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+
           echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
           echo "========================================"
@@ -128,7 +149,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "AARCH64 GCC"
+          echo "GCC 64"
           echo "========================================"
 
           which aarch64-linux-android-gcc
@@ -136,67 +157,24 @@ jobs:
 
           echo
           echo "========================================"
-          echo "ARM32 GCC"
+          echo "GCC 32"
           echo "========================================"
 
           which arm-linux-androideabi-gcc
           arm-linux-androideabi-gcc --version | head -1
 
-          echo
-          echo "========================================"
-          echo "FINAL TOOLCHAIN ENVIRONMENT"
-          echo "========================================"
-
-          echo "CROSS_COMPILE=$CROSS_COMPILE"
-          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
-          echo "CLANG_TRIPLE=$CLANG_TRIPLE"
-
-      - name: Diagnose BBG compatibility
+      - name: Clone Baseband-guard
         run: |
-          set +e
+          set -e
 
           echo "========================================"
-          echo "BASEBAND-GUARD / LINUX 4.14 COMPATIBILITY"
+          echo "CLONING BASEBAND-GUARD"
           echo "========================================"
 
-          echo
-          echo "Kernel:"
-          make ARCH=arm64 kernelversion
-
-          echo
-          echo "DEFINE_LSM:"
-          grep -n \
-            '#define DEFINE_LSM(lsm)' \
-            include/linux/lsm_hooks.h \
-            || echo "[NOT FOUND]"
-
-          echo
-          echo "security_add_hooks:"
-          grep -n \
-            'security_add_hooks' \
-            include/linux/lsm_hooks.h \
-            security/security.c \
-            2>/dev/null || true
-
-          echo
-          echo "SELinux objsec:"
-          grep -n -E \
-            'cred_security_struct|sockcreate_sid' \
-            security/selinux/include/objsec.h \
-            2>/dev/null || true
-
-          echo
-          echo "BBG compatibility:"
-          if grep -q \
-            '#define DEFINE_LSM(lsm)' \
-            include/linux/lsm_hooks.h
-          then
-            echo "[OK] DEFINE_LSM detected"
-            echo "[OK] BBG will use modern LSM path"
-          else
-            echo "[INFO] DEFINE_LSM not detected"
-            echo "[INFO] BBG setup.sh will use nongki SELinux compatibility path"
-          fi
+          git clone \
+            --depth=1 \
+            https://github.com/vc-teahouse/Baseband-guard.git \
+            Baseband-guard
 
       - name: Prepare Baseband-guard
         run: |
@@ -210,38 +188,14 @@ jobs:
 
           ./Baseband-guard/setup.sh
 
-      - name: Verify BBG source integration
-        run: |
-          set -e
-
+          echo
           echo "========================================"
-          echo "VERIFY BBG SOURCE INTEGRATION"
+          echo "BBG FILES AFTER SETUP"
           echo "========================================"
 
-          echo
-          echo "Security Makefile:"
-          grep -n \
-            'baseband-guard' \
-            security/Makefile
-
-          echo
-          echo "Security Kconfig:"
-          grep -n \
-            'security/baseband-guard/Kconfig' \
-            security/Kconfig
-
-          echo
-          echo "BBG directory:"
           ls -la security/baseband-guard
 
-          echo
-          echo "BBG source files:"
-          find security/baseband-guard \
-            -maxdepth 2 \
-            -type f \
-            -print | sort
-
-      - name: Select Existing Defconfig
+      - name: Select Violet Defconfig
         run: |
           set -e
 
@@ -254,9 +208,7 @@ jobs:
           for candidate in \
             violet_defconfig \
             lineage_violet_defconfig \
-            vendor/violet_defconfig \
-            violet-perf_defconfig \
-            vendor/violet-perf_defconfig
+            vendor/violet_defconfig
           do
             if [ -f "arch/arm64/configs/$candidate" ]; then
               DEFCONFIG="$candidate"
@@ -265,10 +217,10 @@ jobs:
           done
 
           if [ -z "$DEFCONFIG" ]; then
-            echo "[ERROR] Known violet defconfig not found."
+            echo "[ERROR] Violet defconfig not found."
 
             echo
-            echo "Available violet-related defconfigs:"
+            echo "Available violet defconfigs:"
 
             find arch/arm64/configs \
               -maxdepth 2 \
@@ -281,7 +233,7 @@ jobs:
 
           echo "DEFCONFIG=$DEFCONFIG" >> "$GITHUB_ENV"
 
-          echo "[OK] Selected: $DEFCONFIG"
+          echo "[OK] $DEFCONFIG"
 
       - name: Generate Kernel Configuration
         run: |
@@ -297,11 +249,11 @@ jobs:
 
           echo
           echo "========================================"
-          echo "INITIAL SECURITY CONFIG"
+          echo "INITIAL CONFIG"
           echo "========================================"
 
           grep -E \
-            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_DEFAULT_SECURITY_|CONFIG_LSM=|CONFIG_BBG=|# CONFIG_BBG)' \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
             out/.config \
             || true
 
@@ -310,7 +262,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "FORCE BBG CONFIGURATION"
+          echo "FORCE BBG"
           echo "========================================"
 
           scripts/config \
@@ -330,8 +282,7 @@ jobs:
 
           case ",$CURRENT_LSM," in
             *,baseband_guard,*)
-              echo
-              echo "[OK] baseband_guard already present"
+              echo "[OK] baseband_guard already exists"
               ;;
             *)
               NEW_LSM="${CURRENT_LSM},baseband_guard"
@@ -350,25 +301,28 @@ jobs:
             ARCH=arm64 \
             olddefconfig
 
-          echo
+      - name: Verify Final BBG Configuration
+        run: |
+          set -e
+
           echo "========================================"
-          echo "FINAL CONFIG"
+          echo "FINAL BBG CONFIGURATION"
           echo "========================================"
 
           grep -E \
-            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_DEFAULT_SECURITY_|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_INTEGRITY=|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
             out/.config \
             || true
 
           echo
           echo "========================================"
-          echo "BBG CONFIG VALIDATION"
+          echo "BBG CHECKS"
           echo "========================================"
 
           if grep -q '^CONFIG_BBG=y$' out/.config; then
             echo "[OK] CONFIG_BBG=y"
           else
-            echo "[FAIL] CONFIG_BBG is not enabled"
+            echo "[FAIL] CONFIG_BBG=y missing"
             exit 1
           fi
 
@@ -379,12 +333,23 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare Kernel
+          echo
+          echo "========================================"
+          echo "BBG SOURCE INTEGRATION"
+          echo "========================================"
+
+          grep -n \
+            'baseband-guard' \
+            security/Makefile \
+            security/Kconfig \
+            || true
+
+      - name: Prepare Kernel Headers Only
         run: |
           set -e
 
           echo "========================================"
-          echo "KERNEL PREPARATION"
+          echo "MODULES PREPARE"
           echo "========================================"
 
           make -j2 \
@@ -404,30 +369,26 @@ jobs:
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             modules_prepare
 
-      - name: Build Kernel With BBG
+      - name: Build BBG Objects Only
         run: |
-          set +e
           set -o pipefail
 
           echo "========================================"
-          echo "BUILDING KERNEL WITH BASEBAND-GUARD"
+          echo "BUILD BASEBAND-GUARD ONLY"
           echo "========================================"
 
           echo
-          echo "Kernel:"
-          make O=out ARCH=arm64 kernelversion
-
-          echo
-          echo "Compiler:"
-          clang --version | head -1
+          echo "IMPORTANT:"
+          echo "No kernel Image target will be requested."
+          echo "Only security/baseband-guard is built."
 
           echo
           echo "========================================"
-          echo "BUILD START"
+          echo "BBG BUILD START"
           echo "========================================"
 
-          make -j"$(nproc)" \
-            V=1 \
+          make V=1 \
+            -j2 \
             O=out \
             ARCH=arm64 \
             LLVM=1 \
@@ -442,6 +403,7 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
+            security/baseband-guard/ \
             2>&1 | tee bbg-build.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
@@ -450,77 +412,84 @@ jobs:
 
           echo
           echo "========================================"
-          echo "BUILD EXIT CODE"
+          echo "BBG BUILD EXIT CODE"
           echo "========================================"
 
           cat bbg-build-result.txt
 
-      - name: Analyze BBG Build Result
+          exit "$BUILD_RESULT"
+
+      - name: Analyze BBG Build
         if: always()
         run: |
           set +e
 
           echo "========================================"
-          echo "BASEBAND-GUARD BUILD RESULT"
+          echo "BBG BUILD ANALYSIS"
           echo "========================================"
 
           echo
           echo "========================================"
-          echo "BBG OBJECTS"
+          echo "BBG OBJECT FILES"
           echo "========================================"
 
-          find out security \
+          find out/security/baseband-guard \
             -type f \
             \( \
-              -name 'bbg.o' \
-              -o -name 'baseband_guard.o' \
-              -o -name 'blkdev_helper.o' \
-              -o -name 'tracing.o' \
-              -o -name 'bbg.mod.o' \
+              -name '*.o' \
+              -o -name '*.lto.o' \
+              -o -name '*.cmd' \
+              -o -name '*.symversions' \
+              -o -name '*.mod.c' \
+              -o -name '*.mod.o' \
             \) \
             -print \
             2>/dev/null || true
 
           echo
           echo "========================================"
-          echo "BBG BUILD MESSAGES"
-          echo "========================================"
-
-          grep -i -E \
-            'Baseband-guard|Baseband_guard|CONFIG_BBG|baseband_guard|bbg\.o|baseband_guard\.o' \
-            bbg-build.log \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "BBG ERRORS"
-          echo "========================================"
-
-          grep -i -E \
-            'error:|fatal error:|undefined reference|No rule to make target' \
-            bbg-build.log \
-            2>/dev/null | grep -i -E \
-              'bbg|baseband|tracing|blkdev|selinux|security' \
-            || true
-
-          echo
-          echo "========================================"
-          echo "BBG SYMBOLS"
+          echo "BBG DIRECTORY"
           echo "========================================"
 
           find out/security/baseband-guard \
+            -maxdepth 2 \
             -type f \
-            -name '*.o' \
-            -exec sh -c '
-              echo
-              echo "===== $1 ====="
-              llvm-nm "$1" 2>/dev/null | grep -E "baseband_guard|bb_file_|bbg_" || true
-            ' _ {} \; \
+            -print \
             2>/dev/null || true
 
           echo
           echo "========================================"
-          echo "MODULE SYMVERSIONS"
+          echo "BASEBAND-GUARD BUILD MESSAGES"
+          echo "========================================"
+
+          grep -i -E \
+            'baseband|bbg|clang|llvm|error|warning|CC |LD |AR ' \
+            bbg-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "ERRORS"
+          echo "========================================"
+
+          grep -n -E \
+            'error:|Error:|ERROR:|undefined reference|No rule to make target|recipe for target' \
+            bbg-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "WARNINGS"
+          echo "========================================"
+
+          grep -n -E \
+            'warning:|Warning:|WARNING:' \
+            bbg-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SYMVERSION FILES"
           echo "========================================"
 
           find out/security/baseband-guard \
@@ -530,46 +499,31 @@ jobs:
             -exec sh -c '
               echo
               echo "===== $1 ====="
+              wc -l "$1"
               cat "$1"
             ' _ {} \; \
             2>/dev/null || true
 
           echo
           echo "========================================"
-          echo "KBUILD COMMAND FILES"
-          echo "========================================"
-
-          find out/security/baseband-guard \
-            -type f \
-            -name '.*.cmd' \
-            -print \
-            -exec sh -c '
-              echo
-              echo "===== $1 ====="
-              grep -E "clang|llvm|baseband|tracing|blkdev|CONFIG_BBG" "$1" || true
-            ' _ {} \; \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "FINAL CONFIG"
+          echo "CONFIG"
           echo "========================================"
 
           grep -E \
-            '^(CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_|CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=)' \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
             out/.config \
             2>/dev/null || true
 
           echo
           echo "========================================"
-          echo "KERNEL IMAGE"
+          echo "KERNEL IMAGE CHECK"
           echo "========================================"
 
           if [ -f out/arch/arm64/boot/Image ]; then
-            echo "[OK] Image generated"
-            ls -lh out/arch/arm64/boot/Image
+            echo "[WARNING] Kernel Image exists."
+            echo "This workflow did NOT request an Image build."
           else
-            echo "[FAIL] Image not generated"
+            echo "[OK] No Kernel Image was built."
           fi
 
           echo
@@ -588,11 +542,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: baseband-guard-4.14-build-diagnostic
+          name: bbg-only-linux-4.14-diagnostic
           path: |
             bbg-build.log
             bbg-build-result.txt
             out/.config
-            out/Module.symvers
             out/security/baseband-guard/
+            security/baseband-guard/
           if-no-files-found: warn
