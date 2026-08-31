@@ -504,7 +504,7 @@ ifdef CONFIG_LTO_CLANG
 	rm -f $@.symversions; 				\
 	for i in $(foreach n,					\
 			$(filter-out FORCE,$^),			\
-			$(shell test -s $(n).symversions && echo y)	\
+			$(if $(shell test -s $(n).symversions && echo y),$(n))); do	\
 		cat $$i.symversions >> $@.symversions;		\
 	done;
   endif
