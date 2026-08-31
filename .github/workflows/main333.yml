@@ -19,11 +19,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev device-tree-compiler
 
-      - name: Prepare config
+            - name: Prepare config
         run: |
           set -e
 
-          make O=out ARCH=arm64 violet_defconfig
+          make O=out ARCH=arm64 vendor/violet-perf_defconfig
 
           make -j2 O=out \
             ARCH=arm64 \
