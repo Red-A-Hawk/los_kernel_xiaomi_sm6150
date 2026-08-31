@@ -496,7 +496,6 @@ $(sort $(subdir-obj-y)): $(subdir-ym) ;
 #
 # Rule to compile a set of .o files into one .o file
 #
-ifdef builtin-target
 
 ifdef CONFIG_LTO_CLANG
   ifdef CONFIG_MODVERSIONS
@@ -516,6 +515,8 @@ ifdef CONFIG_LTO_CLANG
 		$$($(AR) t $@.tmp); 			\
 	rm -f $@.tmp
 endif
+
+ifdef builtin-target
 
 # built-in.a archives are made with no symbol table or index which
 # makes them small and fast, but unable to be used by the linker.
