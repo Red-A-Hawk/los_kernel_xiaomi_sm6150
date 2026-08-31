@@ -196,6 +196,7 @@ jobs:
           ls -la security/baseband-guard
 
       - name: Select Violet Defconfig
+      - name: Select Violet Perf Defconfig
         run: |
           set -e
 
@@ -203,37 +204,17 @@ jobs:
           echo "SELECT DEFCONFIG"
           echo "========================================"
 
-          DEFCONFIG=""
+          DEFCONFIG="vendor/violet-perf_defconfig"
 
-          for candidate in \
-            violet_defconfig \
-            lineage_violet_defconfig \
-            vendor/violet_defconfig
-          do
-            if [ -f "arch/arm64/configs/$candidate" ]; then
-              DEFCONFIG="$candidate"
-              break
-            fi
-          done
-
-          if [ -z "$DEFCONFIG" ]; then
-            echo "[ERROR] Violet defconfig not found."
-
-            echo
-            echo "Available violet defconfigs:"
-
-            find arch/arm64/configs \
-              -maxdepth 2 \
-              -type f \
-              -iname '*violet*' \
-              -print
-
+          if [ ! -f "arch/arm64/configs/$DEFCONFIG" ]; then
+            echo "[ERROR] Defconfig not found:"
+            echo "arch/arm64/configs/$DEFCONFIG"
             exit 1
           fi
 
           echo "DEFCONFIG=$DEFCONFIG" >> "$GITHUB_ENV"
 
-          echo "[OK] $DEFCONFIG"
+          echo "[OK] Selected: $DEFCONFIG"
 
       - name: Generate Kernel Configuration
         run: |
