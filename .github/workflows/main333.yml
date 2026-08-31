@@ -1,0 +1,97 @@
+name: Inspect GSPCA Symversions
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev device-tree-compiler
+
+      - name: Prepare config
+        run: |
+          set -e
+
+          make O=out ARCH=arm64 violet_defconfig
+
+          make -j2 O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            modules_prepare
+
+      - name: Build GSPCA
+        run: |
+          set +e
+
+          make -j2 O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            M=drivers/media/usb/gspca \
+            modules
+
+          echo
+          echo "========================================"
+          echo "GSPCA BUILD EXIT CODE"
+          echo "========================================"
+          echo "$?"
+
+      - name: Inspect GSPCA
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "GSPCA FILES"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -maxdepth 1 \
+            -type f \
+            \( -name '*.symversions' -o -name '*.o' -o -name '*.lto.o' -o -name '*.ko' \) \
+            -print
+
+          echo
+          echo "========================================"
+          echo "SYMVERSION FILES"
+          echo "========================================"
+
+          for f in out/drivers/media/usb/gspca/*.symversions; do
+            [ -f "$f" ] || continue
+            echo
+            echo "===== $f ====="
+            cat "$f"
+          done
+
+          echo
+          echo "========================================"
+          echo "GSPCA CRC REFERENCES"
+          echo "========================================"
+
+          grep -R -E '__crc_(gspca_|gspca)' \
+            out/drivers/media/usb/gspca/ \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "GSPCA LTO OBJECTS"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -type f \
+            -name '*.lto.o' \
+            -exec file {} \;
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
