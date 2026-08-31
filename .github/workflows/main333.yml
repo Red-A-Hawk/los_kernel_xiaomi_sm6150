@@ -17,34 +17,62 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev device-tree-compiler
+          sudo apt-get install -y \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler
 
-            - name: Prepare config
+      - name: Prepare kernel
         run: |
           set -e
 
-          make O=out ARCH=arm64 vendor/violet-perf_defconfig
+          make O=out \
+            ARCH=arm64 \
+            vendor/violet-perf_defconfig
+
+          echo
+          echo "========================================"
+          echo "LTO / MODVERSIONS CONFIG"
+          echo "========================================"
+
+          grep -E '^(CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_LTO_NONE=|CONFIG_MODVERSIONS=|CONFIG_ARCH_SUPPORTS_LTO_CLANG=|CONFIG_ARCH_SUPPORTS_THINLTO=)' \
+            out/.config || true
+
+          echo
+          echo "========================================"
+          echo "MODULES PREPARE"
+          echo "========================================"
 
           make -j2 O=out \
             ARCH=arm64 \
             LLVM=1 \
             modules_prepare
 
-      - name: Build GSPCA
+      - name: Build GSPCA only
         run: |
           set +e
 
-          make -j2 O=out \
+          echo "========================================"
+          echo "BUILD GSPCA"
+          echo "========================================"
+
+          make -j2 \
+            O=out \
             ARCH=arm64 \
             LLVM=1 \
             M=drivers/media/usb/gspca \
             modules
 
+          BUILD_RC=$?
+
           echo
           echo "========================================"
-          echo "GSPCA BUILD EXIT CODE"
+          echo "BUILD EXIT CODE"
           echo "========================================"
-          echo "$?"
+          echo "$BUILD_RC"
 
       - name: Inspect GSPCA
         run: |
@@ -57,27 +85,45 @@ jobs:
           find out/drivers/media/usb/gspca \
             -maxdepth 1 \
             -type f \
-            \( -name '*.symversions' -o -name '*.o' -o -name '*.lto.o' -o -name '*.ko' \) \
-            -print
+            \( \
+              -name '*.symversions' \
+              -o -name '*.o' \
+              -o -name '*.lto.o' \
+              -o -name '*.ko' \
+              -o -name '*.mod.c' \
+            \) \
+            -print | sort
 
           echo
           echo "========================================"
           echo "SYMVERSION FILES"
           echo "========================================"
 
-          for f in out/drivers/media/usb/gspca/*.symversions; do
-            [ -f "$f" ] || continue
+          found=0
+
+          while IFS= read -r f; do
+            found=1
             echo
             echo "===== $f ====="
             cat "$f"
-          done
+          done < <(
+            find out/drivers/media/usb/gspca \
+              -maxdepth 1 \
+              -type f \
+              -name '*.symversions' \
+              -print
+          )
+
+          if [ "$found" -eq 0 ]; then
+            echo "NO .symversions FILES FOUND"
+          fi
 
           echo
           echo "========================================"
           echo "GSPCA CRC REFERENCES"
           echo "========================================"
 
-          grep -R -E '__crc_(gspca_|gspca)' \
+          grep -R -n -E '__crc_(gspca_|gspca)' \
             out/drivers/media/usb/gspca/ \
             2>/dev/null || true
 
@@ -87,8 +133,20 @@ jobs:
           echo "========================================"
 
           find out/drivers/media/usb/gspca \
+            -maxdepth 1 \
             -type f \
             -name '*.lto.o' \
+            -exec file {} \;
+
+          echo
+          echo "========================================"
+          echo "GSPCA MODULES"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -maxdepth 1 \
+            -type f \
+            -name '*.ko' \
             -exec file {} \;
 
           echo
