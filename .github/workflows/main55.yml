@@ -43,7 +43,6 @@ jobs:
         if: ${{ github.event.inputs.symbol != '' }}
         run: |
           SYM="${{ github.event.inputs.symbol }}"
-          # يشيل بادئة CONFIG_ لو المستخدم كتبها بالغلط
           SYM="${SYM#CONFIG_}"
 
           echo "## نتائج بحث Kconfig عن: CONFIG_$SYM" >> $GITHUB_STEP_SUMMARY
@@ -55,7 +54,6 @@ jobs:
             if grep -qE "^\s*config\s+${SYM}\s*$" "$file"; then
               FOUND=1
               echo ">>> $file" >> $GITHUB_STEP_SUMMARY
-              # يطبع من سطر التعريف لحد أول سطر فاضي بعده (كتلة التعريف كاملة)
               awk -v sym="$SYM" '
                 $0 ~ "^[[:space:]]*config[[:space:]]+"sym"[[:space:]]*$" {p=1}
                 p {print}
@@ -108,7 +106,6 @@ jobs:
           echo "## فحص شامل: Droidspaces CONFIG symbols" > kconfig_audit.txt
           echo "" >> kconfig_audit.txt
 
-          # نفس القائمة المطلوبة من توثيق Droidspaces (Step 1 - Legacy)
           cat > /tmp/droidspaces_symbols.txt << 'EOF'
           SYSCTL
           SYSVIPC
@@ -159,28 +156,45 @@ jobs:
           USER_NS
           EOF
 
-          NOT_FOUND=0
+          NOT_DEFINED=0
+          DEFINED_NOT_BUILT=0
+          OK=0
+
           while read -r sym; do
             [ -z "$sym" ] && continue
 
             hit="$(grep -rlE "^\s*config\s+${sym}\s*$" --include="Kconfig*" . | head -1)"
+            makefile_hit="$(grep -rl "CONFIG_${sym}" --include="Makefile" --include="Kbuild" . | head -1)"
 
             if [ -z "$hit" ]; then
-              echo "❌ CONFIG_$sym: غير معرّف في أي ملف Kconfig بهذا الفرع" >> kconfig_audit.txt
-              NOT_FOUND=$((NOT_FOUND+1))
-            else
-              deps="$(awk -v s="$sym" '
-                $0 ~ "^[[:space:]]*config[[:space:]]+"s"[[:space:]]*$" {p=1; next}
-                p && /depends on|select/ {print "    "$0}
-                p && /^\s*$/ {exit}
-              ' "$hit")"
-              echo "✅ CONFIG_$sym: معرّف في $hit" >> kconfig_audit.txt
-              [ -n "$deps" ] && echo "$deps" >> kconfig_audit.txt
+              echo "❌ CONFIG_$sym: غير معرّف في أي Kconfig" >> kconfig_audit.txt
+              NOT_DEFINED=$((NOT_DEFINED+1))
+              continue
             fi
+
+            if [ -z "$makefile_hit" ]; then
+              echo "⚠️  CONFIG_$sym: معرّف بـ $hit لكن غير مستخدم بأي Makefile/Kbuild (قد يكون bool وليس driver منفصل، أو غير مبني بهذا الفرع)" >> kconfig_audit.txt
+              DEFINED_NOT_BUILT=$((DEFINED_NOT_BUILT+1))
+            else
+              echo "✅ CONFIG_$sym: معرّف بـ $hit ومستخدم بـ $makefile_hit" >> kconfig_audit.txt
+              OK=$((OK+1))
+            fi
+
+            deps="$(awk -v s="$sym" '
+              $0 ~ "^[[:space:]]*config[[:space:]]+"s"[[:space:]]*$" {p=1; next}
+              p && /depends on|select/ {print "    "$0}
+              p && /^\s*$/ {exit}
+            ' "$hit")"
+            [ -n "$deps" ] && echo "$deps" >> kconfig_audit.txt
+
           done < /tmp/droidspaces_symbols.txt
 
           echo "" >> kconfig_audit.txt
-          echo "الإجمالي غير الموجود: $NOT_FOUND" >> kconfig_audit.txt
+          echo "=========================================" >> kconfig_audit.txt
+          echo "الملخص:" >> kconfig_audit.txt
+          echo "  ✅ سليم (معرّف + مبني): $OK" >> kconfig_audit.txt
+          echo "  ⚠️  معرّف بس مو مبني بـ Makefile: $DEFINED_NOT_BUILT" >> kconfig_audit.txt
+          echo "  ❌ غير معرّف إطلاقًا: $NOT_DEFINED" >> kconfig_audit.txt
 
           cat kconfig_audit.txt >> $GITHUB_STEP_SUMMARY
 
