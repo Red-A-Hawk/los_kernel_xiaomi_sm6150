@@ -1,10 +1,10 @@
-name: Diagnose Baseband-guard 4.14
+name: Build Test Baseband-guard 4.14
 
 on:
   workflow_dispatch:
 
 jobs:
-  diagnose:
+  bbg-test:
     runs-on: ubuntu-22.04
 
     steps:
@@ -15,6 +15,27 @@ jobs:
           ref: 16
           fetch-depth: 1
 
+      - name: Install dependencies
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler \
+            cpio \
+            rsync \
+            python3 \
+            gcc \
+            g++ \
+            make
+
       - name: Clone Baseband-guard
         run: |
           set -e
@@ -24,222 +45,261 @@ jobs:
             https://github.com/vc-teahouse/Baseband-guard.git \
             Baseband-guard
 
-      - name: Diagnose Kernel LSM Infrastructure
+      - name: Prepare Baseband-guard
         run: |
-          set +e
+          set -e
 
           echo "========================================"
-          echo "BASEBAND-GUARD / LINUX 4.14 DIAGNOSTIC"
+          echo "BASEBAND-GUARD SETUP"
+          echo "========================================"
+
+          chmod +x Baseband-guard/setup.sh
+
+          ./Baseband-guard/setup.sh
+
+      - name: Verify Kernel Configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "VERIFY BBG CONFIGURATION"
           echo "========================================"
 
           echo
-          echo "========================================"
-          echo "KERNEL VERSION"
-          echo "========================================"
+          echo "Kernel:"
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' Makefile
 
-          if [ -f Makefile ]; then
-              grep -E \
-                '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' \
-                Makefile
+          echo
+          echo "Checking CONFIG_BBG..."
+
+          if grep -q '^CONFIG_BBG=y$' arch/arm64/configs/*; then
+              echo "[OK] CONFIG_BBG=y found in defconfig"
+          else
+              echo "[WARNING] CONFIG_BBG=y not found in defconfig files"
           fi
 
           echo
-          echo "========================================"
-          echo "REQUIRED FILES"
-          echo "========================================"
-
-          for f in \
-            include/linux/lsm_hooks.h \
-            security/Kconfig \
-            security/Makefile \
-            security/selinux/Makefile \
-            security/selinux/include/objsec.h \
-            Baseband-guard/Kconfig \
-            Baseband-guard/Makefile \
-            Baseband-guard/baseband_guard.c \
-            Baseband-guard/baseband_guard.h \
-            Baseband-guard/blkdev_helper.c \
-            Baseband-guard/blkdev_helper.h \
-            Baseband-guard/sepatch.txt
-          do
-              if [ -f "$f" ]; then
-                  echo "[OK]      $f"
-              else
-                  echo "[MISSING] $f"
-              fi
-          done
-
-          echo
-          echo "========================================"
-          echo "MODERN LSM CHECK"
-          echo "========================================"
-
-          if [ -f include/linux/lsm_hooks.h ]; then
-              grep -n \
-                '#define DEFINE_LSM(lsm)' \
-                include/linux/lsm_hooks.h \
-                || echo "[NOT FOUND] DEFINE_LSM"
-          fi
-
-          echo
-          echo "========================================"
-          echo "LSM HOOK DEFINITIONS"
-          echo "========================================"
-
-          grep -n -E \
-            'struct security_hook_list|security_hook_heads|security_add_hooks|LSM_HOOK' \
-            include/linux/lsm_hooks.h \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "SECURITY HOOK API"
-          echo "========================================"
-
-          grep -R -n -E \
-            'security_add_hooks|register_security|security_initcall' \
-            security include/linux \
-            2>/dev/null | head -200 || true
-
-          echo
-          echo "========================================"
-          echo "SELINUX OBJSEC"
-          echo "========================================"
-
-          if [ -f security/selinux/include/objsec.h ]; then
-              grep -n -E \
-                'struct cred_security_struct|sockcreate_sid|cred_security' \
-                security/selinux/include/objsec.h \
-                2>/dev/null || true
-          fi
-
-          echo
-          echo "========================================"
-          echo "SELINUX AVC INCLUDE"
-          echo "========================================"
-
-          grep -n \
-            '#include "avc.h"' \
-            security/selinux/include/objsec.h \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "SELINUX MAKEFILE"
-          echo "========================================"
-
-          if [ -f security/selinux/Makefile ]; then
-              cat security/selinux/Makefile
-          fi
-
-          echo
-          echo "========================================"
-          echo "SECURITY MAKEFILE"
-          echo "========================================"
-
-          if [ -f security/Makefile ]; then
-              grep -n -E \
-                'selinux|security|obj-\$\(CONFIG' \
-                security/Makefile \
-                2>/dev/null || true
-          fi
-
-          echo
-          echo "========================================"
-          echo "SECURITY KCONFIG"
-          echo "========================================"
-
-          if [ -f security/Kconfig ]; then
-              grep -n -E \
-                'config LSM|default.*selinux|endmenu|source.*selinux' \
-                security/Kconfig \
-                2>/dev/null || true
-          fi
-
-          echo
-          echo "========================================"
-          echo "CONFIG_LSM"
-          echo "========================================"
+          echo "Checking CONFIG_LSM..."
 
           grep -R -n \
-            'CONFIG_LSM' \
-            security/Kconfig \
-            security \
-            2>/dev/null | head -100 || true
-
-          echo
-          echo "========================================"
-          echo "BASEBAND-GUARD SOURCE API"
-          echo "========================================"
-
-          grep -R -n -E \
-            'DEFINE_LSM|security_add_hooks|register_security|lsm_hooks|cred_security_struct|sockcreate_sid|inode_permission|file_permission|path_permission|blkdev' \
-            Baseband-guard \
-            2>/dev/null | head -300 || true
-
-          echo
-          echo "========================================"
-          echo "BASEBAND-GUARD KCONFIG"
-          echo "========================================"
-
-          if [ -f Baseband-guard/Kconfig ]; then
-              cat Baseband-guard/Kconfig
-          fi
-
-          echo
-          echo "========================================"
-          echo "BASEBAND-GUARD MAKEFILE"
-          echo "========================================"
-
-          if [ -f Baseband-guard/Makefile ]; then
-              cat Baseband-guard/Makefile
-          fi
-
-          echo
-          echo "========================================"
-          echo "SEPATCH"
-          echo "========================================"
-
-          if [ -f Baseband-guard/sepatch.txt ]; then
-              cat Baseband-guard/sepatch.txt
-          fi
-
-          echo
-          echo "========================================"
-          echo "SETUP.SH NONGKI LOGIC"
-          echo "========================================"
-
-          grep -n -A80 -B10 \
-            'nongki compatible' \
-            Baseband-guard/setup.sh \
+            '^CONFIG_LSM=' \
+            arch/arm64/configs \
             2>/dev/null || true
 
           echo
-          echo "========================================"
-          echo "SETUP.SH DEFINE_LSM TEST"
-          echo "========================================"
-
-          if grep -q \
-            '#define DEFINE_LSM(lsm)' \
-            include/linux/lsm_hooks.h
-          then
-              echo "RESULT: Modern LSM detected"
-          else
-              echo "RESULT: Modern LSM NOT detected"
-              echo "RESULT: BBG setup.sh will enter nongki compatibility path"
-          fi
-
-          echo
-          echo "========================================"
-          echo "POTENTIAL CONFLICTS"
-          echo "========================================"
+          echo "Checking Baseband-guard integration..."
 
           grep -R -n \
             'baseband_guard' \
-            security include drivers \
-            2>/dev/null | head -200 || true
+            security \
+            include \
+            2>/dev/null || true
+
+      - name: Select Existing Defconfig
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "SELECT DEFCONFIG"
+          echo "========================================"
+
+          DEFCONFIG=""
+
+          for candidate in \
+            violet_defconfig \
+            lineage_violet_defconfig \
+            vendor/violet_defconfig
+          do
+              if [ -f "arch/arm64/configs/$candidate" ]; then
+                  DEFCONFIG="$candidate"
+                  break
+              fi
+          done
+
+          if [ -z "$DEFCONFIG" ]; then
+              echo "[ERROR] Known violet defconfig not found."
+              echo
+              echo "Available violet-related defconfigs:"
+              find arch/arm64/configs \
+                -maxdepth 2 \
+                -type f \
+                -iname '*violet*' \
+                -print
+              exit 1
+          fi
+
+          echo "DEFCONFIG=$DEFCONFIG" >> "$GITHUB_ENV"
+
+          echo "[OK] Selected: $DEFCONFIG"
+
+      - name: Generate Kernel Configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "GENERATE KERNEL CONFIG"
+          echo "========================================"
+
+          make O=out ARCH=arm64 "$DEFCONFIG"
 
           echo
           echo "========================================"
-          echo "DIAGNOSTIC COMPLETE"
+          echo "FINAL BBG CONFIG"
           echo "========================================"
+
+          grep -E \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
+            out/.config \
+            || true
+
+      - name: Force BBG Configuration
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "ENSURE BBG CONFIGURATION"
+          echo "========================================"
+
+          scripts/config \
+            --file out/.config \
+            --enable BBG
+
+          CURRENT_LSM="$(grep '^CONFIG_LSM=' out/.config | sed 's/^CONFIG_LSM="//; s/"$//' || true)"
+
+          if [ -z "$CURRENT_LSM" ]; then
+              echo "[ERROR] CONFIG_LSM not found"
+              exit 1
+          fi
+
+          echo "Current CONFIG_LSM:"
+          echo "$CURRENT_LSM"
+
+          case ",$CURRENT_LSM," in
+              *,baseband_guard,*)
+                  echo "[OK] baseband_guard already present"
+                  ;;
+              *)
+                  NEW_LSM="${CURRENT_LSM},baseband_guard"
+
+                  echo "Updating CONFIG_LSM:"
+                  echo "$NEW_LSM"
+
+                  scripts/config \
+                    --file out/.config \
+                    --set-str LSM "$NEW_LSM"
+                  ;;
+          esac
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo
+          echo "========================================"
+          echo "FINAL CONFIG AFTER OLDDEFCONFIG"
+          echo "========================================"
+
+          grep -E \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
+            out/.config \
+            || true
+
+          echo
+          echo "========================================"
+          echo "BBG CONFIG CHECK"
+          echo "========================================"
+
+          if grep -q '^CONFIG_BBG=y$' out/.config; then
+              echo "[OK] CONFIG_BBG=y"
+          else
+              echo "[FAIL] CONFIG_BBG is not enabled"
+              exit 1
+          fi
+
+          if grep -q '^CONFIG_LSM=.*baseband_guard' out/.config; then
+              echo "[OK] baseband_guard present in CONFIG_LSM"
+          else
+              echo "[FAIL] baseband_guard missing from CONFIG_LSM"
+              exit 1
+          fi
+
+      - name: Build Kernel With BBG
+        run: |
+          set -o pipefail
+
+          echo "========================================"
+          echo "BUILDING KERNEL WITH BASEBAND-GUARD"
+          echo "========================================"
+
+          echo
+          echo "Kernel version:"
+          make O=out ARCH=arm64 kernelversion
+
+          echo
+          echo "Compiler:"
+          gcc --version | head -1
+
+          echo
+          echo "========================================"
+          echo "BUILD START"
+          echo "========================================"
+
+          make \
+            -j"$(nproc)" \
+            O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            2>&1 | tee bbg-build.log
+
+      - name: Analyze BBG Build Result
+        if: always()
+        run: |
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD BUILD RESULT"
+          echo "========================================"
+
+          echo
+          echo "BBG objects:"
+          find out security \
+            -type f \
+            \( \
+              -name 'bbg.o' \
+              -o -name 'baseband_guard.o' \
+              -o -name 'blkdev_helper.o' \
+              -o -name 'tracing.o' \
+            \) \
+            2>/dev/null || true
+
+          echo
+          echo "BBG build messages:"
+          grep -i -E \
+            'Baseband-guard|Baseband_guard|CONFIG_BBG|baseband_guard' \
+            bbg-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "Kernel image:"
+          if [ -f out/arch/arm64/boot/Image ]; then
+              echo "[OK] Image generated"
+          else
+              echo "[FAIL] Image not generated"
+          fi
+
+          echo
+          echo "========================================"
+          echo "FINAL CONFIG"
+          echo "========================================"
+
+          grep -E \
+            '^(CONFIG_LSM=|CONFIG_BBG=|CONFIG_BBG_BLOCK_)' \
+            out/.config \
+            2>/dev/null || true
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseband-guard-build-log
+          path: |
+            bbg-build.log
+            out/.config
+          if-no-files-found: warn
