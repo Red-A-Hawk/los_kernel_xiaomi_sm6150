@@ -1,0 +1,52 @@
+name: Inspect MODPOST CRC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Inspect MODPOST CRC code
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "MODPOST VERSION GENERATION"
+          echo "========================================"
+
+          sed -n '620,720p' scripts/mod/modpost.c
+
+          echo
+          echo "========================================"
+          echo "CRC RELATED FUNCTIONS"
+          echo "========================================"
+
+          grep -n -E 'genksyms|crc|symversion|version' scripts/mod/modpost.c | head -100
+
+          echo
+          echo "========================================"
+          echo "GENKSYMS"
+          echo "========================================"
+
+          grep -R -n -E 'genksyms|CONFIG_MODVERSIONS|MODVERSIONS' \
+            scripts/Makefile* scripts/mod/ 2>/dev/null | head -150
+
+          echo
+          echo "========================================"
+          echo "LTO CONFIG LOCATIONS"
+          echo "========================================"
+
+          grep -R -n -E '^config (LTO|LTO_CLANG|THINLTO|LTO_NONE)|CONFIG_LTO_CLANG' \
+            --include='Kconfig*' . 2>/dev/null | head -200
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
