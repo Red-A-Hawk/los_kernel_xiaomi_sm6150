@@ -136,21 +136,15 @@ jobs:
       - name: Build Droidspaces requirement list
         run: |
           set -e
+           CONFIG_NAMESPACES
+           CONFIG_UTS_NS
+           CONFIG_IPC_NS
+           CONFIG_PID_NS
+           CONFIG_NET_NS
 
-          echo "========================================"
-          echo "BUILDING DROIDSPACES CONFIG LIST"
-          echo "========================================"
-
-          cat > droidspaces_required_configs <<'EOF'
-CONFIG_NAMESPACES
-CONFIG_UTS_NS
-CONFIG_IPC_NS
-CONFIG_PID_NS
-CONFIG_NET_NS
-
-CONFIG_CGROUPS
-CONFIG_CGROUP_FREEZER
-CONFIG_CGROUP_SCHED
+           CONFIG_CGROUPS
+           CONFIG_CGROUP_FREEZER
+           CONFIG_CGROUP_SCHED
 CONFIG_CGROUP_CPUACCT
 CONFIG_CGROUP_DEVICE
 CONFIG_CGROUP_PIDS
@@ -182,6 +176,14 @@ CONFIG_EXT4_FS
 CONFIG_PROC_FS
 CONFIG_SYSFS
 EOF
+
+
+          echo "========================================"
+          echo "BUILDING DROIDSPACES CONFIG LIST"
+          echo "========================================"
+
+          cat > droidspaces_required_configs <<'EOF'
+
 
           sort -u droidspaces_required_configs \
             -o droidspaces_required_configs
