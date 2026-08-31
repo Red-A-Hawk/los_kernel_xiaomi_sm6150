@@ -8,7 +8,6 @@ inspect:
 runs-on: ubuntu-22.04
 
 steps:
-
   - name: Checkout kernel
     uses: actions/checkout@v4
     with:
@@ -18,9 +17,7 @@ steps:
   - name: Install dependencies
     run: |
       set -e
-
       sudo apt update
-
       sudo apt install -y \
         git \
         bc \
@@ -35,18 +32,15 @@ steps:
     run: |
       set -e
 
-      git clone \
-        --depth=1 \
+      git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
         clang
 
-      git clone \
-        --depth=1 \
+      git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
         gcc64
 
-      git clone \
-        --depth=1 \
+      git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
         gcc32
 
@@ -57,7 +51,6 @@ steps:
       export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
 
       echo "PATH=$PATH" >> "$GITHUB_ENV"
-
       echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
       echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
       echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
@@ -154,7 +147,6 @@ steps:
         2>&1 | tee gspca-build.log
 
       BUILD_RESULT=${PIPESTATUS[0]}
-
       echo "$BUILD_RESULT" > gspca-build-result.txt
 
       echo
@@ -174,7 +166,6 @@ steps:
       echo "========================================"
 
       find out/drivers/media/usb/gspca \
-        -maxdepth 1 \
         -type f \
         \
           -name '*.symversions' \
@@ -220,7 +211,7 @@ steps:
 
       echo
       echo "========================================"
-      echo "ALL __crc SYMBOLS"
+      echo "ALL CRC SYMBOLS"
       echo "========================================"
 
       grep -R -n -E '__crc_' \
@@ -256,7 +247,7 @@ steps:
 
       echo
       echo "========================================"
-      echo "GSPCA SYMBOL VERSION WARNINGS"
+      echo "VERSION WARNINGS"
       echo "========================================"
 
       grep -n \
@@ -266,7 +257,7 @@ steps:
 
       echo
       echo "========================================"
-      echo "MODPOST OUTPUT"
+      echo "MODPOST"
       echo "========================================"
 
       grep -n -E \
