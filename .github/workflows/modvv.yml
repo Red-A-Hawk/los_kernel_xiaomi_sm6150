@@ -1,0 +1,51 @@
+name: Inspect LTO MODVERSIONS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Search kernel configuration
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "LTO_CLANG DEFINITION"
+          echo "========================================"
+
+          grep -n -A80 -B10 'config LTO_CLANG' init/Kconfig
+
+          echo
+          echo "========================================"
+          echo "UPDATE_LTO_SYMVERSIONS"
+          echo "========================================"
+
+          grep -R -n 'update_lto_symversions' scripts/
+
+          echo
+          echo "========================================"
+          echo "VERSION GENERATION FAILED"
+          echo "========================================"
+
+          grep -R -n 'version generation failed' scripts/
+
+          echo
+          echo "========================================"
+          echo "LTO / THINLTO / MODVERSIONS"
+          echo "========================================"
+
+          grep -R -n -E 'config (LTO|LTO_CLANG|THINLTO|MODVERSIONS|ARCH_SUPPORTS_LTO_CLANG|ARCH_SUPPORTS_THINLTO)' \
+            init/Kconfig arch/arm64/Kconfig scripts/ 2>/dev/null
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
