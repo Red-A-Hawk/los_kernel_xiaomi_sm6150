@@ -1,0 +1,469 @@
+name: Diagnose BBG Droidspaces ReKernel 4.14
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          set -e
+
+          sudo apt update
+
+          sudo apt install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler \
+            build-essential \
+            make \
+            curl \
+            wget \
+            patch
+
+      - name: Clone Baseband-guard
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://github.com/vc-teahouse/Baseband-guard.git \
+            Baseband-guard
+
+      - name: Clone Droidspaces
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://github.com/ravindu644/Droidspaces-OSS.git \
+            Droidspaces
+
+      - name: Setup Diagnostic
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "KERNEL INTEGRATION DIAGNOSTIC"
+          echo "========================================"
+
+          echo
+          echo "========================================"
+          echo "KERNEL VERSION"
+          echo "========================================"
+
+          grep -E \
+            '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' \
+            Makefile
+
+          KERNEL_VERSION="$(make -s kernelversion 2>/dev/null)"
+          echo "Kernel version: $KERNEL_VERSION"
+
+          echo
+          echo "========================================"
+          echo "DEFCONFIG"
+          echo "========================================"
+
+          if [ -f arch/arm64/configs/vendor/violet-perf_defconfig ]; then
+              echo "[OK] arch/arm64/configs/vendor/violet-perf_defconfig"
+          else
+              echo "[FAIL] violet-perf_defconfig not found"
+          fi
+
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD SOURCE"
+          echo "========================================"
+
+          for f in \
+            Baseband-guard/Kconfig \
+            Baseband-guard/Makefile \
+            Baseband-guard/baseband_guard.c \
+            Baseband-guard/baseband_guard.h \
+            Baseband-guard/blkdev_helper.c \
+            Baseband-guard/blkdev_helper.h
+          do
+              if [ -f "$f" ]; then
+                  echo "[OK] $f"
+              else
+                  echo "[MISSING] $f"
+              fi
+          done
+
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD KERNEL INTEGRATION"
+          echo "========================================"
+
+          if grep -R -q \
+            'baseband-guard' \
+            security/Makefile \
+            security/Kconfig \
+            2>/dev/null
+          then
+              echo "[OK] BBG referenced by kernel security build system"
+          else
+              echo "[INFO] BBG is not referenced directly by kernel security files"
+          fi
+
+          if grep -R -q \
+            'baseband_guard' \
+            security \
+            include \
+            2>/dev/null
+          then
+              echo "[OK] baseband_guard references found in kernel"
+          else
+              echo "[INFO] No baseband_guard references in kernel"
+          fi
+
+          echo
+          echo "========================================"
+          echo "BBG LSM API"
+          echo "========================================"
+
+          if grep -q \
+            '#define DEFINE_LSM(lsm)' \
+            include/linux/lsm_hooks.h \
+            2>/dev/null
+          then
+              echo "[OK] DEFINE_LSM available"
+          else
+              echo "[MISSING] DEFINE_LSM"
+          fi
+
+          if grep -q \
+            'security_add_hooks' \
+            include/linux/lsm_hooks.h \
+            2>/dev/null
+          then
+              echo "[OK] security_add_hooks available"
+          else
+              echo "[MISSING] security_add_hooks"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DROIDSPACES KERNEL FILES"
+          echo "========================================"
+
+          DROID_FILES=(
+            "net/netfilter/xt_qtaguid.c"
+            "include/net/netprio_cgroup.h"
+            "net/core/netprio_cgroup.c"
+            "include/linux/kernfs.h"
+          )
+
+          for f in "${DROID_FILES[@]}"; do
+              if [ -f "$f" ]; then
+                  echo "[OK] $f"
+              else
+                  echo "[MISSING] $f"
+              fi
+          done
+
+          echo
+          echo "========================================"
+          echo "DROIDSPACES PATCH AVAILABILITY"
+          echo "========================================"
+
+          if [ -d Droidspaces/Documentation/resources/kernel-patches ]; then
+              echo "[OK] Droidspaces kernel patches directory"
+
+              find Droidspaces/Documentation/resources/kernel-patches \
+                -type f \
+                \( -name '*.patch' -o -name '*.diff' \) \
+                -print | sort
+          else
+              echo "[MISSING] Droidspaces kernel patch directory"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DROIDSPACES 4.14 PATCHES"
+          echo "========================================"
+
+          XT_PATCH="Droidspaces/Documentation/resources/kernel-patches/non-GKI/01.fix_kernel_panic_in_xt_qtaguid.patch"
+          CGROUP_PATCH="Droidspaces/Documentation/resources/kernel-patches/non-GKI/02.fix_restore cgroup file prefix handling.patch"
+
+          if [ -f "$XT_PATCH" ]; then
+              echo "[OK] xt_qtaguid patch"
+          else
+              echo "[MISSING] xt_qtaguid patch"
+          fi
+
+          if [ -f "$CGROUP_PATCH" ]; then
+              echo "[OK] cgroup patch"
+          else
+              echo "[MISSING] cgroup patch"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DROIDSPACES SOURCE CHECK"
+          echo "========================================"
+
+          if [ -f net/netfilter/xt_qtaguid.c ]; then
+              echo "[OK] xt_qtaguid available for 4.x integration"
+          else
+              echo "[WARNING] xt_qtaguid missing"
+          fi
+
+          if grep -q \
+            'union kernfs_node_id' \
+            include/linux/kernfs.h \
+            2>/dev/null
+          then
+              echo "[INFO] kernfs_node_id is union"
+              echo "[INFO] Droidspaces 4.14 integration expects ->id.id"
+          else
+              echo "[INFO] kernfs_node_id is not detected as union"
+              echo "[INFO] Droidspaces 4.14 integration expects ->id"
+          fi
+
+          echo
+          echo "========================================"
+          echo "REKERNEL FILES"
+          echo "========================================"
+
+          REKERNEL_PATCH="scripts/goodies/assets/Patches/Rekernel/rekernel_patches.sh"
+          REKERNEL_EXTRA="scripts/goodies/assets/Patches/Rekernel/rekernel_extra.patch"
+
+          if [ -f "$REKERNEL_PATCH" ]; then
+              echo "[OK] $REKERNEL_PATCH"
+          else
+              echo "[MISSING] $REKERNEL_PATCH"
+          fi
+
+          if [ -f "$REKERNEL_EXTRA" ]; then
+              echo "[OK] $REKERNEL_EXTRA"
+          else
+              echo "[MISSING] $REKERNEL_EXTRA"
+          fi
+
+          echo
+          echo "========================================"
+          echo "REKERNEL REFERENCES"
+          echo "========================================"
+
+          if grep -R -n \
+            'CONFIG_REKERNEL\|REKERNEL' \
+            . \
+            --exclude-dir=.git \
+            --exclude='*.log' \
+            2>/dev/null | head -100
+          then
+              echo "[OK] ReKernel references found"
+          else
+              echo "[INFO] No ReKernel references found"
+          fi
+
+          echo
+          echo "========================================"
+          echo "CONFIG STATIC CHECK"
+          echo "========================================"
+
+          DEFCONFIG="arch/arm64/configs/vendor/violet-perf_defconfig"
+
+          echo
+          echo "--- BBG ---"
+
+          grep -E \
+            '^(CONFIG_BBG=|CONFIG_BBG_BLOCK_|CONFIG_LSM=)' \
+            "$DEFCONFIG" \
+            2>/dev/null || true
+
+          echo
+          echo "--- SECURITY ---"
+
+          grep -E \
+            '^(CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_INTEGRITY=|CONFIG_DEFAULT_SECURITY_)' \
+            "$DEFCONFIG" \
+            2>/dev/null || true
+
+          echo
+          echo "--- REKERNEL ---"
+
+          grep -E \
+            '^(CONFIG_REKERNEL=)' \
+            "$DEFCONFIG" \
+            2>/dev/null || true
+
+          echo
+          echo "--- DROIDSPACES ---"
+
+          grep -E \
+            '^(CONFIG_NAMESPACES=|CONFIG_PID_NS=|CONFIG_UTS_NS=|CONFIG_IPC_NS=|CONFIG_USER_NS=|CONFIG_NET_NS=|CONFIG_CGROUPS=|CONFIG_CGROUP_DEVICE=|CONFIG_CGROUP_PIDS=|CONFIG_MEMCG=|CONFIG_CGROUP_FREEZER=|CONFIG_CGROUP_NET_PRIO=|CONFIG_OVERLAY_FS=|CONFIG_VETH=|CONFIG_BRIDGE=|CONFIG_NETFILTER=|CONFIG_NF_CONNTRACK=|CONFIG_NF_NAT=)' \
+            "$DEFCONFIG" \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "GENERATE TEMPORARY CONFIG"
+          echo "========================================"
+
+          rm -rf diagnostic-out
+
+          make O=diagnostic-out \
+            ARCH=arm64 \
+            vendor/violet-perf_defconfig
+
+          if [ -f diagnostic-out/.config ]; then
+              echo "[OK] Temporary kernel configuration generated"
+          else
+              echo "[FAIL] Could not generate configuration"
+          fi
+
+          echo
+          echo "========================================"
+          echo "FINAL RESOLVED CONFIG"
+          echo "========================================"
+
+          grep -E \
+            '^(CONFIG_BBG=|CONFIG_REKERNEL=|CONFIG_LSM=|CONFIG_SECURITY=|CONFIG_SECURITY_SELINUX=|CONFIG_NAMESPACES=|CONFIG_USER_NS=|CONFIG_PID_NS=|CONFIG_NET_NS=|CONFIG_CGROUPS=|CONFIG_OVERLAY_FS=|CONFIG_VETH=|CONFIG_BRIDGE=|CONFIG_NETFILTER=)' \
+            diagnostic-out/.config \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "BBG RESULT"
+          echo "========================================"
+
+          BBG_OK=1
+
+          grep -q '^CONFIG_BBG=y$' diagnostic-out/.config \
+            || BBG_OK=0
+
+          grep -q '^CONFIG_LSM=.*baseband_guard' diagnostic-out/.config \
+            || BBG_OK=0
+
+          if [ "$BBG_OK" -eq 1 ]; then
+              echo "RESULT: BBG READY"
+          else
+              echo "RESULT: BBG NOT READY"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DROIDSPACES RESULT"
+          echo "========================================"
+
+          DROID_OK=1
+
+          for cfg in \
+            CONFIG_NAMESPACES \
+            CONFIG_PID_NS \
+            CONFIG_UTS_NS \
+            CONFIG_IPC_NS \
+            CONFIG_USER_NS \
+            CONFIG_NET_NS \
+            CONFIG_CGROUPS \
+            CONFIG_CGROUP_DEVICE \
+            CONFIG_CGROUP_PIDS \
+            CONFIG_MEMCG \
+            CONFIG_CGROUP_FREEZER \
+            CONFIG_OVERLAY_FS \
+            CONFIG_VETH \
+            CONFIG_BRIDGE \
+            CONFIG_NETFILTER \
+            CONFIG_NF_CONNTRACK \
+            CONFIG_NF_NAT
+          do
+              if ! grep -q "^${cfg}=y$" diagnostic-out/.config; then
+                  echo "[MISSING] $cfg"
+                  DROID_OK=0
+              else
+                  echo "[OK] $cfg"
+              fi
+          done
+
+          if [ "$DROID_OK" -eq 1 ]; then
+              echo "RESULT: DROIDSPACES CONFIG READY"
+          else
+              echo "RESULT: DROIDSPACES CONFIG INCOMPLETE"
+          fi
+
+          echo
+          echo "========================================"
+          echo "REKERNEL RESULT"
+          echo "========================================"
+
+          REKERNEL_OK=1
+
+          if [ -f "$REKERNEL_PATCH" ]; then
+              echo "[OK] ReKernel patch script"
+          else
+              echo "[MISSING] ReKernel patch script"
+              REKERNEL_OK=0
+          fi
+
+          if [ -f "$REKERNEL_EXTRA" ]; then
+              echo "[OK] ReKernel extra patch"
+          else
+              echo "[MISSING] ReKernel extra patch"
+              REKERNEL_OK=0
+          fi
+
+          if grep -q '^CONFIG_REKERNEL=y$' diagnostic-out/.config; then
+              echo "[OK] CONFIG_REKERNEL=y"
+          else
+              echo "[INFO] CONFIG_REKERNEL is not enabled"
+              REKERNEL_OK=0
+          fi
+
+          if [ "$REKERNEL_OK" -eq 1 ]; then
+              echo "RESULT: REKERNEL READY"
+          else
+              echo "RESULT: REKERNEL NOT READY"
+          fi
+
+          echo
+          echo "========================================"
+          echo "FINAL DIAGNOSTIC SUMMARY"
+          echo "========================================"
+
+          if [ "$BBG_OK" -eq 1 ]; then
+              echo "BBG         : READY"
+          else
+              echo "BBG         : NOT READY"
+          fi
+
+          if [ "$DROID_OK" -eq 1 ]; then
+              echo "DROIDSPACES : READY"
+          else
+              echo "DROIDSPACES : INCOMPLETE"
+          fi
+
+          if [ "$REKERNEL_OK" -eq 1 ]; then
+              echo "REKERNEL    : READY"
+          else
+              echo "REKERNEL    : NOT READY"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DIAGNOSTIC COMPLETE"
+          echo "========================================"
+
+      - name: Upload Diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbg-droidspaces-rekernel-diagnostic
+          path: |
+            diagnostic-out/.config
+          if-no-files-found: warn
