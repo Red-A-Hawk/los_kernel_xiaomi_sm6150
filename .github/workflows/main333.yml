@@ -1,299 +1,299 @@
 name: Inspect GSPCA Symversions
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-inspect:
-runs-on: ubuntu-22.04
+  inspect:
+    runs-on: ubuntu-22.04
 
-steps:
+    steps:
 
-  - name: Checkout kernel
-    uses: actions/checkout@v4
-    with:
-      ref: 16
-      fetch-depth: 1
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
 
-  - name: Install dependencies
-    run: |
-      set -e
+      - name: Install dependencies
+        run: |
+          set -e
 
-      sudo apt update
+          sudo apt update
 
-      sudo apt install -y \
-        git \
-        bc \
-        bison \
-        flex \
-        libssl-dev \
-        libelf-dev \
-        device-tree-compiler \
-        make
+          sudo apt install -y \
+            git \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler \
+            make
 
-  - name: Clone LineageOS Toolchains
-    run: |
-      set -e
+      - name: Clone LineageOS Toolchains
+        run: |
+          set -e
 
-      git clone \
-        --depth=1 \
-        https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
-        clang
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+            clang
 
-      git clone \
-        --depth=1 \
-        https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
-        gcc64
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
 
-      git clone \
-        --depth=1 \
-        https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
-        gcc32
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
 
-  - name: Setup Toolchain
-    run: |
-      set -e
+      - name: Setup Toolchain
+        run: |
+          set -e
 
-      export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
 
-      echo "PATH=$PATH" >> "$GITHUB_ENV"
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
 
-      echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-      echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-      echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
-      echo "========================================"
-      echo "CLANG"
-      echo "========================================"
+          echo "========================================"
+          echo "CLANG"
+          echo "========================================"
 
-      which clang
-      clang --version
+          which clang
+          clang --version
 
-      echo
-      echo "========================================"
-      echo "LLD"
-      echo "========================================"
-
-      which ld.lld
-      ld.lld --version
-
-      echo
-      echo "========================================"
-      echo "LLVM TOOLS"
-      echo "========================================"
-
-      which llvm-ar
-      which llvm-nm
-      which llvm-objcopy
-      which llvm-objdump
-      which llvm-strip
-
-  - name: Load violet-perf defconfig
-    run: |
-      set -e
-
-      make O=out \
-        ARCH=arm64 \
-        vendor/violet-perf_defconfig
-
-      echo
-      echo "========================================"
-      echo "LTO / MODVERSIONS"
-      echo "========================================"
-
-      grep -E \
-        '^(CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_LTO_NONE=|CONFIG_MODVERSIONS=|CONFIG_ARCH_SUPPORTS_LTO_CLANG=|CONFIG_ARCH_SUPPORTS_THINLTO=|CONFIG_THIN_ARCHIVES=)' \
-        out/.config || true
-
-  - name: Prepare kernel
-    run: |
-      set -e
-
-      make -j2 \
-        O=out \
-        ARCH=arm64 \
-        LLVM=1 \
-        LLVM_IAS=1 \
-        CC=clang \
-        LD=ld.lld \
-        AR=llvm-ar \
-        NM=llvm-nm \
-        OBJCOPY=llvm-objcopy \
-        OBJDUMP=llvm-objdump \
-        STRIP=llvm-strip \
-        CROSS_COMPILE="$CROSS_COMPILE" \
-        CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-        CLANG_TRIPLE="$CLANG_TRIPLE" \
-        modules_prepare
-
-  - name: Build GSPCA
-    run: |
-      set +e
-
-      echo "========================================"
-      echo "BUILDING GSPCA"
-      echo "========================================"
-
-      make V=1 -j2 \
-        O=out \
-        ARCH=arm64 \
-        LLVM=1 \
-        LLVM_IAS=1 \
-        CC=clang \
-        LD=ld.lld \
-        AR=llvm-ar \
-        NM=llvm-nm \
-        OBJCOPY=llvm-objcopy \
-        OBJDUMP=llvm-objdump \
-        STRIP=llvm-strip \
-        CROSS_COMPILE="$CROSS_COMPILE" \
-        CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-        CLANG_TRIPLE="$CLANG_TRIPLE" \
-        M=drivers/media/usb/gspca \
-        modules \
-        2>&1 | tee gspca-build.log
-
-      BUILD_RESULT=${PIPESTATUS[0]}
-
-      echo "$BUILD_RESULT" > gspca-build-result.txt
-
-      echo
-      echo "========================================"
-      echo "BUILD EXIT CODE"
-      echo "========================================"
-
-      cat gspca-build-result.txt
-
-  - name: Inspect GSPCA Symversions
-    if: always()
-    run: |
-      set +e
-
-      echo "========================================"
-      echo "GSPCA FILES"
-      echo "========================================"
-
-      find out/drivers/media/usb/gspca \
-        -maxdepth 1 \
-        -type f \
-        \
-          -name '*.symversions' \
-          -o -name '*.o' \
-          -o -name '*.lto.o' \
-          -o -name '*.ko' \
-          -o -name '*.mod.c' \
-          -o -name '*.mod.o' \
-          -o -name '*.cmd' \
-        \
-        -print | sort
-
-      echo
-      echo "========================================"
-      echo "SYMVERSION FILES"
-      echo "========================================"
-
-      find out/drivers/media/usb/gspca \
-        -type f \
-        -name '*.symversions' \
-        -print \
-        -exec sh -c '
           echo
-          echo "===== $1 ====="
-          wc -l "$1"
-          cat "$1"
-        ' _ {} \;
+          echo "========================================"
+          echo "LLD"
+          echo "========================================"
 
-      echo
-      echo "========================================"
-      echo "GSPCA MAIN SYMVERSIONS"
-      echo "========================================"
+          which ld.lld
+          ld.lld --version
 
-      find out \
-        -type f \
-        -name 'gspca_main.o.symversions' \
-        -print \
-        -exec sh -c '
           echo
-          echo "===== $1 ====="
-          cat "$1"
-        ' _ {} \;
+          echo "========================================"
+          echo "LLVM TOOLS"
+          echo "========================================"
 
-      echo
-      echo "========================================"
-      echo "ALL __crc SYMBOLS"
-      echo "========================================"
+          which llvm-ar
+          which llvm-nm
+          which llvm-objcopy
+          which llvm-objdump
+          which llvm-strip
 
-      grep -R -n -E '__crc_' \
-        out/drivers/media/usb/gspca \
-        2>/dev/null || true
+      - name: Load violet-perf defconfig
+        run: |
+          set -e
 
-      echo
-      echo "========================================"
-      echo "SYMVERSION REFERENCES"
-      echo "========================================"
+          make O=out \
+            ARCH=arm64 \
+            vendor/violet-perf_defconfig
 
-      grep -R -n -E \
-        'symversions|update_lto_symversions|LLVM_AR|llvm-ar' \
-        out/drivers/media/usb/gspca \
-        2>/dev/null || true
-
-      echo
-      echo "========================================"
-      echo "KBUILD COMMAND FILES"
-      echo "========================================"
-
-      find out/drivers/media/usb/gspca \
-        -type f \
-        -name '.*.cmd' \
-        -print \
-        -exec sh -c '
           echo
-          echo "===== $1 ====="
+          echo "========================================"
+          echo "LTO / MODVERSIONS"
+          echo "========================================"
+
           grep -E \
-            "clang|llvm|symversion|genksyms|llvm-ar|ar " \
-            "$1" || true
-        ' _ {} \;
+            '^(CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_LTO_NONE=|CONFIG_MODVERSIONS=|CONFIG_ARCH_SUPPORTS_LTO_CLANG=|CONFIG_ARCH_SUPPORTS_THINLTO=|CONFIG_THIN_ARCHIVES=)' \
+            out/.config || true
 
-      echo
-      echo "========================================"
-      echo "GSPCA SYMBOL VERSION WARNINGS"
-      echo "========================================"
+      - name: Prepare kernel
+        run: |
+          set -e
 
-      grep -n \
-        "version generation failed" \
-        gspca-build.log \
-        2>/dev/null || true
+          make -j2 \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            modules_prepare
 
-      echo
-      echo "========================================"
-      echo "MODPOST OUTPUT"
-      echo "========================================"
+      - name: Build GSPCA
+        run: |
+          set +e
 
-      grep -n -E \
-        'MODPOST|EXPORT symbol|version generation|gspca_' \
-        gspca-build.log \
-        2>/dev/null || true
+          echo "========================================"
+          echo "BUILDING GSPCA"
+          echo "========================================"
 
-      echo
-      echo "========================================"
-      echo "BUILD RESULT"
-      echo "========================================"
+          make V=1 -j2 \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            M=drivers/media/usb/gspca \
+            modules \
+            2>&1 | tee gspca-build.log
 
-      cat gspca-build-result.txt 2>/dev/null || true
+          BUILD_RESULT=${PIPESTATUS[0]}
 
-      echo
-      echo "========================================"
-      echo "DONE"
-      echo "========================================"
+          echo "$BUILD_RESULT" > gspca-build-result.txt
 
-  - name: Upload diagnostic
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: gspca-symversions-diagnostic
-      path: |
-        gspca-build.log
-        gspca-build-result.txt
-        out/drivers/media/usb/gspca/
-        out/Module.symvers
-      if-no-files-found: warn
+          echo
+          echo "========================================"
+          echo "BUILD EXIT CODE"
+          echo "========================================"
+
+          cat gspca-build-result.txt
+
+      - name: Inspect GSPCA Symversions
+        if: always()
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "GSPCA FILES"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -maxdepth 1 \
+            -type f \
+            \( \
+              -name '*.symversions' \
+              -o -name '*.o' \
+              -o -name '*.lto.o' \
+              -o -name '*.ko' \
+              -o -name '*.mod.c' \
+              -o -name '*.mod.o' \
+              -o -name '*.cmd' \
+            \) \
+            -print | sort
+
+          echo
+          echo "========================================"
+          echo "SYMVERSION FILES"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -type f \
+            -name '*.symversions' \
+            -print \
+            -exec sh -c '
+              echo
+              echo "===== $1 ====="
+              wc -l "$1"
+              cat "$1"
+            ' _ {} \;
+
+          echo
+          echo "========================================"
+          echo "GSPCA MAIN SYMVERSIONS"
+          echo "========================================"
+
+          find out \
+            -type f \
+            -name 'gspca_main.o.symversions' \
+            -print \
+            -exec sh -c '
+              echo
+              echo "===== $1 ====="
+              cat "$1"
+            ' _ {} \;
+
+          echo
+          echo "========================================"
+          echo "ALL __crc SYMBOLS"
+          echo "========================================"
+
+          grep -R -n -E '__crc_' \
+            out/drivers/media/usb/gspca \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SYMVERSION REFERENCES"
+          echo "========================================"
+
+          grep -R -n -E \
+            'symversions|update_lto_symversions|LLVM_AR|llvm-ar' \
+            out/drivers/media/usb/gspca \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "KBUILD COMMAND FILES"
+          echo "========================================"
+
+          find out/drivers/media/usb/gspca \
+            -type f \
+            -name '.*.cmd' \
+            -print \
+            -exec sh -c '
+              echo
+              echo "===== $1 ====="
+              grep -E \
+                "clang|llvm|symversion|genksyms|llvm-ar|ar " \
+                "$1" || true
+            ' _ {} \;
+
+          echo
+          echo "========================================"
+          echo "GSPCA SYMBOL VERSION WARNINGS"
+          echo "========================================"
+
+          grep -n \
+            "version generation failed" \
+            gspca-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "MODPOST OUTPUT"
+          echo "========================================"
+
+          grep -n -E \
+            'MODPOST|EXPORT symbol|version generation|gspca_' \
+            gspca-build.log \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "BUILD RESULT"
+          echo "========================================"
+
+          cat gspca-build-result.txt 2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
+
+      - name: Upload diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gspca-symversions-diagnostic
+          path: |
+            gspca-build.log
+            gspca-build-result.txt
+            out/drivers/media/usb/gspca/
+            out/Module.symvers
+          if-no-files-found: warn
