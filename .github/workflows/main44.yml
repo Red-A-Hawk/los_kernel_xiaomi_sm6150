@@ -1,4 +1,4 @@
-name: Droidspaces Kernel Configuration
+name: Droidspaces Kernel Integration
 
 on:
   workflow_dispatch:
@@ -8,11 +8,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-
       - name: Checkout kernel
         uses: actions/checkout@v4
         with:
-          ref: 16
           fetch-depth: 1
 
       - name: Install dependencies
@@ -28,10 +26,10 @@ jobs:
             flex \
             libssl-dev \
             libelf-dev \
+            device-tree-compiler \
+            gcc-aarch64-linux-gnu \
             make \
-            gcc \
-            patch \
-            rsync
+            patch
 
       - name: Clone Droidspaces
         run: |
@@ -43,7 +41,14 @@ jobs:
             https://github.com/ravindu644/Droidspaces-OSS.git \
             droidspaces
 
-      - name: Verify kernel
+          echo
+          echo "========================================"
+          echo "DROIDSPACES"
+          echo "========================================"
+          git -C droidspaces log -1 --oneline
+          echo
+
+      - name: Verify kernel and defconfig
         run: |
           set -e
 
@@ -53,430 +58,354 @@ jobs:
 
           echo
           echo "Kernel:"
-          make kernelversion || true
+          make kernelversion
 
           echo
           echo "Defconfig:"
-          test -f vendor/violet-perf_defconfig
 
-          echo "vendor/violet-perf_defconfig: FOUND"
+          if [ ! -f vendor/violet-perf_defconfig ]; then
+            echo "ERROR: vendor/violet-perf_defconfig not found"
+            exit 1
+          fi
 
-      - name: Apply Droidspaces non-GKI patches
-        shell: bash
+          echo "FOUND: vendor/violet-perf_defconfig"
+
+      - name: Generate base .config
         run: |
-          set +e
+          set -e
+
+          echo "========================================"
+          echo "GENERATING BASE KCONFIG"
+          echo "========================================"
+
+          rm -rf out
+          mkdir -p out
+
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/violet-perf_defconfig
+
+          if [ ! -f out/.config ]; then
+            echo "ERROR: out/.config was not generated"
+            exit 1
+          fi
 
           echo
+          echo "BASE CONFIG GENERATED:"
+          echo "out/.config"
+
+      - name: Discover Droidspaces kernel requirements
+        run: |
+          set -e
+
           echo "========================================"
-          echo "APPLYING DROIDSPACES NON-GKI PATCHES"
+          echo "DROIDSPACES REQUIREMENTS DISCOVERY"
           echo "========================================"
 
-          PATCHDIR="droidspaces/Documentation/resources/kernel-patches/non-GKI"
+          PATCH_DIR="droidspaces/Documentation/resources/kernel-patches/non-GKI"
 
-          if [ ! -d "$PATCHDIR" ]; then
+          if [ ! -d "$PATCH_DIR" ]; then
             echo "ERROR: Droidspaces non-GKI patch directory not found"
             exit 1
           fi
 
-          for patch in "$PATCHDIR"/*.patch; do
+          echo
+          echo "Non-GKI patches:"
+          find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' -print | sort
 
-            [ -f "$patch" ] || continue
+          echo
+          echo "Searching Droidspaces documentation for CONFIG requirements..."
 
-            name="$(basename "$patch")"
+          {
+            grep -RhoE 'CONFIG_[A-Z0-9_]+' \
+              droidspaces/Documentation \
+              droidspaces/src \
+              droidspaces/init \
+              2>/dev/null || true
+          } | sort -u > droidspaces_configs.raw
 
+          if [ ! -s droidspaces_configs.raw ]; then
+            echo "WARNING: No CONFIG symbols found automatically"
+          else
             echo
-            echo "----------------------------------------"
-            echo "Checking: $name"
-            echo "----------------------------------------"
+            echo "CONFIG symbols discovered:"
+            cat droidspaces_configs.raw
+          fi
 
-            target="$(grep -m1 '^diff --git ' "$patch" | sed -E 's#diff --git a/(.*) b/.*#\1#')"
-
-            if [ -z "$target" ]; then
-              echo "STATUS: INVALID_PATCH_TARGET"
-              continue
-            fi
-
-            echo "Target: $target"
-
-            if [ ! -f "$target" ]; then
-              echo "STATUS: SKIPPED_MISSING_TARGET"
-              continue
-            fi
-
-            echo "Target exists."
-
-            if patch --dry-run -p1 < "$patch" >/tmp/ds_patch_check.log 2>&1; then
-
-              if patch -p1 < "$patch" >/tmp/ds_patch_apply.log 2>&1; then
-                echo "STATUS: APPLIED"
-              else
-                echo "STATUS: APPLY_FAILED"
-                cat /tmp/ds_patch_apply.log
-              fi
-
-            else
-
-              echo "STATUS: SKIPPED_NOT_APPLICABLE"
-              cat /tmp/ds_patch_check.log
-
-            fi
-
-          done
-
-      - name: Prepare base defconfig
-        shell: bash
+      - name: Build Droidspaces requirement list
         run: |
           set -e
 
+          echo "========================================"
+          echo "BUILDING DROIDSPACES CONFIG LIST"
+          echo "========================================"
+
+          cat > droidspaces_required_configs <<'EOF'
+CONFIG_NAMESPACES
+CONFIG_UTS_NS
+CONFIG_IPC_NS
+CONFIG_PID_NS
+CONFIG_NET_NS
+
+CONFIG_CGROUPS
+CONFIG_CGROUP_FREEZER
+CONFIG_CGROUP_SCHED
+CONFIG_CGROUP_CPUACCT
+CONFIG_CGROUP_DEVICE
+CONFIG_CGROUP_PIDS
+CONFIG_CGROUP_NET_PRIO
+CONFIG_CGROUP_NET_CLASSID
+
+CONFIG_SECCOMP
+CONFIG_SECCOMP_FILTER
+
+CONFIG_NETFILTER
+CONFIG_NETFILTER_XTABLES
+CONFIG_NETFILTER_XT_TARGET_MARK
+CONFIG_NETFILTER_XT_MATCH_COMMENT
+CONFIG_NETFILTER_XT_MATCH_CONNMARK
+CONFIG_NETFILTER_XT_MATCH_OWNER
+CONFIG_NETFILTER_XT_MATCH_SOCKET
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+
+CONFIG_BRIDGE
+CONFIG_BRIDGE_NETFILTER
+CONFIG_VETH
+
+CONFIG_DEVTMPFS
+CONFIG_DEVTMPFS_MOUNT
+
+CONFIG_OVERLAY_FS
+CONFIG_TMPFS
+CONFIG_EXT4_FS
+CONFIG_PROC_FS
+CONFIG_SYSFS
+EOF
+
+          sort -u droidspaces_required_configs \
+            -o droidspaces_required_configs
+
           echo
-          echo "========================================"
-          echo "PREPARING DEFCONFIG"
-          echo "========================================"
+          cat droidspaces_required_configs
 
-          cp vendor/violet-perf_defconfig /tmp/violet-perf_defconfig.original
-
-          echo "Original defconfig:"
-          wc -l vendor/violet-perf_defconfig
-
-      - name: Generate Kconfig baseline
-        shell: bash
+      - name: Droidspaces Kconfig check
         run: |
           set -e
-
-          echo
-          echo "========================================"
-          echo "GENERATING KCONFIG BASELINE"
-          echo "========================================"
-
-          make O=out ARCH=arm64 vendor/violet-perf_defconfig
-
-          cp out/.config /tmp/violet-kconfig-before
-
-          echo "Kconfig baseline generated."
-
-      - name: Droidspaces requirement analysis
-        shell: bash
-        run: |
-          set +e
 
           echo
           echo "========================================"
           echo "DROIDSPACES CONFIG CHECK"
           echo "========================================"
 
+          CONFIG="out/.config"
+
+          : > droidspaces_missing
+          : > droidspaces_disabled
+          : > droidspaces_enabled
+          : > droidspaces_unavailable
+
+          while read -r symbol; do
+            [ -z "$symbol" ] && continue
+
+            line=$(grep -E "^${symbol}=" "$CONFIG" || true)
+            disabled=$(grep -E "^# ${symbol} is not set$" "$CONFIG" || true)
+
+            if [ -n "$line" ]; then
+              if [ "$line" = "${symbol}=y" ]; then
+                echo "$symbol=y" >> droidspaces_enabled
+              else
+                echo "$symbol ($line)" >> droidspaces_disabled
+              fi
+
+            elif [ -n "$disabled" ]; then
+              echo "$symbol" >> droidspaces_disabled
+
+            else
+              echo "$symbol" >> droidspaces_missing
+            fi
+          done < droidspaces_required_configs
+
           echo
-          echo "Kernel version:"
-          make kernelversion
+          echo "MISSING:"
+          if [ -s droidspaces_missing ]; then
+            cat droidspaces_missing
+          else
+            echo "(none)"
+          fi
 
           echo
-          echo "Checking actual Kconfig symbols..."
+          echo "DISABLED:"
+          if [ -s droidspaces_disabled ]; then
+            cat droidspaces_disabled
+          else
+            echo "(none)"
+          fi
+
           echo
+          echo "ALREADY ENABLED:"
+          if [ -s droidspaces_enabled ]; then
+            cat droidspaces_enabled
+          else
+            echo "(none)"
+          fi
 
-          REQUIRED_CONFIGS=(
+          echo
+          echo "NOT AVAILABLE IN THIS KERNEL:"
+          if [ -s droidspaces_unavailable ]; then
+            cat droidspaces_unavailable
+          else
+            echo "(none)"
+          fi
 
-            CONFIG_SYSCTL
-            CONFIG_SYSVIPC
-            CONFIG_POSIX_MQUEUE
-
-            CONFIG_NAMESPACES
-            CONFIG_PID_NS
-            CONFIG_UTS_NS
-            CONFIG_IPC_NS
-            CONFIG_NET_NS
-
-            CONFIG_SECCOMP
-            CONFIG_SECCOMP_FILTER
-
-            CONFIG_CGROUPS
-            CONFIG_CGROUP_DEVICE
-            CONFIG_CGROUP_PIDS
-            CONFIG_MEMCG
-            CONFIG_CGROUP_SCHED
-            CONFIG_FAIR_GROUP_SCHED
-            CONFIG_CGROUP_FREEZER
-            CONFIG_CGROUP_NET_PRIO
-
-            CONFIG_DEVTMPFS
-
-            CONFIG_OVERLAY_FS
-
-            CONFIG_TMPFS_POSIX_ACL
-            CONFIG_TMPFS_XATTR
-
-            CONFIG_FW_LOADER
-            CONFIG_FW_LOADER_USER_HELPER
-            CONFIG_FW_LOADER_COMPRESS
-
-            CONFIG_VETH
-            CONFIG_BRIDGE
-
-            CONFIG_NETFILTER
-            CONFIG_NETFILTER_XTABLES
-            CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
-            CONFIG_BRIDGE_NETFILTER
-
-            CONFIG_EXT4_FS
-            CONFIG_PROC_FS
-            CONFIG_SYSFS
-            CONFIG_DEVPTS_FS
-          )
-
-          : > /tmp/droidspaces_config_report
-
-          echo "DROIDSPACES CONFIG CHECK" | tee -a /tmp/droidspaces_config_report
-          echo "========================" | tee -a /tmp/droidspaces_config_report
-          echo | tee -a /tmp/droidspaces_config_report
-
-          echo "MISSING:" | tee -a /tmp/droidspaces_config_report
-
-          missing=0
-
-          for cfg in "${REQUIRED_CONFIGS[@]}"; do
-
-            symbol="${cfg#CONFIG_}"
-
-            if ! grep -q "^${cfg}=" out/.config && \
-               ! grep -q "^# ${cfg} is not set" out/.config; then
-
-              echo "$cfg" | tee -a /tmp/droidspaces_config_report
-              missing=$((missing + 1))
-
-            fi
-
-          done
-
-          [ "$missing" -eq 0 ] && echo "(none)" | tee -a /tmp/droidspaces_config_report
-
-          echo | tee -a /tmp/droidspaces_config_report
-          echo "DISABLED:" | tee -a /tmp/droidspaces_config_report
-
-          disabled=0
-
-          for cfg in "${REQUIRED_CONFIGS[@]}"; do
-
-            if grep -q "^# ${cfg} is not set" out/.config; then
-
-              echo "$cfg" | tee -a /tmp/droidspaces_config_report
-              disabled=$((disabled + 1))
-
-            fi
-
-          done
-
-          [ "$disabled" -eq 0 ] && echo "(none)" | tee -a /tmp/droidspaces_config_report
-
-          echo | tee -a /tmp/droidspaces_config_report
-          echo "ALREADY ENABLED:" | tee -a /tmp/droidspaces_config_report
-
-          enabled=0
-
-          for cfg in "${REQUIRED_CONFIGS[@]}"; do
-
-            if grep -q "^${cfg}=" out/.config; then
-
-              value="$(grep "^${cfg}=" out/.config | head -1)"
-              echo "$value" | tee -a /tmp/droidspaces_config_report
-              enabled=$((enabled + 1))
-
-            fi
-
-          done
-
-          [ "$enabled" -eq 0 ] && echo "(none)" | tee -a /tmp/droidspaces_config_report
-
-          echo | tee -a /tmp/droidspaces_config_report
-          echo "NOT AVAILABLE IN THIS KERNEL:" | tee -a /tmp/droidspaces_config_report
-
-          unavailable=0
-
-          for cfg in "${REQUIRED_CONFIGS[@]}"; do
-
-            symbol="${cfg#CONFIG_}"
-
-            if ! grep -Rqs \
-              "^config ${symbol}$\|^menuconfig ${symbol}$" \
-              --include='Kconfig*' \
-              --exclude-dir=.git \
-              .; then
-
-              echo "$cfg" | tee -a /tmp/droidspaces_config_report
-              unavailable=$((unavailable + 1))
-
-            fi
-
-          done
-
-          [ "$unavailable" -eq 0 ] && echo "(none)" | tee -a /tmp/droidspaces_config_report
-
-          echo | tee -a /tmp/droidspaces_config_report
-
-          cat /tmp/droidspaces_config_report
-
-      - name: Enable Droidspaces required configs
-        shell: bash
+      - name: Apply Droidspaces Kconfig changes
         run: |
           set -e
 
           echo
           echo "========================================"
-          echo "ENABLING DROIDSPACES CONFIGS"
+          echo "DROIDSPACES KCONFIG MODIFICATIONS"
           echo "========================================"
 
-          CONFIG_FRAGMENT="out/droidspaces.fragment"
+          CONFIG="out/.config"
 
-          cat > "$CONFIG_FRAGMENT" <<'EOF'
-          CONFIG_SYSCTL=y
-          CONFIG_SYSVIPC=y
-          CONFIG_POSIX_MQUEUE=y
+          cp "$CONFIG" out/.config.droidspaces.before
 
-          CONFIG_NAMESPACES=y
-          CONFIG_PID_NS=y
-          CONFIG_UTS_NS=y
-          CONFIG_IPC_NS=y
-          CONFIG_NET_NS=y
+          changed=0
+          unchanged=0
+          unavailable=0
 
-          CONFIG_SECCOMP=y
-          CONFIG_SECCOMP_FILTER=y
+          while read -r symbol; do
+            [ -z "$symbol" ] && continue
 
-          CONFIG_CGROUPS=y
-          CONFIG_CGROUP_DEVICE=y
-          CONFIG_CGROUP_PIDS=y
-          CONFIG_MEMCG=y
-          CONFIG_CGROUP_SCHED=y
-          CONFIG_FAIR_GROUP_SCHED=y
-          CONFIG_CGROUP_FREEZER=y
-          CONFIG_CGROUP_NET_PRIO=y
+            before=$(grep -E "^${symbol}=|^# ${symbol} is not set$" "$CONFIG" || true)
 
-          CONFIG_DEVTMPFS=y
+            if grep -q "^${symbol}=y$" "$CONFIG"; then
+              echo
+              echo "$symbol"
+              echo "  BEFORE: $before"
+              echo "  REQUIRED: y"
+              echo "  ACTION: UNCHANGED"
+              echo "  AFTER: $symbol=y"
+              unchanged=$((unchanged + 1))
+              continue
+            fi
 
-          CONFIG_OVERLAY_FS=y
+            if grep -q "^# ${symbol} is not set$" "$CONFIG"; then
+              sed -i "s/^# ${symbol} is not set$/${symbol}=y/" "$CONFIG"
 
-          CONFIG_TMPFS_POSIX_ACL=y
-          CONFIG_TMPFS_XATTR=y
+              echo
+              echo "$symbol"
+              echo "  BEFORE: $before"
+              echo "  REQUIRED: y"
+              echo "  ACTION: ENABLED"
+              echo "  AFTER: $symbol=y"
 
-          CONFIG_FW_LOADER=y
-          CONFIG_FW_LOADER_USER_HELPER=y
-          CONFIG_FW_LOADER_COMPRESS=y
+              changed=$((changed + 1))
+              continue
+            fi
 
-          CONFIG_VETH=y
-          CONFIG_BRIDGE=y
+            if grep -q "^${symbol}=" "$CONFIG"; then
+              sed -i "s/^${symbol}=.*/${symbol}=y/" "$CONFIG"
 
-          CONFIG_NETFILTER=y
-          CONFIG_NETFILTER_XTABLES=y
-          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
-          CONFIG_BRIDGE_NETFILTER=y
+              echo
+              echo "$symbol"
+              echo "  BEFORE: $before"
+              echo "  REQUIRED: y"
+              echo "  ACTION: CHANGED TO y"
+              echo "  AFTER: $symbol=y"
 
-          CONFIG_EXT4_FS=y
-          CONFIG_PROC_FS=y
-          CONFIG_SYSFS=y
-          CONFIG_DEVPTS_FS=y
-          EOF
+              changed=$((changed + 1))
+              continue
+            fi
 
-          ./scripts/kconfig/merge_config.sh \
-            -m \
-            out/.config \
-            "$CONFIG_FRAGMENT"
+            echo
+            echo "$symbol"
+            echo "  BEFORE: NOT AVAILABLE"
+            echo "  REQUIRED: y"
+            echo "  ACTION: NOT AVAILABLE"
 
-          make O=out ARCH=arm64 olddefconfig
+            echo "$symbol" >> droidspaces_unavailable
+            unavailable=$((unavailable + 1))
+
+          done < droidspaces_required_configs
 
           echo
-          echo "Kconfig dependency resolution completed."
+          echo "========================================"
+          echo "KCONFIG MODIFICATION SUMMARY"
+          echo "========================================"
+          echo "CHANGED:     $changed"
+          echo "UNCHANGED:   $unchanged"
+          echo "UNAVAILABLE: $unavailable"
 
-      - name: Validate final Droidspaces configuration
-        shell: bash
+      - name: Apply Droidspaces non-GKI patches
         run: |
-          set +e
+          set -e
 
           echo
           echo "========================================"
-          echo "FINAL DROIDSPACES CONFIG CHECK"
+          echo "APPLYING DROIDSPACES NON-GKI PATCHES"
           echo "========================================"
 
-          CONFIGS=(
+          PATCH_DIR="droidspaces/Documentation/resources/kernel-patches/non-GKI"
 
-            CONFIG_SYSCTL
-            CONFIG_SYSVIPC
-            CONFIG_POSIX_MQUEUE
+          for patch_file in "$PATCH_DIR"/*.patch; do
+            [ -f "$patch_file" ] || continue
 
-            CONFIG_NAMESPACES
-            CONFIG_PID_NS
-            CONFIG_UTS_NS
-            CONFIG_IPC_NS
-            CONFIG_NET_NS
+            echo
+            echo "----------------------------------------"
+            echo "Checking:"
+            echo "$patch_file"
+            echo "----------------------------------------"
 
-            CONFIG_SECCOMP
-            CONFIG_SECCOMP_FILTER
+            target_files=$(grep -E '^diff --git a/[^ ]+ b/[^ ]+' "$patch_file" \
+              | sed -E 's#^diff --git a/[^ ]+ b/([^ ]+)#\1#' || true)
 
-            CONFIG_CGROUPS
-            CONFIG_CGROUP_DEVICE
-            CONFIG_CGROUP_PIDS
-            CONFIG_MEMCG
-            CONFIG_CGROUP_SCHED
-            CONFIG_FAIR_GROUP_SCHED
-            CONFIG_CGROUP_FREEZER
-            CONFIG_CGROUP_NET_PRIO
+            can_apply=true
 
-            CONFIG_DEVTMPFS
-            CONFIG_OVERLAY_FS
+            while read -r target; do
+              [ -z "$target" ] && continue
 
-            CONFIG_TMPFS_POSIX_ACL
-            CONFIG_TMPFS_XATTR
+              if [ ! -f "$target" ]; then
+                echo "Target missing: $target"
+                can_apply=false
+              else
+                echo "Target found: $target"
+              fi
+            done <<< "$target_files"
 
-            CONFIG_FW_LOADER
-            CONFIG_FW_LOADER_USER_HELPER
-            CONFIG_FW_LOADER_COMPRESS
+            if [ "$can_apply" != true ]; then
+              echo "$(basename "$patch_file"): SKIPPED_MISSING_TARGET"
+              continue
+            fi
 
-            CONFIG_VETH
-            CONFIG_BRIDGE
-
-            CONFIG_NETFILTER
-            CONFIG_NETFILTER_XTABLES
-            CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
-            CONFIG_BRIDGE_NETFILTER
-
-            CONFIG_EXT4_FS
-            CONFIG_PROC_FS
-            CONFIG_SYSFS
-            CONFIG_DEVPTS_FS
-          )
-
-          failed=0
-
-          for cfg in "${CONFIGS[@]}"; do
-
-            if grep -q "^${cfg}=y$" out/.config; then
-
-              echo "OK      $cfg=y"
-
-            elif grep -q "^${cfg}=m$" out/.config; then
-
-              echo "MODULE  $cfg=m"
-              failed=1
-
-            elif grep -q "^# ${cfg} is not set" out/.config; then
-
-              echo "FAIL    $cfg=n"
-              failed=1
-
+            if git apply --check "$patch_file"; then
+              git apply "$patch_file"
+              echo "$(basename "$patch_file"): APPLIED"
             else
-
-              echo "MISSING $cfg"
-              failed=1
-
+              echo "$(basename "$patch_file"): SKIPPED_NOT_APPLICABLE"
             fi
 
           done
 
+      - name: Resolve Kconfig dependencies
+        run: |
+          set -e
+
           echo
+          echo "========================================"
+          echo "RESOLVING KCONFIG DEPENDENCIES"
+          echo "========================================"
 
-          if [ "$failed" -eq 0 ]; then
-            echo "DROIDSPACES FINAL CHECK: PASS"
-          else
-            echo "DROIDSPACES FINAL CHECK: REVIEW REQUIRED"
-          fi
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
 
-      - name: Generate full Droidspaces defconfig
-        shell: bash
+          echo
+          echo "KCONFIG DEPENDENCIES RESOLVED"
+
+      - name: Generate full defconfig
         run: |
           set -e
 
@@ -485,66 +414,76 @@ jobs:
           echo "GENERATING FULL DEFCONFIG"
           echo "========================================"
 
-          make O=out ARCH=arm64 savedefconfig
+          FULL_DEFCONFIG="vendor/violet-perf_defconfig.full"
 
-          cp out/defconfig vendor/violet-perf_defconfig.full
+          make O=out \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            savedefconfig
+
+          cp out/defconfig "$FULL_DEFCONFIG"
 
           echo
-          echo "Generated:"
-          echo "vendor/violet-perf_defconfig.full"
+          echo "FULL DEFCONFIG:"
+          echo "$FULL_DEFCONFIG"
 
-          wc -l vendor/violet-perf_defconfig.full
+          echo
+          echo "SIZE:"
+          wc -l "$FULL_DEFCONFIG"
 
-      - name: Generate final complete config
-        shell: bash
+      - name: Final Droidspaces verification
         run: |
           set -e
 
-          cp out/.config vendor/violet-perf_defconfig.complete
+          echo
+          echo "========================================"
+          echo "FINAL DROIDSPACES VERIFICATION"
+          echo "========================================"
+
+          CONFIG="out/.config"
+
+          echo
+          echo "Kernel:"
+          make kernelversion
+
+          echo
+          echo "Defconfig:"
+          echo "vendor/violet-perf_defconfig"
+
+          echo
+          echo "Full defconfig:"
+          echo "vendor/violet-perf_defconfig.full"
+
+          echo
+          echo "Final required configuration:"
+
+          while read -r symbol; do
+            [ -z "$symbol" ] && continue
+
+            grep -E "^${symbol}=|^# ${symbol} is not set$" "$CONFIG" \
+              || echo "$symbol: NOT PRESENT"
+
+          done < droidspaces_required_configs
 
           echo
           echo "========================================"
-          echo "OUTPUT FILES"
+          echo "NO FULL KERNEL BUILD"
           echo "========================================"
+          echo "Droidspaces integration stage completed."
 
-          ls -lh \
-            vendor/violet-perf_defconfig.full \
-            vendor/violet-perf_defconfig.complete
-
-      - name: Final report
-        shell: bash
-        run: |
-          echo
-          echo "========================================"
-          echo "DROIDSPACES FINAL REPORT"
-          echo "========================================"
-
-          echo
-          cat /tmp/droidspaces_config_report
-
-          echo
-          echo "========================================"
-          echo "GENERATED FILES"
-          echo "========================================"
-
-          echo "1. vendor/violet-perf_defconfig.full"
-          echo "   Minimal savedefconfig containing the resolved Droidspaces configuration."
-
-          echo
-          echo "2. vendor/violet-perf_defconfig.complete"
-          echo "   Complete resolved Kconfig."
-
-          echo
-          echo "NO KERNEL BUILD WAS PERFORMED."
-
-      - name: Upload Droidspaces configuration
+      - name: Upload Droidspaces artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: droidspaces-violet-config
+          name: droidspaces-kernel-results
           path: |
             vendor/violet-perf_defconfig.full
-            vendor/violet-perf_defconfig.complete
-            /tmp/droidspaces_config_report
-            droidspaces/Documentation/resources/kernel-patches/non-GKI/*.patch
-          if-no-files-found: error
-          retention-days: 30
+            out/.config
+            out/.config.droidspaces.before
+            droidspaces_required_configs
+            droidspaces_configs.raw
+            droidspaces_missing
+            droidspaces_disabled
+            droidspaces_enabled
+            droidspaces_unavailable
+            droidspaces
+          if-no-files-found: warn
