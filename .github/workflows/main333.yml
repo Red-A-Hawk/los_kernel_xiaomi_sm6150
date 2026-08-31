@@ -1,4 +1,4 @@
-name: Inspect GSPCA Symversions
+name: Inspect GSPCA Symversions (Make Updated)
 
 on:
   workflow_dispatch:
@@ -29,7 +29,53 @@ jobs:
             libssl-dev \
             libelf-dev \
             device-tree-compiler \
+            build-essential \
             make
+
+      - name: Show default make version
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "DEFAULT MAKE VERSION (before upgrade)"
+          echo "========================================"
+
+          which make
+          make --version
+
+      - name: Build and install GNU Make 4.4 from source
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "BUILDING GNU MAKE 4.4"
+          echo "========================================"
+
+          cd /tmp
+
+          curl -LO https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz
+          tar xzf make-4.4.1.tar.gz
+          cd make-4.4.1
+
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+
+          echo "MAKE_UPGRADED=1" >> "$GITHUB_ENV"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Show updated make version
+        run: |
+          set -e
+
+          export PATH="/usr/local/bin:$PATH"
+
+          echo "========================================"
+          echo "MAKE VERSION (after upgrade)"
+          echo "========================================"
+
+          which make
+          make --version
 
       - name: Clone LineageOS Toolchains
         run: |
@@ -54,7 +100,7 @@ jobs:
         run: |
           set -e
 
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+          export PATH="/usr/local/bin:$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
 
           echo "PATH=$PATH" >> "$GITHUB_ENV"
 
@@ -88,6 +134,14 @@ jobs:
           which llvm-objdump
           which llvm-strip
 
+          echo
+          echo "========================================"
+          echo "MAKE (final check before build)"
+          echo "========================================"
+
+          which make
+          make --version
+
       - name: Load violet-perf defconfig
         run: |
           set -e
@@ -98,86 +152,12 @@ jobs:
 
           echo
           echo "========================================"
-          echo "LTO / MODVERSIONS CONFIGURATION"
+          echo "LTO / MODVERSIONS"
           echo "========================================"
 
           grep -E \
             '^(CONFIG_LTO=|CONFIG_LTO_CLANG=|CONFIG_THINLTO=|CONFIG_LTO_NONE=|CONFIG_MODVERSIONS=|CONFIG_ARCH_SUPPORTS_LTO_CLANG=|CONFIG_ARCH_SUPPORTS_THINLTO=|CONFIG_THIN_ARCHIVES=)' \
             out/.config || true
-
-          echo
-          echo "========================================"
-          echo "CONFIG VALUES"
-          echo "========================================"
-
-          for cfg in \
-            CONFIG_LTO \
-            CONFIG_LTO_CLANG \
-            CONFIG_THINLTO \
-            CONFIG_LTO_NONE \
-            CONFIG_MODVERSIONS \
-            CONFIG_ARCH_SUPPORTS_LTO_CLANG \
-            CONFIG_ARCH_SUPPORTS_THINLTO \
-            CONFIG_THIN_ARCHIVES
-          do
-            grep -E "^${cfg}=" out/.config || echo "${cfg}=NOT_PRESENT"
-          done
-
-      - name: Inspect Kbuild LTO Logic
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "KBUILD LTO LOGIC"
-          echo "========================================"
-
-          grep -R -n \
-            -E 'update_lto_symversions|symversions|THIN_ARCHIVES|LLVM_AR|llvm-ar' \
-            scripts \
-            Makefile \
-            arch/arm64 \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "MAKEFILE BUILD"
-          echo "========================================"
-
-          grep -n \
-            -E 'update_lto_symversions|symversions|thin|archive|llvm-ar' \
-            scripts/Makefile.build \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "MAKEFILE MODPOST"
-          echo "========================================"
-
-          grep -n \
-            -E 'symversions|Module.symvers|modpost|LTO' \
-            scripts/Makefile.modpost \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "MAKEFILE LIB"
-          echo "========================================"
-
-          grep -n \
-            -E 'symversions|THIN_ARCHIVES|llvm-ar|LLVM_AR' \
-            scripts/Makefile.lib \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "ARCH ARM64 MAKEFILES"
-          echo "========================================"
-
-          grep -R -n \
-            -E 'symversions|LTO|THIN_ARCHIVES|llvm-ar' \
-            arch/arm64/Makefile \
-            arch/arm64/Makefile* \
-            2>/dev/null || true
 
       - name: Prepare kernel
         run: |
@@ -199,81 +179,6 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             modules_prepare
-
-      - name: Build Kernel Image
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "BUILDING KERNEL IMAGE"
-          echo "========================================"
-
-          make V=1 -j2 \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            Image \
-            2>&1 | tee kernel-build.log
-
-          BUILD_RESULT=${PIPESTATUS[0]}
-
-          echo "$BUILD_RESULT" > kernel-build-result.txt
-
-          echo
-          echo "========================================"
-          echo "KERNEL BUILD RESULT"
-          echo "========================================"
-
-          cat kernel-build-result.txt
-
-      - name: Inspect Module Symvers
-        if: always()
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "MODULE SYMVERS STATUS"
-          echo "========================================"
-
-          if [ -f out/Module.symvers ]; then
-            echo "FOUND: out/Module.symvers"
-            ls -lh out/Module.symvers
-            wc -l out/Module.symvers
-          else
-            echo "MISSING: out/Module.symvers"
-          fi
-
-          echo
-          echo "========================================"
-          echo "MODULE SYMVERS SAMPLE"
-          echo "========================================"
-
-          if [ -f out/Module.symvers ]; then
-            head -50 out/Module.symvers
-          fi
-
-          echo
-          echo "========================================"
-          echo "GSPCA SYMBOLS IN MODULE.SYMVERS"
-          echo "========================================"
-
-          if [ -f out/Module.symvers ]; then
-            grep -E \
-              'gspca_|gspca_main' \
-              out/Module.symvers \
-              2>/dev/null || true
-          fi
 
       - name: Build GSPCA
         run: |
@@ -333,7 +238,6 @@ jobs:
               -o -name '*.mod.c' \
               -o -name '*.mod.o' \
               -o -name '*.cmd' \
-              -o -name 'Module.symvers' \
             \) \
             -print | sort
 
@@ -342,7 +246,7 @@ jobs:
           echo "SYMVERSION FILES"
           echo "========================================"
 
-          find out \
+          find out/drivers/media/usb/gspca \
             -type f \
             -name '*.symversions' \
             -print \
@@ -370,36 +274,11 @@ jobs:
 
           echo
           echo "========================================"
-          echo "GSPCA LTO SYMVERSIONS"
-          echo "========================================"
-
-          find out \
-            -type f \
-            -name 'gspca_main.lto.o.symversions' \
-            -print \
-            -exec sh -c '
-              echo
-              echo "===== $1 ====="
-              cat "$1"
-            ' _ {} \;
-
-          echo
-          echo "========================================"
           echo "ALL __crc SYMBOLS"
           echo "========================================"
 
           grep -R -n -E '__crc_' \
             out/drivers/media/usb/gspca \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "GSPCA SYMBOLS IN GLOBAL MODULE.SYMVERS"
-          echo "========================================"
-
-          grep -E \
-            'gspca_|gspca_main' \
-            out/Module.symvers \
             2>/dev/null || true
 
           echo
@@ -425,7 +304,7 @@ jobs:
               echo
               echo "===== $1 ====="
               grep -E \
-                "clang|llvm|symversion|genksyms|llvm-ar|ar |lto" \
+                "clang|llvm|symversion|genksyms|llvm-ar|ar " \
                 "$1" || true
             ' _ {} \;
 
@@ -451,24 +330,9 @@ jobs:
 
           echo
           echo "========================================"
-          echo "KERNEL BUILD WARNINGS"
+          echo "BUILD RESULT"
           echo "========================================"
 
-          grep -n -E \
-            'Module.symvers|symvers|LTO|thin|archive|modversion' \
-            kernel-build.log \
-            2>/dev/null || true
-
-          echo
-          echo "========================================"
-          echo "BUILD RESULTS"
-          echo "========================================"
-
-          echo "Kernel:"
-          cat kernel-build-result.txt 2>/dev/null || true
-
-          echo
-          echo "GSPCA:"
           cat gspca-build-result.txt 2>/dev/null || true
 
           echo
@@ -480,15 +344,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gspca-symversions-diagnostic
+          name: gspca-symversions-diagnostic-make-updated
           path: |
-            kernel-build.log
-            kernel-build-result.txt
             gspca-build.log
             gspca-build-result.txt
-            out/Module.symvers
             out/drivers/media/usb/gspca/
-            scripts/Makefile.build
-            scripts/Makefile.modpost
-            scripts/Makefile.lib
+            out/Module.symvers
           if-no-files-found: warn
