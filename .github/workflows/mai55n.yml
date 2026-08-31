@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       symbol:
-        description: 'اسم الـ CONFIG اللي عايز تدور عليه (اختياري)'
+        description: 'CONFIG symbol to search for (optional)'
         required: false
         default: ''
   push:
@@ -21,48 +21,72 @@ on:
 jobs:
   check-kconfig:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Search for a specific Kconfig symbol (manual trigger)
+      - name: Search for a specific Kconfig symbol
         if: ${{ github.event.inputs.symbol != '' }}
         run: |
           SYM="${{ github.event.inputs.symbol }}"
           SYM="${SYM#CONFIG_}"
 
-          echo "## نتائج بحث Kconfig عن: CONFIG_$SYM" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Kconfig Search: CONFIG_$SYM"
+            echo
+            echo "### Definition"
+            echo '```'
 
-          echo "### التعريف (config $SYM)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          FOUND=0
-          while IFS= read -r file; do
-            if grep -qE "^\s*config\s+${SYM}\s*$" "$file"; then
-              FOUND=1
-              echo ">>> $file" >> $GITHUB_STEP_SUMMARY
-              awk -v sym="$SYM" '
-                $0 ~ "^[[:space:]]*config[[:space:]]+"sym"[[:space:]]*$" {p=1}
-                p {print}
-                p && /^\s*$/ {exit}
-              ' "$file" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
+            FOUND=0
+
+            while IFS= read -r file; do
+              if grep -qE "^[[:space:]]*config[[:space:]]+${SYM}[[:space:]]*$" "$file"; then
+                FOUND=1
+
+                echo ">>> $file"
+
+                awk -v sym="$SYM" '
+                  $0 ~ "^[[:space:]]*config[[:space:]]+" sym "[[:space:]]*$" {
+                    p=1
+                  }
+                  p {
+                    print
+                  }
+                  p && /^[[:space:]]*$/ {
+                    exit
+                  }
+                ' "$file"
+
+                echo
+              fi
+            done < <(find . -type f -name "Kconfig*")
+
+            if [ "$FOUND" -eq 0 ]; then
+              echo "CONFIG_$SYM is not defined in any Kconfig file."
+              echo "The symbol may have been renamed, removed, or replaced in this kernel branch."
             fi
-          done < <(find . -type f -name "Kconfig*")
 
-          if [ "$FOUND" -eq 0 ]; then
-            echo "❌ الرمز CONFIG_$SYM غير معرّف في أي ملف Kconfig بهذا السورس." >> $GITHUB_STEP_SUMMARY
-            echo "   (يعني إما اتغيّر اسمه بهذا الفرع، أو الميزة محذوفة تمامًا)" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '```'
+            echo
+            echo "### Makefile / Kbuild References"
+            echo '```'
 
-          echo "### أين يُستخدم فعليًا (obj-\$(CONFIG_$SYM) بملفات Makefile)" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -rn "CONFIG_${SYM}" --include="Makefile" --include="Kbuild" . >> $GITHUB_STEP_SUMMARY || echo "لا يوجد استخدام في أي Makefile!" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -rn "CONFIG_${SYM}" \
+              --include="Makefile" \
+              --include="Kbuild" \
+              . || echo "No Makefile/Kbuild references found."
+
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Audit Droidspaces required Kconfig symbols
+        shell: bash
         run: |
-          echo "## فحص شامل: Droidspaces CONFIG symbols" > kconfig_audit.txt
+          set +e
+
+          echo "Droidspaces CONFIG symbol audit" > kconfig_audit.txt
+          echo "=========================================" >> kconfig_audit.txt
           echo "" >> kconfig_audit.txt
 
           cat > /tmp/droidspaces_symbols.txt << 'EOF'
@@ -119,46 +143,98 @@ jobs:
           DEFINED_NOT_BUILT=0
           OK=0
 
-          while read -r sym; do
+          while IFS= read -r sym; do
+            sym="$(echo "$sym" | xargs)"
+
             [ -z "$sym" ] && continue
 
-            hit="$(grep -rlE "^\s*config\s+${sym}\s*$" --include="Kconfig*" . | head -1)"
-            makefile_hit="$(grep -rl "CONFIG_${sym}" --include="Makefile" --include="Kbuild" . | head -1)"
+            echo "-----------------------------------------" >> kconfig_audit.txt
+            echo "CONFIG_$sym" >> kconfig_audit.txt
+
+            hit="$(grep -rlE \
+              "^[[:space:]]*config[[:space:]]+${sym}[[:space:]]*$" \
+              --include="Kconfig*" \
+              . 2>/dev/null | head -1)"
+
+            makefile_hits="$(grep -rl \
+              "CONFIG_${sym}" \
+              --include="Makefile" \
+              --include="Kbuild" \
+              . 2>/dev/null)"
 
             if [ -z "$hit" ]; then
-              echo "❌ CONFIG_$sym: غير معرّف في أي Kconfig" >> kconfig_audit.txt
-              NOT_DEFINED=$((NOT_DEFINED+1))
+              echo "STATUS: NOT_DEFINED" >> kconfig_audit.txt
+              echo "CONFIG_$sym is not defined in any Kconfig file." >> kconfig_audit.txt
+
+              NOT_DEFINED=$((NOT_DEFINED + 1))
               continue
             fi
 
-            if [ -z "$makefile_hit" ]; then
-              echo "⚠️  CONFIG_$sym: معرّف بـ $hit لكن غير مستخدم بأي Makefile/Kbuild (قد يكون bool وليس driver منفصل، أو غير مبني بهذا الفرع)" >> kconfig_audit.txt
-              DEFINED_NOT_BUILT=$((DEFINED_NOT_BUILT+1))
+            if [ -z "$makefile_hits" ]; then
+              echo "STATUS: DEFINED_NOT_DIRECTLY_BUILT" >> kconfig_audit.txt
+              echo "DEFINED_IN: $hit" >> kconfig_audit.txt
+              echo "No direct Makefile/Kbuild reference found." >> kconfig_audit.txt
+
+              DEFINED_NOT_BUILT=$((DEFINED_NOT_BUILT + 1))
             else
-              echo "✅ CONFIG_$sym: معرّف بـ $hit ومستخدم بـ $makefile_hit" >> kconfig_audit.txt
-              OK=$((OK+1))
+              echo "STATUS: DEFINED_AND_REFERENCED" >> kconfig_audit.txt
+              echo "DEFINED_IN: $hit" >> kconfig_audit.txt
+              echo "REFERENCED_BY:" >> kconfig_audit.txt
+
+              echo "$makefile_hits" | sed 's/^/  /' >> kconfig_audit.txt
+
+              OK=$((OK + 1))
             fi
 
-            deps="$(awk -v s="$sym" '
-              $0 ~ "^[[:space:]]*config[[:space:]]+"s"[[:space:]]*$" {p=1; next}
-              p && /depends on|select/ {print "    "$0}
-              p && /^\s*$/ {exit}
-            ' "$hit")"
-            [ -n "$deps" ] && echo "$deps" >> kconfig_audit.txt
+            echo "KCONFIG_BLOCK:" >> kconfig_audit.txt
+
+            awk -v sym="$sym" '
+              $0 ~ "^[[:space:]]*config[[:space:]]+" sym "[[:space:]]*$" {
+                p=1
+                print
+                next
+              }
+
+              p && /^[[:space:]]*config[[:space:]]+/ {
+                exit
+              }
+
+              p {
+                print
+              }
+            ' "$hit" | head -80 >> kconfig_audit.txt
+
+            echo "" >> kconfig_audit.txt
 
           done < /tmp/droidspaces_symbols.txt
 
-          echo "" >> kconfig_audit.txt
           echo "=========================================" >> kconfig_audit.txt
-          echo "الملخص:" >> kconfig_audit.txt
-          echo "  ✅ سليم (معرّف + مبني): $OK" >> kconfig_audit.txt
-          echo "  ⚠️  معرّف بس مو مبني بـ Makefile: $DEFINED_NOT_BUILT" >> kconfig_audit.txt
-          echo "  ❌ غير معرّف إطلاقًا: $NOT_DEFINED" >> kconfig_audit.txt
+          echo "SUMMARY" >> kconfig_audit.txt
+          echo "=========================================" >> kconfig_audit.txt
+          echo "DEFINED_AND_REFERENCED: $OK" >> kconfig_audit.txt
+          echo "DEFINED_NOT_DIRECTLY_BUILT: $DEFINED_NOT_BUILT" >> kconfig_audit.txt
+          echo "NOT_DEFINED: $NOT_DEFINED" >> kconfig_audit.txt
 
-          cat kconfig_audit.txt >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Droidspaces Kconfig Audit"
+            echo
+            echo "| Status | Count |"
+            echo "|---|---:|"
+            echo "| Defined and referenced | $OK |"
+            echo "| Defined but no direct Makefile/Kbuild reference | $DEFINED_NOT_BUILT |"
+            echo "| Not defined | $NOT_DEFINED |"
+            echo
+            echo "### Full Audit"
+            echo '```text'
+            cat kconfig_audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat kconfig_audit.txt
 
       - name: Upload full report
         uses: actions/upload-artifact@v4
         with:
           name: droidspaces-kconfig-audit
           path: kconfig_audit.txt
+          if-no-files-found: error
