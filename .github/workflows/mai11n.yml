@@ -1,0 +1,245 @@
+name: Diagnose Baseband-guard 4.14
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Clone Baseband-guard
+        run: |
+          set -e
+
+          git clone \
+            --depth=1 \
+            https://github.com/vc-teahouse/Baseband-guard.git \
+            Baseband-guard
+
+      - name: Diagnose Kernel LSM Infrastructure
+        run: |
+          set +e
+
+          echo "========================================"
+          echo "BASEBAND-GUARD / LINUX 4.14 DIAGNOSTIC"
+          echo "========================================"
+
+          echo
+          echo "========================================"
+          echo "KERNEL VERSION"
+          echo "========================================"
+
+          if [ -f Makefile ]; then
+              grep -E \
+                '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' \
+                Makefile
+          fi
+
+          echo
+          echo "========================================"
+          echo "REQUIRED FILES"
+          echo "========================================"
+
+          for f in \
+            include/linux/lsm_hooks.h \
+            security/Kconfig \
+            security/Makefile \
+            security/selinux/Makefile \
+            security/selinux/include/objsec.h \
+            Baseband-guard/Kconfig \
+            Baseband-guard/Makefile \
+            Baseband-guard/baseband_guard.c \
+            Baseband-guard/baseband_guard.h \
+            Baseband-guard/blkdev_helper.c \
+            Baseband-guard/blkdev_helper.h \
+            Baseband-guard/sepatch.txt
+          do
+              if [ -f "$f" ]; then
+                  echo "[OK]      $f"
+              else
+                  echo "[MISSING] $f"
+              fi
+          done
+
+          echo
+          echo "========================================"
+          echo "MODERN LSM CHECK"
+          echo "========================================"
+
+          if [ -f include/linux/lsm_hooks.h ]; then
+              grep -n \
+                '#define DEFINE_LSM(lsm)' \
+                include/linux/lsm_hooks.h \
+                || echo "[NOT FOUND] DEFINE_LSM"
+          fi
+
+          echo
+          echo "========================================"
+          echo "LSM HOOK DEFINITIONS"
+          echo "========================================"
+
+          grep -n -E \
+            'struct security_hook_list|security_hook_heads|security_add_hooks|LSM_HOOK' \
+            include/linux/lsm_hooks.h \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SECURITY HOOK API"
+          echo "========================================"
+
+          grep -R -n -E \
+            'security_add_hooks|register_security|security_initcall' \
+            security include/linux \
+            2>/dev/null | head -200 || true
+
+          echo
+          echo "========================================"
+          echo "SELINUX OBJSEC"
+          echo "========================================"
+
+          if [ -f security/selinux/include/objsec.h ]; then
+              grep -n -E \
+                'struct cred_security_struct|sockcreate_sid|cred_security' \
+                security/selinux/include/objsec.h \
+                2>/dev/null || true
+          fi
+
+          echo
+          echo "========================================"
+          echo "SELINUX AVC INCLUDE"
+          echo "========================================"
+
+          grep -n \
+            '#include "avc.h"' \
+            security/selinux/include/objsec.h \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SELINUX MAKEFILE"
+          echo "========================================"
+
+          if [ -f security/selinux/Makefile ]; then
+              cat security/selinux/Makefile
+          fi
+
+          echo
+          echo "========================================"
+          echo "SECURITY MAKEFILE"
+          echo "========================================"
+
+          if [ -f security/Makefile ]; then
+              grep -n -E \
+                'selinux|security|obj-\$\(CONFIG' \
+                security/Makefile \
+                2>/dev/null || true
+          fi
+
+          echo
+          echo "========================================"
+          echo "SECURITY KCONFIG"
+          echo "========================================"
+
+          if [ -f security/Kconfig ]; then
+              grep -n -E \
+                'config LSM|default.*selinux|endmenu|source.*selinux' \
+                security/Kconfig \
+                2>/dev/null || true
+          fi
+
+          echo
+          echo "========================================"
+          echo "CONFIG_LSM"
+          echo "========================================"
+
+          grep -R -n \
+            'CONFIG_LSM' \
+            security/Kconfig \
+            security \
+            2>/dev/null | head -100 || true
+
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD SOURCE API"
+          echo "========================================"
+
+          grep -R -n -E \
+            'DEFINE_LSM|security_add_hooks|register_security|lsm_hooks|cred_security_struct|sockcreate_sid|inode_permission|file_permission|path_permission|blkdev' \
+            Baseband-guard \
+            2>/dev/null | head -300 || true
+
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD KCONFIG"
+          echo "========================================"
+
+          if [ -f Baseband-guard/Kconfig ]; then
+              cat Baseband-guard/Kconfig
+          fi
+
+          echo
+          echo "========================================"
+          echo "BASEBAND-GUARD MAKEFILE"
+          echo "========================================"
+
+          if [ -f Baseband-guard/Makefile ]; then
+              cat Baseband-guard/Makefile
+          fi
+
+          echo
+          echo "========================================"
+          echo "SEPATCH"
+          echo "========================================"
+
+          if [ -f Baseband-guard/sepatch.txt ]; then
+              cat Baseband-guard/sepatch.txt
+          fi
+
+          echo
+          echo "========================================"
+          echo "SETUP.SH NONGKI LOGIC"
+          echo "========================================"
+
+          grep -n -A80 -B10 \
+            'nongki compatible' \
+            Baseband-guard/setup.sh \
+            2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "SETUP.SH DEFINE_LSM TEST"
+          echo "========================================"
+
+          if grep -q \
+            '#define DEFINE_LSM(lsm)' \
+            include/linux/lsm_hooks.h
+          then
+              echo "RESULT: Modern LSM detected"
+          else
+              echo "RESULT: Modern LSM NOT detected"
+              echo "RESULT: BBG setup.sh will enter nongki compatibility path"
+          fi
+
+          echo
+          echo "========================================"
+          echo "POTENTIAL CONFLICTS"
+          echo "========================================"
+
+          grep -R -n \
+            'baseband_guard' \
+            security include drivers \
+            2>/dev/null | head -200 || true
+
+          echo
+          echo "========================================"
+          echo "DIAGNOSTIC COMPLETE"
+          echo "========================================"
