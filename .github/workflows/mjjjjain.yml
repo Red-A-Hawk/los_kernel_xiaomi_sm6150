@@ -1,0 +1,252 @@
+name: Check Neutron Clang (BOLT test)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-neutron:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. Checkout kernel (read-only, no modifications)
+      # ============================================================
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+
+      # ============================================================
+      # 2. Install dependencies
+      # ============================================================
+
+      - name: Install dependencies
+        run: |
+          set -e
+          sudo apt update
+          sudo apt install -y \
+            git curl bc bison flex \
+            libssl-dev libelf-dev \
+            device-tree-compiler build-essential \
+            gcc g++ python3
+
+
+      # ============================================================
+      # 3. Download Neutron Clang via AntMan
+      # ============================================================
+
+      - name: Download Neutron Clang
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "DOWNLOADING NEUTRON CLANG"
+          echo "========================================"
+
+          mkdir -p "$GITHUB_WORKSPACE/neutron-clang"
+          cd "$GITHUB_WORKSPACE/neutron-clang"
+
+          curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+          chmod +x antman
+          ./antman -S
+
+          echo "NEUTRON_PATH=$GITHUB_WORKSPACE/neutron-clang" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # 4. Verify Toolchain
+      # ============================================================
+
+      - name: Verify Toolchain
+        run: |
+          set -e
+
+          export PATH="$NEUTRON_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "CLANG VERSION"
+          echo "========================================"
+
+          which clang
+          clang --version
+
+          echo
+          echo "========================================"
+          echo "LLD"
+          echo "========================================"
+
+          which ld.lld
+          ld.lld --version
+
+
+      # ============================================================
+      # 5. Check BOLT Availability (the main question)
+      # ============================================================
+
+      - name: Check BOLT Availability
+        run: |
+          set -e
+
+          export PATH="$NEUTRON_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "BOLT SUPPORT CHECK"
+          echo "========================================"
+
+          echo
+          echo "Checking llvm-bolt..."
+
+          if command -v llvm-bolt >/dev/null 2>&1; then
+            echo "[OK] llvm-bolt found"
+            which llvm-bolt
+            llvm-bolt --version
+          else
+            echo "[FAIL] llvm-bolt NOT found"
+          fi
+
+          echo
+          echo "Checking BOLT-related LLVM tools..."
+
+          for tool in \
+            llvm-bolt \
+            llvm-bolt-heatmap \
+            perf2bolt \
+            merge-fdata
+          do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "[FOUND] $tool"
+              command -v "$tool"
+            else
+              echo "[MISSING] $tool"
+            fi
+          done
+
+          echo
+          echo "Searching toolchain directory directly for any bolt binary..."
+          find "$NEUTRON_PATH" -iname "*bolt*" -type f
+
+
+      # ============================================================
+      # 6. Check Polly + PGO too, for completeness
+      # ============================================================
+
+      - name: Check Polly and PGO Availability
+        run: |
+          set -e
+
+          export PATH="$NEUTRON_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "POLLY CHECK"
+          echo "========================================"
+
+          cat > /tmp/polly_test.c <<'EOF'
+          void f(int *a, int *b, int n) { int i; for (i=0;i<n;i++) a[i]=b[i]+1; }
+          int main(void) { return 0; }
+          EOF
+
+          if clang -O3 -mllvm -polly -c /tmp/polly_test.c -o /tmp/polly.o 2>/tmp/polly-err.log; then
+            echo "[SUPPORTED] Polly"
+          else
+            echo "[NOT SUPPORTED] Polly"
+            cat /tmp/polly-err.log
+          fi
+
+          echo
+          echo "========================================"
+          echo "PGO CHECK"
+          echo "========================================"
+
+          if command -v llvm-profdata >/dev/null 2>&1; then
+            echo "[OK] llvm-profdata found"
+          else
+            echo "[MISSING] llvm-profdata"
+          fi
+
+          if clang -O2 -fprofile-instr-generate -c /tmp/polly_test.c -o /tmp/pgo.o 2>/tmp/pgo-err.log; then
+            echo "[SUPPORTED] PGO instrumentation"
+          else
+            echo "[NOT SUPPORTED] PGO instrumentation"
+            cat /tmp/pgo-err.log
+          fi
+
+
+      # ============================================================
+      # 7. Try defconfig ONLY (dry-run, no actual compile of kernel files)
+      #    This checks basic compatibility with kernel 4.14 / sm6150
+      #    WITHOUT modifying any files in the kernel repo.
+      # ============================================================
+
+      - name: Try defconfig with Neutron Clang (compatibility check)
+        run: |
+          set -e
+
+          export PATH="$NEUTRON_PATH/bin:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1
+          export LLVM_IAS=1
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
+          echo "========================================"
+          echo "RUNNING DEFCONFIG (compatibility test only)"
+          echo "========================================"
+
+          make O=out_neutron ARCH=arm64 CC=clang vendor/violet-perf_defconfig || {
+            echo "[FAIL] defconfig failed - kernel may need patches for this toolchain"
+            exit 0
+          }
+
+          echo "[OK] defconfig succeeded"
+
+          echo
+          echo "========================================"
+          echo "ATTEMPTING FIRST FEW COMPILE UNITS (sanity check)"
+          echo "========================================"
+          echo "This tests actual C compilation compatibility,"
+          echo "not a full kernel build."
+
+          timeout 120 make O=out_neutron ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            -j$(nproc) kernel/bounds.s arch/arm64/kernel/asm-offsets.s 2>&1 | tail -100 || {
+            echo "[WARN] Sanity compile step failed or timed out - see log above for the actual error"
+          }
+
+
+      # ============================================================
+      # 8. Final Summary
+      # ============================================================
+
+      - name: Final Summary
+        if: always()
+        run: |
+          set +e
+
+          export PATH="$NEUTRON_PATH/bin:$PATH"
+
+          echo
+          echo "========================================"
+          echo "NEUTRON CLANG - FINAL SUMMARY"
+          echo "========================================"
+
+          clang --version 2>/dev/null || echo "clang not available"
+
+          echo
+          if command -v llvm-bolt >/dev/null 2>&1; then
+            echo "[RESULT] BOLT: AVAILABLE"
+          else
+            echo "[RESULT] BOLT: NOT AVAILABLE"
+          fi
+
+          echo
+          echo "========================================"
+          echo "DONE - this was a read-only compatibility"
+          echo "check. No files in the kernel repo were"
+          echo "modified."
+          echo "========================================"
