@@ -1,0 +1,52 @@
+name: Inspect Kbuild cc-option
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect-cc-option:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. Checkout kernel
+      # ============================================================
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. Inspect cc-option
+      # ============================================================
+
+      - name: Inspect cc-option
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "SEARCHING cc-option"
+          echo "========================================"
+
+          grep -Rni \
+            --include='Makefile' \
+            --include='*.mk' \
+            -E 'cc-option|cc-option-verbose' \
+            . 2>/dev/null | head -200 || true
+
+          echo
+          echo "========================================"
+          echo "MAKEFILE cc-option DEFINITIONS"
+          echo "========================================"
+
+          grep -n -B 10 -A 20 \
+            -E 'define cc-option|cc-option *[:=]|cc-option\(' \
+            Makefile scripts/Makefile* 2>/dev/null || true
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
