@@ -962,6 +962,10 @@ endif
 $(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag))
 KBUILD_CFLAGS	+= $(POLLY_FUSION_FLAG)
 
+# Polly may optimise loops with dead paths beyond what the linker
+# can understand. This may negate the effect of the linker's DCE
+# so we tell Polly to perform proven DCE on the loops it optimises
+# in order to preserve the overall effect of the linker's DCE.
 ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
 KBUILD_CFLAGS	+= -mllvm -polly-run-dce
 endif
