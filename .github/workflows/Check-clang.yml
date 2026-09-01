@@ -172,6 +172,46 @@ jobs:
 
 
       # ============================================================
+      # 5b. Verify defconfig + Polly Kconfig/Makefile integration
+      # ============================================================
+
+      - name: Verify defconfig and Polly flags
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          export LLVM=1
+
+          echo "========================================"
+          echo "RUNNING DEFCONFIG"
+          echo "========================================"
+
+          make O=out ARCH=arm64 CC=clang vendor/violet-perf_defconfig
+
+          echo
+          echo "========================================"
+          echo "CHECKING POLLY_CLANG IN .config"
+          echo "========================================"
+
+          grep -i "POLLY_CLANG" out/.config || echo "[FAIL] POLLY_CLANG not found in .config"
+
+          echo
+          echo "========================================"
+          echo "DRY-RUN BUILD COMMANDS (grep polly)"
+          echo "========================================"
+
+          make O=out ARCH=arm64 CC=clang -n 2>&1 | grep -i polly | head -20 || echo "[WARN] No polly flags found in dry-run output"
+
+          echo
+          echo "========================================"
+          echo "DONE - defconfig verification"
+          echo "========================================"
+
+
+      # ============================================================
       # 6. Check LTO Support
       # ============================================================
 
