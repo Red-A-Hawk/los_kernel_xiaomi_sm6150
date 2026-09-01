@@ -34,7 +34,13 @@ jobs:
             curl \
             build-essential \
             gcc \
-            g++
+            g++ \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            device-tree-compiler
 
       # ============================================================
       # 3. Clone LineageOS Toolchains
@@ -134,27 +140,138 @@ jobs:
           arm-linux-androideabi-gcc --version | head -1
 
       # ============================================================
-      # 6. Check Stack Protector Strong
+      # 6. Debug Kbuild Stack Protector
       # ============================================================
 
-      - name: Check Stack Protector Strong
+      - name: Debug Stack Protector Kbuild Check
         run: |
           set -e
 
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
+          export ARCH=arm64
+          export CC=clang
+          export LLVM=1
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+
           echo
           echo "========================================"
-          echo "STACK PROTECTOR STRONG"
+          echo "STACK PROTECTOR KBUILD DEBUG"
           echo "========================================"
 
           echo
-          echo "Compiler:"
+          echo "========================================"
+          echo "COMPILER"
+          echo "========================================"
+
+          echo "CC=$CC"
+          echo "ARCH=$ARCH"
+          echo "LLVM=$LLVM"
+          echo "CROSS_COMPILE=$CROSS_COMPILE"
+          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+          echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+
           which clang
           clang --version
 
           echo
-          echo "Testing:"
+          echo "========================================"
+          echo "STACK PROTECTOR SCRIPTS"
+          echo "========================================"
+
+          find scripts -maxdepth 2 -type f \
+            \( \
+              -name '*stack-protector*' \
+              -o \
+              -name '*has-stack*' \
+            \) \
+            -print
+
+          echo
+          echo "========================================"
+          echo "SEARCH stackp-check"
+          echo "========================================"
+
+          grep -Rni \
+            "stackp-check\|has-stack-protector" \
+            Makefile \
+            scripts \
+            arch \
+            2>/dev/null \
+            | head -200 \
+            || true
+
+          echo
+          echo "========================================"
+          echo "STACK PROTECTOR VARIABLES"
+          echo "========================================"
+
+          grep -Rni \
+            "stackp-flag\|stackp-name\|stackp-check" \
+            Makefile \
+            arch \
+            scripts \
+            2>/dev/null \
+            | head -200 \
+            || true
+
+          echo
+          echo "========================================"
+          echo "FIND ARM64 STACK PROTECTOR CHECK"
+          echo "========================================"
+
+          STACK_SCRIPT=""
+
+          for file in \
+            scripts/gcc-arm64_has-stack-protector.sh \
+            scripts/gcc-arm64_has-stack-protector.sh \
+            scripts/gcc-arm64_has-stack-protector
+          do
+            if [ -f "$file" ]; then
+              STACK_SCRIPT="$file"
+              break
+            fi
+          done
+
+          if [ -n "$STACK_SCRIPT" ]; then
+
+            echo "[FOUND] $STACK_SCRIPT"
+
+            echo
+            echo "----------------------------------------"
+            echo "SCRIPT CONTENT"
+            echo "----------------------------------------"
+
+            cat "$STACK_SCRIPT"
+
+          else
+
+            echo "[INFO] ARM64 stack protector script was not found using expected names."
+
+            echo
+            echo "Searching entire tree..."
+
+            find . \
+              -type f \
+              \( \
+                -name '*stack*protector*' \
+                -o \
+                -name '*has-stack*' \
+              \) \
+              -print \
+              | head -100
+
+          fi
+
+          echo
+          echo "========================================"
+          echo "DIRECT COMPILER TEST"
+          echo "========================================"
+
+          echo
+          echo "Command:"
           echo "clang -target aarch64-linux-gnu -fstack-protector-strong -c -x c /dev/null -o /tmp/test.o"
 
           if clang \
@@ -164,49 +281,83 @@ jobs:
               -x c \
               /dev/null \
               -o /tmp/test.o \
-              2>/tmp/stack-protector-error.log; then
+              2>/tmp/stack-protector-direct-error.log; then
 
             echo
-            echo "[OK] -fstack-protector-strong is supported"
-
-            echo
-            echo "Object:"
+            echo "[OK] Direct Clang test passed"
             file /tmp/test.o
 
           else
 
             echo
-            echo "[FAIL] -fstack-protector-strong is NOT supported"
-
-            echo
-            echo "Compiler error:"
-            cat /tmp/stack-protector-error.log
-
-            echo
-            echo "========================================"
-            echo "TESTING REGULAR STACK PROTECTOR"
-            echo "========================================"
-
-            if clang \
-                -target aarch64-linux-gnu \
-                -fstack-protector \
-                -c \
-                -x c \
-                /dev/null \
-                -o /tmp/test-regular.o \
-                2>/tmp/stack-protector-regular-error.log; then
-
-              echo "[OK] -fstack-protector is supported"
-              file /tmp/test-regular.o
-
-            else
-
-              echo "[FAIL] -fstack-protector is NOT supported"
-              cat /tmp/stack-protector-regular-error.log
-
-            fi
+            echo "[FAIL] Direct Clang test failed"
+            cat /tmp/stack-protector-direct-error.log
 
           fi
+
+          echo
+          echo "========================================"
+          echo "KBUILD COMPILER OPTION TEST"
+          echo "========================================"
+
+          echo
+          echo "Testing cc-option through Kbuild..."
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            -f /dev/null \
+            2>/dev/null \
+            || true
+
+          echo
+          echo "========================================"
+          echo "RUNNING DEFCONFIG"
+          echo "========================================"
+
+          rm -rf out
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            vendor/violet-perf_defconfig
+
+          echo
+          echo "========================================"
+          echo "STACK PROTECTOR CONFIG"
+          echo "========================================"
+
+          grep -E \
+            "CONFIG_HAVE_CC_STACKPROTECTOR|CONFIG_CC_STACKPROTECTOR" \
+            out/.config \
+            || true
+
+          echo
+          echo "========================================"
+          echo "KBUILD PREPARE COMPILER CHECK"
+          echo "========================================"
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            prepare \
+            V=1 \
+            2>&1 | tee /tmp/kbuild-stack-protector.log
 
       # ============================================================
       # 7. Final Result
@@ -219,3 +370,16 @@ jobs:
           echo "========================================"
           echo "TEST COMPLETE"
           echo "========================================"
+
+          echo
+          echo "========================================"
+          echo "KBUILD LOG"
+          echo "========================================"
+
+          if [ -f /tmp/kbuild-stack-protector.log ]; then
+            grep -i \
+              "stack\|protector\|prepare-compiler-check" \
+              /tmp/kbuild-stack-protector.log \
+              | tail -100 \
+              || true
+          fi
