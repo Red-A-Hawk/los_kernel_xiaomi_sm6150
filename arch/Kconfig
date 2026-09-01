@@ -676,7 +676,6 @@ endchoice
 
 config POLLY_CLANG
 	bool "Use clang Polly loop optimizer (EXPERIMENTAL)"
-	depends on LTO_CLANG
 	help
 	  This option enables Polly, LLVM's polyhedral loop and
 	  data-locality optimizer, which performs additional loop
