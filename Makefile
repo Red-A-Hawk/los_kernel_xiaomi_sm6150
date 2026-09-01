@@ -948,15 +948,26 @@ export LDFINAL_vmlinux LDFLAGS_FINAL_vmlinux
 endif
 
 ifdef CONFIG_POLLY_CLANG
-KBUILD_CFLAGS	+= -mllvm -polly \
+
+KBUILD_CFLAGS += -mllvm -polly \
 		   -mllvm -polly-ast-use-context \
 		   -mllvm -polly-invariant-load-hoisting \
-		   -mllvm -polly-opt-fusion=max \
 		   -mllvm -polly-run-inliner \
 		   -mllvm -polly-vectorizer=stripmine
-ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
-KBUILD_CFLAGS	+= -mllvm -polly-run-dce
+
+# Select the preferred Polly fusion option supported by the selected Clang.
+POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-loopfusion-greedy)
+
+ifeq ($(POLLY_FUSION_FLAG),)
+POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-opt-fusion=max)
 endif
+
+KBUILD_CFLAGS += $(POLLY_FUSION_FLAG)
+
+ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
+KBUILD_CFLAGS += -mllvm -polly-run-dce
+endif
+
 endif
 
 ifdef CONFIG_CFI_CLANG
