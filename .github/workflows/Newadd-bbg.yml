@@ -62,6 +62,7 @@ steps:
       libelf-dev \
       libncurses-dev \
       python3 \
+      gawk \
       openjdk-17-jre-headless
 
 
@@ -215,6 +216,9 @@ steps:
 
 # ============================================================
 # 6. Setup BBG
+#
+# BBG is intentionally placed BEFORE NoMount.
+# Only the BBG matrix build receives Baseband-guard.
 # ============================================================
 
 - name: Setup BBG
@@ -226,35 +230,66 @@ steps:
     echo "SETTING UP BASEBAND-GUARD"
     echo "========================================"
 
-    git clone \
-      --depth=1 \
-      https://github.com/vc-teahouse/Baseband-guard.git \
-      Baseband-guard
+    curl -LSs \
+      "https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh" \
+      | bash -
 
     echo
     echo "========================================"
-    echo "BASEBAND-GUARD SETUP"
+    echo "BBG CHECK"
     echo "========================================"
 
-    chmod +x Baseband-guard/setup.sh
+    test -d Baseband-guard
+    test -L security/baseband-guard
 
-    ./Baseband-guard/setup.sh
+    ls -ld Baseband-guard
+    ls -ld security/baseband-guard
 
     echo
     echo "========================================"
-    echo "BBG FILES AFTER SETUP"
+    echo "BBG MAKEFILE CHECK"
     echo "========================================"
 
-    find security \
-      -maxdepth 2 \
-      -type f \
-      \
-        -path '*/baseband-guard/*' \
-        -o -name 'Kconfig' \
-        -o -name 'Makefile' \
-      \
-      -print \
-      2>/dev/null || true
+    grep -n "baseband-guard" security/Makefile || true
+
+    echo
+    echo "========================================"
+    echo "BBG KCONFIG CHECK"
+    echo "========================================"
+
+    grep -n "baseband-guard/Kconfig" security/Kconfig || true
+
+    echo
+    echo "========================================"
+    echo "CONFIG_LSM BEFORE BBG CONFIGURATION"
+    echo "========================================"
+
+    grep -n -A30 -B5 '^config LSM$' security/Kconfig || true
+
+    echo
+    echo "========================================"
+    echo "CONFIGURING BASEBAND_GUARD IN LSM"
+    echo "========================================"
+
+    sed -i \
+      '/^config LSM$/,/^help$/{
+        /^[[:space:]]*default/{
+          /baseband_guard/! s/selinux/selinux,baseband_guard/
+        }
+      }' \
+      security/Kconfig
+
+    echo
+    echo "========================================"
+    echo "CONFIG_LSM AFTER BBG CONFIGURATION"
+    echo "========================================"
+
+    grep -n -A30 -B5 '^config LSM$' security/Kconfig || true
+
+    echo
+    echo "========================================"
+    echo "BBG SETUP COMPLETE"
+    echo "========================================"
 
 
 # ============================================================
@@ -367,15 +402,15 @@ steps:
         echo "Base kernel"
         echo "KernelSU: DISABLED"
         echo "SUSFS: DISABLED"
-        echo "BBG: DISABLED"
         echo "NoMount: DISABLED"
+        echo "BBG: DISABLED"
 
         scripts/config \
           --file out/.config \
           --disable CONFIG_KSU \
           --disable CONFIG_KSU_SUSFS \
-          --disable CONFIG_BBG \
-          --disable CONFIG_NOMOUNT
+          --disable CONFIG_NOMOUNT \
+          --disable CONFIG_BBG
 
         DEFCONFIG_NAME="violet-perf-full_defconfig"
 
@@ -386,8 +421,8 @@ steps:
 
         echo "KernelSU-Next"
         echo "SUSFS: DISABLED"
-        echo "BBG: DISABLED"
         echo "NoMount: DISABLED"
+        echo "BBG: DISABLED"
 
         scripts/config \
           --file out/.config \
@@ -399,8 +434,8 @@ steps:
           --enable CONFIG_KSU_FEATURE_ADBROOT \
           --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
           --disable CONFIG_KSU_SUSFS \
-          --disable CONFIG_BBG \
           --disable CONFIG_NOMOUNT \
+          --disable CONFIG_BBG \
           --disable CONFIG_KPROBES
 
         DEFCONFIG_NAME="violet-ksu-full_defconfig"
@@ -412,8 +447,8 @@ steps:
 
         echo "KernelSU-Next"
         echo "SUSFS: DISABLED"
-        echo "BBG: DISABLED"
         echo "NoMount: ENABLED"
+        echo "BBG: DISABLED"
 
         scripts/config \
           --file out/.config \
@@ -425,8 +460,8 @@ steps:
           --enable CONFIG_KSU_FEATURE_ADBROOT \
           --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
           --disable CONFIG_KSU_SUSFS \
-          --disable CONFIG_BBG \
           --enable CONFIG_NOMOUNT \
+          --disable CONFIG_BBG \
           --disable CONFIG_KPROBES
 
         DEFCONFIG_NAME="violet-ksu-nomount-full_defconfig"
@@ -438,8 +473,8 @@ steps:
 
         echo "KernelSU-Next"
         echo "SUSFS: ENABLED"
-        echo "BBG: DISABLED"
         echo "NoMount: DISABLED"
+        echo "BBG: DISABLED"
 
         scripts/config \
           --file out/.config \
@@ -451,8 +486,8 @@ steps:
           --enable CONFIG_KSU_FEATURE_ADBROOT \
           --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
           --enable CONFIG_KSU_SUSFS \
-          --disable CONFIG_BBG \
           --disable CONFIG_NOMOUNT \
+          --disable CONFIG_BBG \
           --disable CONFIG_KPROBES
 
         DEFCONFIG_NAME="violet-ksu-susfs-full_defconfig"
@@ -464,8 +499,8 @@ steps:
 
         echo "KernelSU-Next"
         echo "SUSFS: ENABLED"
-        echo "BBG: DISABLED"
         echo "NoMount: ENABLED"
+        echo "BBG: DISABLED"
 
         scripts/config \
           --file out/.config \
@@ -477,8 +512,8 @@ steps:
           --enable CONFIG_KSU_FEATURE_ADBROOT \
           --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
           --enable CONFIG_KSU_SUSFS \
-          --disable CONFIG_BBG \
           --enable CONFIG_NOMOUNT \
+          --disable CONFIG_BBG \
           --disable CONFIG_KPROBES
 
         DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
@@ -490,8 +525,8 @@ steps:
 
         echo "KernelSU-Next"
         echo "SUSFS: ENABLED"
-        echo "BBG: ENABLED"
         echo "NoMount: ENABLED"
+        echo "BBG: ENABLED"
 
         scripts/config \
           --file out/.config \
@@ -503,38 +538,9 @@ steps:
           --enable CONFIG_KSU_FEATURE_ADBROOT \
           --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
           --enable CONFIG_KSU_SUSFS \
-          --enable CONFIG_BBG \
           --enable CONFIG_NOMOUNT \
+          --enable CONFIG_BBG \
           --disable CONFIG_KPROBES
-
-        CURRENT_LSM="$(grep '^CONFIG_LSM=' out/.config | sed 's/^CONFIG_LSM="//; s/"$//' || true)"
-
-        if [ -z "$CURRENT_LSM" ]; then
-          echo "[ERROR] CONFIG_LSM not found"
-          exit 1
-        fi
-
-        echo
-        echo "CURRENT CONFIG_LSM:"
-        echo "$CURRENT_LSM"
-
-        case ",$CURRENT_LSM," in
-          *,baseband_guard,*)
-            echo
-            echo "[OK] baseband_guard already present"
-            ;;
-          *)
-            NEW_LSM="${CURRENT_LSM},baseband_guard"
-
-            echo
-            echo "NEW CONFIG_LSM:"
-            echo "$NEW_LSM"
-
-            scripts/config \
-              --file out/.config \
-              --set-str LSM "$NEW_LSM"
-            ;;
-        esac
 
         DEFCONFIG_NAME="violet-ksu-susfs-nomount-bbg-full_defconfig"
 
@@ -579,19 +585,19 @@ steps:
       out/.config || true
 
     echo
-    echo "--- BBG ---"
-
-    grep -E '^CONFIG_BBG|^CONFIG_BBG_BLOCK_' \
-      out/.config || true
-
-    echo
     echo "--- NoMount ---"
 
     grep -E '^CONFIG_NOMOUNT' \
       out/.config || true
 
     echo
-    echo "--- LSM ---"
+    echo "--- BBG ---"
+
+    grep -E '^CONFIG_BBG' \
+      out/.config || true
+
+    echo
+    echo "--- CONFIG_LSM ---"
 
     grep -E '^CONFIG_LSM=' \
       out/.config || true
@@ -650,51 +656,6 @@ steps:
 
     echo
     echo "========================================"
-    echo "BBG VALIDATION"
-    echo "========================================"
-
-    case "$BUILD_TYPE" in
-
-      KSU-SUSFS-NoMount-BBG)
-
-        if grep -q '^CONFIG_BBG=y$' out/.config; then
-          echo "OK: CONFIG_BBG=y"
-        else
-          echo "ERROR: CONFIG_BBG=y MUST BE ENABLED FOR $BUILD_TYPE"
-          exit 1
-        fi
-
-        if grep -q '^CONFIG_LSM=.*baseband_guard' out/.config; then
-          echo "OK: baseband_guard PRESENT IN CONFIG_LSM"
-        else
-          echo "ERROR: baseband_guard MUST BE PRESENT IN CONFIG_LSM"
-          exit 1
-        fi
-
-        ;;
-
-
-      Base|KSU|KSU-NoMount|KSU-SUSFS|KSU-SUSFS-NoMount)
-
-        if grep -q '^CONFIG_BBG=y$' out/.config; then
-          echo "ERROR: CONFIG_BBG MUST BE DISABLED FOR $BUILD_TYPE"
-          exit 1
-        fi
-
-        if grep -q '^CONFIG_LSM=.*baseband_guard' out/.config; then
-          echo "ERROR: baseband_guard MUST NOT BE PRESENT IN CONFIG_LSM FOR $BUILD_TYPE"
-          exit 1
-        fi
-
-        echo "OK: BBG IS DISABLED"
-
-        ;;
-
-    esac
-
-
-    echo
-    echo "========================================"
     echo "NOMOUNT VALIDATION"
     echo "========================================"
 
@@ -720,6 +681,46 @@ steps:
         fi
 
         echo "OK: NOMOUNT IS DISABLED"
+
+        ;;
+
+    esac
+
+
+    echo
+    echo "========================================"
+    echo "BBG VALIDATION"
+    echo "========================================"
+
+    case "$BUILD_TYPE" in
+
+      KSU-SUSFS-NoMount-BBG)
+
+        if grep -q '^CONFIG_BBG=y' out/.config; then
+          echo "OK: BBG IS ENABLED"
+        else
+          echo "ERROR: CONFIG_BBG MUST BE ENABLED FOR $BUILD_TYPE"
+          exit 1
+        fi
+
+        if grep -q '^CONFIG_LSM=.*baseband_guard' out/.config; then
+          echo "OK: baseband_guard IS PRESENT IN CONFIG_LSM"
+        else
+          echo "ERROR: baseband_guard MUST BE PRESENT IN CONFIG_LSM"
+          exit 1
+        fi
+
+        ;;
+
+
+      Base|KSU|KSU-NoMount|KSU-SUSFS|KSU-SUSFS-NoMount)
+
+        if grep -q '^CONFIG_BBG=y' out/.config; then
+          echo "ERROR: CONFIG_BBG MUST BE DISABLED FOR $BUILD_TYPE"
+          exit 1
+        fi
+
+        echo "OK: BBG IS DISABLED"
 
         ;;
 
@@ -776,21 +777,21 @@ steps:
       "out/${DEFCONFIG_NAME}" || true
 
     echo
+    echo "NOMOUNT CONFIG"
+
+    grep -E '^CONFIG_NOMOUNT' \
+      "out/${DEFCONFIG_NAME}" || true
+
+    echo
     echo "BBG CONFIG"
 
-    grep -E '^CONFIG_BBG|^CONFIG_BBG_BLOCK_' \
+    grep -E '^CONFIG_BBG' \
       "out/${DEFCONFIG_NAME}" || true
 
     echo
     echo "LSM CONFIG"
 
     grep -E '^CONFIG_LSM=' \
-      "out/${DEFCONFIG_NAME}" || true
-
-    echo
-    echo "NOMOUNT CONFIG"
-
-    grep -E '^CONFIG_NOMOUNT' \
       "out/${DEFCONFIG_NAME}" || true
 
 
@@ -840,16 +841,16 @@ steps:
     grep -E '^CONFIG_KSU_SUSFS' out/.config || true
 
     echo
+    echo "NOMOUNT:"
+    grep -E '^CONFIG_NOMOUNT' out/.config || true
+
+    echo
     echo "BBG:"
-    grep -E '^CONFIG_BBG|^CONFIG_BBG_BLOCK_' out/.config || true
+    grep -E '^CONFIG_BBG' out/.config || true
 
     echo
     echo "LSM:"
     grep -E '^CONFIG_LSM=' out/.config || true
-
-    echo
-    echo "NOMOUNT:"
-    grep -E '^CONFIG_NOMOUNT' out/.config || true
 
     echo
     echo "========================================"
