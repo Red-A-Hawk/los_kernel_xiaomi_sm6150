@@ -1,0 +1,33 @@
+name: Check proc_create and file_operations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-proc:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Search proc_create references
+        run: |
+          echo "========================================"
+          echo "Searching for proc_create"
+          echo "========================================"
+
+          grep -rln "proc_create" \
+            --include="*.c" \
+            fs/proc/ kernel/ | head -5 || echo "Not found"
+
+          echo
+          echo "========================================"
+          echo "Searching file_operations in fs/proc/generic.c"
+          echo "========================================"
+
+          grep -rn "struct file_operations.*=.*{" \
+            fs/proc/generic.c | head -3 || echo "Not found"
