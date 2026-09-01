@@ -1,0 +1,609 @@
+name: Check Clang Capabilities - r416183b
+
+on:
+workflow_dispatch:
+
+jobs:
+check-toolchain:
+runs-on: ubuntu-22.04
+
+steps:
+
+  # ============================================================
+  # 1. Checkout kernel
+  # ============================================================
+
+  - name: Checkout kernel
+    uses: actions/checkout@v4
+    with:
+      ref: 16
+      fetch-depth: 1
+
+
+  # ============================================================
+  # 2. Install dependencies
+  # ============================================================
+
+  - name: Install dependencies
+    run: |
+      set -e
+
+      sudo apt update
+
+      sudo apt install -y \
+        git \
+        curl \
+        bc \
+        bison \
+        flex \
+        libssl-dev \
+        libelf-dev \
+        device-tree-compiler \
+        build-essential \
+        gcc \
+        g++ \
+        python3
+
+
+  # ============================================================
+  # 3. Clone LineageOS Toolchains
+  # ============================================================
+
+  - name: Clone LineageOS Toolchains
+    run: |
+      set -e
+
+      echo "========================================"
+      echo "CLONING TOOLCHAINS"
+      echo "========================================"
+
+      rm -rf clang gcc64 gcc32
+
+      echo
+      echo "========================================"
+      echo "CLANG r416183b"
+      echo "========================================"
+
+      git clone \
+        --depth=1 \
+        https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+        clang
+
+      echo
+      echo "========================================"
+      echo "GCC64 4.9"
+      echo "========================================"
+
+      git clone \
+        --depth=1 \
+        https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+        gcc64
+
+      echo
+      echo "========================================"
+      echo "GCC32 4.9"
+      echo "========================================"
+
+      git clone \
+        --depth=1 \
+        https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+        gcc32
+
+
+  # ============================================================
+  # 4. Setup Toolchain
+  # ============================================================
+
+  - name: Setup Toolchain
+    run: |
+      set -e
+
+      export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+      echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+      echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+      echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+      echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+
+      echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+      echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+      echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+
+  # ============================================================
+  # 5. Verify Toolchain
+  # ============================================================
+
+  - name: Verify Toolchain
+    run: |
+      set -e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo "========================================"
+      echo "CLANG"
+      echo "========================================"
+
+      which clang
+      clang --version
+
+      echo
+      echo "========================================"
+      echo "CLANG TARGETS"
+      echo "========================================"
+
+      clang --print-targets || true
+
+      echo
+      echo "========================================"
+      echo "LLD"
+      echo "========================================"
+
+      which ld.lld
+      ld.lld --version
+
+      echo
+      echo "========================================"
+      echo "LLVM TOOLS"
+      echo "========================================"
+
+      which llvm-ar
+      which llvm-nm
+      which llvm-objcopy
+      which llvm-objdump
+      which llvm-strip
+
+      echo
+      echo "========================================"
+      echo "GCC64"
+      echo "========================================"
+
+      which aarch64-linux-android-gcc
+      aarch64-linux-android-gcc --version | head -1
+
+      echo
+      echo "========================================"
+      echo "GCC32"
+      echo "========================================"
+
+      which arm-linux-androideabi-gcc
+      arm-linux-androideabi-gcc --version | head -1
+
+
+  # ============================================================
+  # 6. Check LTO Support
+  # ============================================================
+
+  - name: Check LTO Support
+    run: |
+      set -e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo "========================================"
+      echo "LTO SUPPORT"
+      echo "========================================"
+
+      cat > lto_test.c <<'EOF'
+      static int add(int a, int b)
+      {
+          return a + b;
+      }
+
+      int main(void)
+      {
+          return add(1, 2);
+      }
+      EOF
+
+      echo
+      echo "Testing Full LTO..."
+
+      if clang \
+          -O2 \
+          -flto \
+          -c \
+          lto_test.c \
+          -o lto_full.o; then
+
+        echo "[OK] Full LTO supported"
+
+      else
+
+        echo "[FAIL] Full LTO NOT supported"
+        exit 1
+
+      fi
+
+      echo
+      echo "Testing ThinLTO..."
+
+      if clang \
+          -O2 \
+          -flto=thin \
+          -c \
+          lto_test.c \
+          -o lto_thin.o; then
+
+        echo "[OK] ThinLTO supported"
+
+      else
+
+        echo "[FAIL] ThinLTO NOT supported"
+
+      fi
+
+      echo
+      echo "LTO OBJECT FILES:"
+
+      file lto_full.o
+      file lto_thin.o 2>/dev/null || true
+
+
+  # ============================================================
+  # 7. Check Polly Support
+  # ============================================================
+
+  - name: Check Polly Support
+    run: |
+      set -e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo "========================================"
+      echo "POLLY SUPPORT"
+      echo "========================================"
+
+      cat > polly_test.c <<'EOF'
+      void test_polly(int *a, int *b, int n)
+      {
+          int i;
+
+          for (i = 0; i < n; i++)
+              a[i] = b[i] + 1;
+      }
+
+      int main(void)
+      {
+          return 0;
+      }
+      EOF
+
+      echo
+      echo "Checking Polly headers..."
+
+      if [ -d "$CLANG_PATH/include/polly" ]; then
+        echo "[OK] Polly include directory found"
+        find "$CLANG_PATH/include/polly" \
+          -maxdepth 2 \
+          -type f \
+          | head -30
+      else
+        echo "[FAIL] Polly include directory not found"
+      fi
+
+      echo
+      echo "Checking Polly command-line option..."
+
+      if clang \
+          -O3 \
+          -mllvm -polly \
+          -c \
+          polly_test.c \
+          -o polly_test.o \
+          2>polly-error.log; then
+
+        echo "[OK] Polly supported by Clang"
+
+      else
+
+        echo "[FAIL] Polly NOT supported by Clang"
+
+        echo
+        echo "Polly error:"
+        cat polly-error.log
+
+      fi
+
+      echo
+      echo "Checking Polly options..."
+
+      clang \
+        -O3 \
+        -mllvm -polly \
+        -mllvm -debug-pass=Arguments \
+        -c \
+        polly_test.c \
+        -o /dev/null \
+        2>&1 \
+        | grep -i polly \
+        | head -50 \
+        || true
+
+
+  # ============================================================
+  # 8. Check PGO Support
+  # ============================================================
+
+  - name: Check PGO Support
+    run: |
+      set -e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo "========================================"
+      echo "PGO SUPPORT"
+      echo "========================================"
+
+      cat > pgo_test.c <<'EOF'
+      int test_pgo(int x)
+      {
+          if (x > 100)
+              return x * 2;
+
+          return x + 1;
+      }
+
+      int main(void)
+      {
+          return test_pgo(10);
+      }
+      EOF
+
+      echo
+      echo "Checking llvm-profdata..."
+
+      if command -v llvm-profdata >/dev/null 2>&1; then
+        echo "[OK] llvm-profdata found"
+        llvm-profdata --version
+      else
+        echo "[FAIL] llvm-profdata NOT found"
+      fi
+
+      echo
+      echo "Testing PGO instrumentation..."
+
+      if clang \
+          -O2 \
+          -fprofile-instr-generate \
+          -c \
+          pgo_test.c \
+          -o pgo_generate.o; then
+
+        echo "[OK] PGO instrumentation supported"
+
+      else
+
+        echo "[FAIL] PGO instrumentation NOT supported"
+        exit 1
+
+      fi
+
+      echo
+      echo "Testing profile-use flag..."
+
+      if clang \
+          -O2 \
+          -fprofile-instr-use=/tmp/nonexistent.profdata \
+          -c \
+          pgo_test.c \
+          -o /dev/null \
+          2>pgo-use-error.log; then
+
+        echo "[OK] PGO profile-use accepted"
+
+      else
+
+        if grep -qi \
+          "profile data" \
+          pgo-use-error.log; then
+
+          echo "[OK] PGO profile-use option recognized"
+
+        elif grep -qi \
+          "unknown argument" \
+          pgo-use-error.log; then
+
+          echo "[FAIL] PGO profile-use option NOT supported"
+          cat pgo-use-error.log
+          exit 1
+
+        else
+
+          echo "[INFO] PGO profile-use option recognized"
+          cat pgo-use-error.log
+
+        fi
+
+      fi
+
+
+  # ============================================================
+  # 9. Check BOLT Support
+  # ============================================================
+
+  - name: Check BOLT Support
+    run: |
+      set -e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo "========================================"
+      echo "BOLT SUPPORT"
+      echo "========================================"
+
+      echo
+      echo "Checking llvm-bolt..."
+
+      if command -v llvm-bolt >/dev/null 2>&1; then
+
+        echo "[OK] llvm-bolt found"
+
+        which llvm-bolt
+
+        echo
+        llvm-bolt --version
+
+      else
+
+        echo "[FAIL] llvm-bolt NOT found"
+
+      fi
+
+      echo
+      echo "Checking BOLT-related LLVM tools..."
+
+      for tool in \
+        llvm-bolt \
+        llvm-bolt-fdata \
+        llvm-bolt-heatmap \
+        llvm-bolt-optimize-fdata \
+        perf2bolt \
+        merge-fdata
+      do
+
+        if command -v "$tool" >/dev/null 2>&1; then
+          echo "[FOUND] $tool"
+          command -v "$tool"
+        else
+          echo "[MISSING] $tool"
+        fi
+
+      done
+
+      echo
+      echo "Checking Clang BOLT-related strings..."
+
+      clang --help 2>&1 \
+        | grep -i bolt \
+        || true
+
+      echo
+      echo "BOLT NOTE:"
+      echo "BOLT is an LLVM post-link binary optimizer."
+      echo "It is not equivalent to a normal Clang -mllvm optimization flag."
+
+
+  # ============================================================
+  # 10. Final Capability Summary
+  # ============================================================
+
+  - name: Final Capability Summary
+    if: always()
+    run: |
+      set +e
+
+      export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+      echo
+      echo "========================================"
+      echo "FINAL CLANG CAPABILITY SUMMARY"
+      echo "========================================"
+
+      echo
+      echo "========================================"
+      echo "CLANG VERSION"
+      echo "========================================"
+
+      clang --version
+
+      echo
+      echo "========================================"
+      echo "LTO"
+      echo "========================================"
+
+      if clang -O2 -flto -c lto_test.c -o /tmp/lto.o 2>/dev/null; then
+        echo "[SUPPORTED] LTO"
+      else
+        echo "[NOT SUPPORTED] LTO"
+      fi
+
+      echo
+      echo "========================================"
+      echo "POLLY"
+      echo "========================================"
+
+      if clang \
+          -O3 \
+          -mllvm -polly \
+          -c \
+          polly_test.c \
+          -o /tmp/polly.o \
+          2>/dev/null; then
+
+        echo "[SUPPORTED] POLLY"
+
+      else
+
+        echo "[NOT SUPPORTED] POLLY"
+
+      fi
+
+      echo
+      echo "========================================"
+      echo "PGO"
+      echo "========================================"
+
+      if clang \
+          -O2 \
+          -fprofile-instr-generate \
+          -c \
+          pgo_test.c \
+          -o /tmp/pgo.o \
+          2>/dev/null; then
+
+        echo "[SUPPORTED] PGO"
+
+      else
+
+        echo "[NOT SUPPORTED] PGO"
+
+      fi
+
+      echo
+      echo "========================================"
+      echo "BOLT"
+      echo "========================================"
+
+      if command -v llvm-bolt >/dev/null 2>&1; then
+
+        echo "[SUPPORTED/AVAILABLE] BOLT"
+        llvm-bolt --version
+
+      else
+
+        echo "[NOT AVAILABLE] BOLT"
+        echo "llvm-bolt is not included in this Clang package."
+
+      fi
+
+      echo
+      echo "========================================"
+      echo "LLVM TOOLS"
+      echo "========================================"
+
+      for tool in \
+        clang \
+        ld.lld \
+        llvm-ar \
+        llvm-nm \
+        llvm-objcopy \
+        llvm-objdump \
+        llvm-strip \
+        llvm-profdata \
+        llvm-bolt
+      do
+
+        if command -v "$tool" >/dev/null 2>&1; then
+          echo "[FOUND]   $tool"
+        else
+          echo "[MISSING] $tool"
+        fi
+
+      done
+
+      echo
+      echo "========================================"
+      echo "DONE"
+      echo "========================================"
