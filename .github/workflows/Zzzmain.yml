@@ -1,0 +1,668 @@
+name: Check Polly Options - r416183b
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-polly:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. Checkout kernel
+      # ============================================================
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+
+      # ============================================================
+      # 2. Install dependencies
+      # ============================================================
+
+      - name: Install dependencies
+        run: |
+          set -e
+
+          sudo apt update
+
+          sudo apt install -y \
+            git \
+            curl \
+            build-essential \
+            gcc \
+            g++ \
+            file
+
+
+      # ============================================================
+      # 3. Clone LineageOS Toolchains
+      # ============================================================
+
+      - name: Clone LineageOS Toolchains
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CLONING TOOLCHAINS"
+          echo "========================================"
+
+          rm -rf clang gcc64 gcc32
+
+          echo
+          echo "========================================"
+          echo "CLANG r416183b"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+            clang
+
+          echo
+          echo "========================================"
+          echo "GCC64 4.9"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+
+          echo
+          echo "========================================"
+          echo "GCC32 4.9"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
+
+
+      # ============================================================
+      # 4. Setup Toolchain
+      # ============================================================
+
+      - name: Setup Toolchain
+        run: |
+          set -e
+
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+
+      # ============================================================
+      # 5. Verify Toolchain
+      # ============================================================
+
+      - name: Verify Toolchain
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "CLANG"
+          echo "========================================"
+
+          which clang
+          clang --version
+
+          echo
+          echo "========================================"
+          echo "LLD"
+          echo "========================================"
+
+          which ld.lld
+          ld.lld --version
+
+          echo
+          echo "========================================"
+          echo "LLVM TOOLS"
+          echo "========================================"
+
+          for tool in \
+            llvm-ar \
+            llvm-nm \
+            llvm-objcopy \
+            llvm-objdump \
+            llvm-strip \
+            llvm-profdata \
+            opt
+
+          do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "[FOUND] $tool"
+              command -v "$tool"
+            else
+              echo "[MISSING] $tool"
+            fi
+          done
+
+          echo
+          echo "========================================"
+          echo "GCC64"
+          echo "========================================"
+
+          which aarch64-linux-android-gcc
+          aarch64-linux-android-gcc --version | head -1
+
+          echo
+          echo "========================================"
+          echo "GCC32"
+          echo "========================================"
+
+          which arm-linux-androideabi-gcc
+          arm-linux-androideabi-gcc --version | head -1
+
+
+      # ============================================================
+      # 6. Create Polly Test Source
+      # ============================================================
+
+      - name: Create Polly Test
+        run: |
+          set -e
+
+          cat > /tmp/polly_test.c <<'EOF'
+          void test_polly(int *a, int *b, int *c, int n)
+          {
+              int i;
+
+              for (i = 0; i < n; i++)
+                  a[i] = b[i] + c[i];
+          }
+
+          void test_nested(int *a, int n)
+          {
+              int i;
+              int j;
+
+              for (i = 0; i < n; i++)
+                  for (j = 0; j < n; j++)
+                      a[i * n + j] += 1;
+          }
+
+          int main(void)
+          {
+              return 0;
+          }
+          EOF
+
+          echo "[OK] Polly test source created"
+
+
+      # ============================================================
+      # 7. Check Polly Availability
+      # ============================================================
+
+      - name: Check Polly Availability
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "POLLY AVAILABILITY"
+          echo "========================================"
+
+          echo
+          echo "Testing basic Polly:"
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/polly-basic.o \
+              2>/tmp/polly-basic-error.log
+          then
+              echo "[SUPPORTED] Basic Polly"
+          else
+              echo "[FAILED] Basic Polly"
+              cat /tmp/polly-basic-error.log
+              exit 1
+          fi
+
+
+      # ============================================================
+      # 8. Dump ALL Polly Options
+      # ============================================================
+
+      - name: List All Polly Options
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "ALL POLLY OPTIONS"
+          echo "========================================"
+
+          clang \
+            -O3 \
+            -mllvm -polly \
+            -mllvm -help-hidden \
+            -c \
+            -x c \
+            /dev/null \
+            -o /dev/null \
+            2>&1 \
+            | grep -i "polly" \
+            | tee /tmp/polly-options.txt
+
+          echo
+          echo "========================================"
+          echo "POLLY OPTION COUNT"
+          echo "========================================"
+
+          wc -l /tmp/polly-options.txt
+
+          echo
+          echo "========================================"
+          echo "RAW POLLY OPTIONS"
+          echo "========================================"
+
+          cat /tmp/polly-options.txt
+
+
+      # ============================================================
+      # 9. Check Important Polly Options
+      # ============================================================
+
+      - name: Check Important Polly Options
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "IMPORTANT POLLY OPTIONS"
+          echo "========================================"
+
+          check_option() {
+              OPTION="$1"
+
+              if grep -q -- "-$OPTION" /tmp/polly-options.txt; then
+                  echo "[FOUND]   -$OPTION"
+              else
+                  echo "[MISSING] -$OPTION"
+              fi
+          }
+
+          check_option polly
+          check_option polly-ast-use-context
+          check_option polly-invariant-load-hoisting
+          check_option polly-opt-fusion
+          check_option polly-loopfusion-greedy
+          check_option polly-run-inliner
+          check_option polly-vectorizer
+          check_option polly-run-dce
+          check_option polly-tiling
+          check_option polly-parallel
+          check_option polly-opt-isl
+          check_option polly-codegen
+          check_option polly-detect
+          check_option polly-canonicalize
+
+
+      # ============================================================
+      # 10. Test Options Individually
+      # ============================================================
+
+      - name: Test Polly Options Individually
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "TESTING POLLY OPTIONS INDIVIDUALLY"
+          echo "========================================"
+
+          test_option() {
+
+              NAME="$1"
+              shift
+
+              echo
+              echo "----------------------------------------"
+              echo "TEST: $NAME"
+              echo "----------------------------------------"
+
+              if clang \
+                  -O3 \
+                  -mllvm -polly \
+                  "$@" \
+                  -c \
+                  /tmp/polly_test.c \
+                  -o /tmp/polly-test.o \
+                  2>/tmp/polly-test-error.log
+              then
+
+                  echo "[SUPPORTED] $NAME"
+
+              else
+
+                  echo "[FAILED] $NAME"
+
+                  cat /tmp/polly-test-error.log
+
+              fi
+          }
+
+
+          test_option \
+            "polly-ast-use-context" \
+            -mllvm -polly-ast-use-context
+
+
+          test_option \
+            "polly-invariant-load-hoisting" \
+            -mllvm -polly-invariant-load-hoisting
+
+
+          test_option \
+            "polly-opt-fusion=min" \
+            -mllvm -polly-opt-fusion=min
+
+
+          test_option \
+            "polly-opt-fusion=max" \
+            -mllvm -polly-opt-fusion=max
+
+
+          test_option \
+            "polly-loopfusion-greedy" \
+            -mllvm -polly-loopfusion-greedy
+
+
+          test_option \
+            "polly-run-inliner" \
+            -mllvm -polly-run-inliner
+
+
+          test_option \
+            "polly-vectorizer=stripmine" \
+            -mllvm -polly-vectorizer=stripmine
+
+
+          test_option \
+            "polly-run-dce" \
+            -mllvm -polly-run-dce
+
+
+          test_option \
+            "polly-tiling" \
+            -mllvm -polly-tiling
+
+
+          test_option \
+            "polly-tiling=false" \
+            -mllvm -polly-tiling=false
+
+
+          test_option \
+            "polly-parallel" \
+            -mllvm -polly-parallel
+
+
+      # ============================================================
+      # 11. Test Complete Polly Combination
+      # ============================================================
+
+      - name: Test Complete Polly Combination
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "COMPLETE POLLY COMBINATIONS"
+          echo "========================================"
+
+          echo
+          echo "Testing OLD Polly configuration:"
+          echo
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -mllvm -polly-ast-use-context \
+              -mllvm -polly-invariant-load-hoisting \
+              -mllvm -polly-opt-fusion=max \
+              -mllvm -polly-run-inliner \
+              -mllvm -polly-vectorizer=stripmine \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/polly-old.o \
+              2>/tmp/polly-old-error.log
+          then
+
+              echo "[OK] OLD Polly configuration works"
+
+          else
+
+              echo "[FAIL] OLD Polly configuration"
+
+              cat /tmp/polly-old-error.log
+          fi
+
+
+          echo
+          echo "Testing NEW Polly configuration:"
+          echo
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -mllvm -polly-ast-use-context \
+              -mllvm -polly-invariant-load-hoisting \
+              -mllvm -polly-loopfusion-greedy \
+              -mllvm -polly-run-inliner \
+              -mllvm -polly-vectorizer=stripmine \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/polly-new.o \
+              2>/tmp/polly-new-error.log
+          then
+
+              echo "[OK] NEW Polly configuration works"
+
+          else
+
+              echo "[FAIL] NEW Polly configuration"
+
+              cat /tmp/polly-new-error.log
+          fi
+
+
+      # ============================================================
+      # 12. Check LLVMPolly.so
+      # ============================================================
+
+      - name: Check LLVMPolly Plugin
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "LLVMPolly.so"
+          echo "========================================"
+
+          echo
+          echo "Searching for LLVMPolly.so..."
+
+          find "$CLANG_PATH" \
+            -type f \
+            \( \
+              -name "LLVMPolly.so" \
+              -o \
+              -name "*Polly*.so" \
+            \) \
+            -print \
+            | tee /tmp/polly-libraries.txt
+
+          echo
+          echo "Checking result:"
+
+          if grep -q "Polly" /tmp/polly-libraries.txt; then
+              echo "[FOUND] Polly shared library"
+          else
+              echo "[NOT FOUND] LLVMPolly.so"
+          fi
+
+
+      # ============================================================
+      # 13. Debug Pass Pipeline
+      # ============================================================
+
+      - name: Show Polly Pass Pipeline
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "POLLY PASS PIPELINE"
+          echo "========================================"
+
+          clang \
+            -O3 \
+            -mllvm -polly \
+            -mllvm -debug-pass=Arguments \
+            -c \
+            /tmp/polly_test.c \
+            -o /dev/null \
+            2>&1 \
+            | tee /tmp/polly-pass.log
+
+          echo
+          echo "========================================"
+          echo "POLLY PASSES ONLY"
+          echo "========================================"
+
+          grep -i "polly" /tmp/polly-pass.log || true
+
+
+      # ============================================================
+      # 14. Final Summary
+      # ============================================================
+
+      - name: Final Polly Summary
+        if: always()
+        run: |
+          set +e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo
+          echo "========================================"
+          echo "FINAL POLLY SUMMARY"
+          echo "========================================"
+
+          echo
+          echo "CLANG:"
+          clang --version
+
+          echo
+          echo "----------------------------------------"
+          echo "BASIC POLLY"
+          echo "----------------------------------------"
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/final-polly.o \
+              2>/dev/null
+          then
+              echo "[SUPPORTED] Polly"
+          else
+              echo "[NOT SUPPORTED] Polly"
+          fi
+
+
+          echo
+          echo "----------------------------------------"
+          echo "POLLY OPT FUSION"
+          echo "----------------------------------------"
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -mllvm -polly-opt-fusion=max \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/final-fusion.o \
+              2>/dev/null
+          then
+              echo "[SUPPORTED] polly-opt-fusion=max"
+          else
+              echo "[NOT SUPPORTED] polly-opt-fusion=max"
+          fi
+
+
+          echo
+          echo "----------------------------------------"
+          echo "POLLY LOOPFUSION GREEDY"
+          echo "----------------------------------------"
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -mllvm -polly-loopfusion-greedy \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/final-greedy.o \
+              2>/tmp/final-greedy-error.log
+          then
+              echo "[SUPPORTED] polly-loopfusion-greedy"
+          else
+              echo "[NOT SUPPORTED] polly-loopfusion-greedy"
+              grep -i "unknown\|did you mean" \
+                /tmp/final-greedy-error.log \
+                || cat /tmp/final-greedy-error.log
+          fi
+
+
+          echo
+          echo "----------------------------------------"
+          echo "POLLY VECTORIZER"
+          echo "----------------------------------------"
+
+          if clang \
+              -O3 \
+              -mllvm -polly \
+              -mllvm -polly-vectorizer=stripmine \
+              -c \
+              /tmp/polly_test.c \
+              -o /tmp/final-vector.o \
+              2>/dev/null
+          then
+              echo "[SUPPORTED] polly-vectorizer=stripmine"
+          else
+              echo "[NOT SUPPORTED] polly-vectorizer=stripmine"
+          fi
+
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
