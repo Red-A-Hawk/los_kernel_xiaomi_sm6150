@@ -54,6 +54,13 @@ jobs:
           chmod +x antman
           ./antman -S
 
+          echo
+          echo "========================================"
+          echo "PATCHING GLIBC COMPATIBILITY"
+          echo "========================================"
+
+          ./antman --patch=glibc
+
           echo "NEUTRON_PATH=$GITHUB_WORKSPACE/neutron-clang" >> "$GITHUB_ENV"
 
 
