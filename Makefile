@@ -951,7 +951,7 @@ ifdef CONFIG_POLLY_CLANG
 KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-ast-use-context \
 		   -mllvm -polly-invariant-load-hoisting \
-		   -mllvm -polly-loopfusion-greedy \
+		   -mllvm -polly-opt-fusion=max \
 		   -mllvm -polly-run-inliner \
 		   -mllvm -polly-vectorizer=stripmine
 ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
