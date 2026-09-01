@@ -1,0 +1,221 @@
+name: Check Stack Protector Strong - r416183b
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-stack-protector:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. Checkout kernel
+      # ============================================================
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. Install dependencies
+      # ============================================================
+
+      - name: Install dependencies
+        run: |
+          set -e
+
+          sudo apt update
+
+          sudo apt install -y \
+            git \
+            curl \
+            build-essential \
+            gcc \
+            g++
+
+      # ============================================================
+      # 3. Clone LineageOS Toolchains
+      # ============================================================
+
+      - name: Clone LineageOS Toolchains
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "CLONING TOOLCHAINS"
+          echo "========================================"
+
+          rm -rf clang gcc64 gcc32
+
+          echo
+          echo "========================================"
+          echo "CLANG r416183b"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+            clang
+
+          echo
+          echo "========================================"
+          echo "GCC64 4.9"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
+
+          echo
+          echo "========================================"
+          echo "GCC32 4.9"
+          echo "========================================"
+
+          git clone \
+            --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
+
+      # ============================================================
+      # 4. Setup Toolchain
+      # ============================================================
+
+      - name: Setup Toolchain
+        run: |
+          set -e
+
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
+
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
+
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 5. Verify Clang
+      # ============================================================
+
+      - name: Verify Clang
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "========================================"
+          echo "CLANG"
+          echo "========================================"
+
+          which clang
+          clang --version
+
+          echo
+          echo "========================================"
+          echo "GCC64"
+          echo "========================================"
+
+          which aarch64-linux-android-gcc
+          aarch64-linux-android-gcc --version | head -1
+
+          echo
+          echo "========================================"
+          echo "GCC32"
+          echo "========================================"
+
+          which arm-linux-androideabi-gcc
+          arm-linux-androideabi-gcc --version | head -1
+
+      # ============================================================
+      # 6. Check Stack Protector Strong
+      # ============================================================
+
+      - name: Check Stack Protector Strong
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo
+          echo "========================================"
+          echo "STACK PROTECTOR STRONG"
+          echo "========================================"
+
+          echo
+          echo "Compiler:"
+          which clang
+          clang --version
+
+          echo
+          echo "Testing:"
+          echo "clang -target aarch64-linux-gnu -fstack-protector-strong -c -x c /dev/null -o /tmp/test.o"
+
+          if clang \
+              -target aarch64-linux-gnu \
+              -fstack-protector-strong \
+              -c \
+              -x c \
+              /dev/null \
+              -o /tmp/test.o \
+              2>/tmp/stack-protector-error.log; then
+
+            echo
+            echo "[OK] -fstack-protector-strong is supported"
+
+            echo
+            echo "Object:"
+            file /tmp/test.o
+
+          else
+
+            echo
+            echo "[FAIL] -fstack-protector-strong is NOT supported"
+
+            echo
+            echo "Compiler error:"
+            cat /tmp/stack-protector-error.log
+
+            echo
+            echo "========================================"
+            echo "TESTING REGULAR STACK PROTECTOR"
+            echo "========================================"
+
+            if clang \
+                -target aarch64-linux-gnu \
+                -fstack-protector \
+                -c \
+                -x c \
+                /dev/null \
+                -o /tmp/test-regular.o \
+                2>/tmp/stack-protector-regular-error.log; then
+
+              echo "[OK] -fstack-protector is supported"
+              file /tmp/test-regular.o
+
+            else
+
+              echo "[FAIL] -fstack-protector is NOT supported"
+              cat /tmp/stack-protector-regular-error.log
+
+            fi
+
+          fi
+
+      # ============================================================
+      # 7. Final Result
+      # ============================================================
+
+      - name: Final Result
+        if: always()
+        run: |
+          echo
+          echo "========================================"
+          echo "TEST COMPLETE"
+          echo "========================================"
