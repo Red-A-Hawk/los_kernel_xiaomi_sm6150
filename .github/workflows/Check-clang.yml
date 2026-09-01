@@ -356,7 +356,7 @@ jobs:
 
           if command -v llvm-profdata >/dev/null 2>&1; then
             echo "[OK] llvm-profdata found"
-            llvm-profdata --version
+            llvm-profdata merge --help >/dev/null 2>&1 && echo "llvm-profdata is functional"
           else
             echo "[FAIL] llvm-profdata NOT found"
           fi
