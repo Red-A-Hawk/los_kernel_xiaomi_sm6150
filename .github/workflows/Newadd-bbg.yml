@@ -2,7 +2,7 @@ name: Build Kernel (violet)
 
 on:
 push:
-branches: - 16
+branches: 16
 workflow_dispatch:
 
 jobs:
