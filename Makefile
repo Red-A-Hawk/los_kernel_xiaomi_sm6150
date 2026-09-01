@@ -962,11 +962,9 @@ ifeq ($(POLLY_FUSION_FLAG),)
 POLLY_FUSION_FLAG := $(call cc-option,-mllvm -polly-opt-fusion=max)
 endif
 
-KBUILD_CFLAGS += $(POLLY_FUSION_FLAG)
+$(info POLLY: using $(if $(POLLY_FUSION_FLAG),$(POLLY_FUSION_FLAG),no fusion flag))
 
-ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
-KBUILD_CFLAGS += -mllvm -polly-run-dce
-endif
+KBUILD_CFLAGS += $(POLLY_FUSION_FLAG)
 
 endif
 
