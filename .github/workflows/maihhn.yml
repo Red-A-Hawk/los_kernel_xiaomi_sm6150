@@ -1,0 +1,46 @@
+name: Find LTO Kconfig Location
+
+on:
+  workflow_dispatch:
+
+jobs:
+  find-kconfig:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Search for LTO_NONE Kconfig definition
+        run: |
+          echo "========================================"
+          echo "Searching for 'config LTO_NONE'"
+          echo "========================================"
+          grep -rln "config LTO_NONE" --include="Kconfig*" . || echo "Not found with LTO_NONE"
+
+          echo
+          echo "========================================"
+          echo "Searching for 'config LTO_CLANG'"
+          echo "========================================"
+          grep -rln "config LTO_CLANG" . || echo "Not found with LTO_CLANG"
+
+          echo
+          echo "========================================"
+          echo "Showing context around match (LTO_NONE)"
+          echo "========================================"
+          grep -rn -B2 -A15 "config LTO_NONE" --include="Kconfig*" . || true
+
+          echo
+          echo "========================================"
+          echo "Showing context around match (LTO_CLANG)"
+          echo "========================================"
+          grep -rn -B2 -A15 "^config LTO_CLANG" . || true
+
+          echo
+          echo "========================================"
+          echo "Showing context around match (CFI_CLANG) for reference"
+          echo "========================================"
+          grep -rn -B2 -A15 "^config CFI_CLANG" . || true
