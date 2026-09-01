@@ -24,6 +24,7 @@ jobs:
           - KSU-NoMount
           - KSU-SUSFS
           - KSU-SUSFS-NoMount
+          - KSU-SUSFS-NoMount-BBG
 
     steps:
 
@@ -213,11 +214,52 @@ jobs:
 
 
     # ============================================================
-    # 6. Setup NoMount
+    # 6. Setup BBG (Baseband-guard)
+    #
+    # Only applies to KSU-SUSFS-NoMount-BBG
+    # ============================================================
+
+    - name: Setup BBG
+      if: ${{ matrix.build_type == 'KSU-SUSFS-NoMount-BBG' }}
+      run: |
+        set -e
+
+        echo "========================================"
+        echo "SETTING UP BASEBAND-GUARD"
+        echo "========================================"
+
+        git clone \
+          --depth=1 \
+          https://github.com/vc-teahouse/Baseband-guard.git \
+          Baseband-guard
+
+        chmod +x Baseband-guard/setup.sh
+
+        ./Baseband-guard/setup.sh
+
+        echo
+        echo "========================================"
+        echo "BBG CHECK"
+        echo "========================================"
+
+        find security \
+          -maxdepth 2 \
+          -type f \
+          \( \
+            -path '*/baseband-guard/*' \
+            -o -name 'Kconfig' \
+            -o -name 'Makefile' \
+          \) \
+          -print \
+          2>/dev/null || true
+
+
+    # ============================================================
+    # 7. Setup NoMount
     # ============================================================
 
     - name: Setup NoMount
-      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' }}
+      if: ${{ matrix.build_type == 'KSU-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount' || matrix.build_type == 'KSU-SUSFS-NoMount-BBG' }}
       run: |
         set -e
 
@@ -243,7 +285,7 @@ jobs:
 
 
     # ============================================================
-    # 7. Setup KernelSU-Next
+    # 8. Setup KernelSU-Next
     # ============================================================
 
     - name: Setup KernelSU-Next
@@ -276,7 +318,7 @@ jobs:
 
 
     # ============================================================
-    # 8. Load Original violet-perf defconfig
+    # 9. Load Original violet-perf defconfig
     # ============================================================
 
     - name: Load Original violet-perf defconfig
@@ -298,7 +340,7 @@ jobs:
 
 
     # ============================================================
-    # 9. Configure Matrix
+    # 10. Configure Matrix
     # ============================================================
 
     - name: Configure Matrix
@@ -323,6 +365,7 @@ jobs:
             echo "KernelSU: DISABLED"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
+            echo "BBG: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -340,6 +383,7 @@ jobs:
             echo "KernelSU-Next"
             echo "SUSFS: DISABLED"
             echo "NoMount: DISABLED"
+            echo "BBG: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -364,6 +408,7 @@ jobs:
             echo "KernelSU-Next"
             echo "SUSFS: DISABLED"
             echo "NoMount: ENABLED"
+            echo "BBG: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -388,6 +433,7 @@ jobs:
             echo "KernelSU-Next"
             echo "SUSFS: ENABLED"
             echo "NoMount: DISABLED"
+            echo "BBG: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -412,6 +458,7 @@ jobs:
             echo "KernelSU-Next"
             echo "SUSFS: ENABLED"
             echo "NoMount: ENABLED"
+            echo "BBG: DISABLED"
 
             scripts/config \
               --file out/.config \
@@ -427,6 +474,54 @@ jobs:
               --disable CONFIG_KPROBES
 
             DEFCONFIG_NAME="violet-ksu-susfs-nomount-full_defconfig"
+
+            ;;
+
+
+          KSU-SUSFS-NoMount-BBG)
+
+            echo "KernelSU-Next"
+            echo "SUSFS: ENABLED"
+            echo "NoMount: ENABLED"
+            echo "BBG: ENABLED"
+
+            scripts/config \
+              --file out/.config \
+              --enable CONFIG_KSU \
+              --enable CONFIG_KSU_EXTRAS \
+              --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE \
+              --enable CONFIG_KSU_LSM_SECURITY_HOOKS \
+              --enable CONFIG_KSU_FEATURE_SULOG \
+              --enable CONFIG_KSU_FEATURE_ADBROOT \
+              --enable CONFIG_KSU_HEURISTIC_IN_TREE_BUILD \
+              --enable CONFIG_KSU_SUSFS \
+              --enable CONFIG_NOMOUNT \
+              --disable CONFIG_KPROBES \
+              --enable CONFIG_BBG
+
+            CURRENT_LSM="$(grep '^CONFIG_LSM=' out/.config | sed 's/^CONFIG_LSM="//; s/"$//' || true)"
+
+            if [ -z "$CURRENT_LSM" ]; then
+              echo "[ERROR] CONFIG_LSM not found"
+              exit 1
+            fi
+
+            case ",$CURRENT_LSM," in
+              *,baseband_guard,*)
+                echo "[OK] baseband_guard already present in LSM"
+                ;;
+              *)
+                NEW_LSM="${CURRENT_LSM},baseband_guard"
+
+                echo "NEW CONFIG_LSM: $NEW_LSM"
+
+                scripts/config \
+                  --file out/.config \
+                  --set-str LSM "$NEW_LSM"
+                ;;
+            esac
+
+            DEFCONFIG_NAME="violet-ksu-susfs-nomount-bbg-full_defconfig"
 
             ;;
 
@@ -474,6 +569,18 @@ jobs:
         grep -E '^CONFIG_KPROBES' \
           out/.config || true
 
+        echo
+        echo "--- BBG ---"
+
+        grep -E '^CONFIG_BBG' \
+          out/.config || true
+
+        echo
+        echo "--- LSM ---"
+
+        grep -E '^CONFIG_LSM=' \
+          out/.config || true
+
 
         echo
         echo "========================================"
@@ -494,7 +601,7 @@ jobs:
             ;;
 
 
-          KSU-SUSFS|KSU-SUSFS-NoMount)
+          KSU-SUSFS|KSU-SUSFS-NoMount|KSU-SUSFS-NoMount-BBG)
 
             if grep -q '^CONFIG_KSU_SUSFS=y' out/.config; then
               echo "OK: SUSFS IS ENABLED"
@@ -527,7 +634,7 @@ jobs:
 
         case "$BUILD_TYPE" in
 
-          KSU-NoMount|KSU-SUSFS-NoMount)
+          KSU-NoMount|KSU-SUSFS-NoMount|KSU-SUSFS-NoMount-BBG)
 
             if grep -q '^CONFIG_NOMOUNT=y' out/.config; then
               echo "OK: NOMOUNT IS ENABLED"
@@ -547,6 +654,46 @@ jobs:
             fi
 
             echo "OK: NOMOUNT IS DISABLED"
+
+            ;;
+
+        esac
+
+
+        echo
+        echo "========================================"
+        echo "BBG VALIDATION"
+        echo "========================================"
+
+        case "$BUILD_TYPE" in
+
+          KSU-SUSFS-NoMount-BBG)
+
+            if grep -q '^CONFIG_BBG=y' out/.config; then
+              echo "OK: BBG IS ENABLED"
+            else
+              echo "ERROR: BBG MUST BE ENABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            if grep -q '^CONFIG_LSM=.*baseband_guard' out/.config; then
+              echo "OK: baseband_guard PRESENT IN LSM"
+            else
+              echo "ERROR: baseband_guard MISSING FROM LSM FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            ;;
+
+
+          Base|KSU|KSU-NoMount|KSU-SUSFS|KSU-SUSFS-NoMount)
+
+            if grep -q '^CONFIG_BBG=y' out/.config; then
+              echo "ERROR: BBG MUST BE DISABLED FOR $BUILD_TYPE"
+              exit 1
+            fi
+
+            echo "OK: BBG IS DISABLED"
 
             ;;
 
@@ -608,9 +755,15 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' \
           "out/${DEFCONFIG_NAME}" || true
 
+        echo
+        echo "BBG CONFIG"
+
+        grep -E '^CONFIG_BBG' \
+          "out/${DEFCONFIG_NAME}" || true
+
 
     # ============================================================
-    # 10. Upload Full Final Defconfig
+    # 11. Upload Full Final Defconfig
     # ============================================================
 
     - name: Upload Full Final Defconfig Before Build
@@ -622,7 +775,7 @@ jobs:
 
 
     # ============================================================
-    # 11. Verify Build Configuration
+    # 12. Verify Build Configuration
     # ============================================================
 
     - name: Verify Build Configuration
@@ -659,13 +812,17 @@ jobs:
         grep -E '^CONFIG_NOMOUNT' out/.config || true
 
         echo
+        echo "BBG:"
+        grep -E '^CONFIG_BBG' out/.config || true
+
+        echo
         echo "========================================"
         echo "BUILD CONFIG READY"
         echo "========================================"
 
 
     # ============================================================
-    # 12. Build Kernel
+    # 13. Build Kernel
     #
     # Exact toolchain arrangement:
     #
@@ -743,7 +900,7 @@ jobs:
 
 
     # ============================================================
-    # 13. Verify Kernel
+    # 14. Verify Kernel
     # ============================================================
 
     - name: Check Build Output
@@ -768,7 +925,7 @@ jobs:
 
 
     # ============================================================
-    # 14. Package AnyKernel3
+    # 15. Package AnyKernel3
     # ============================================================
 
     - name: Package AnyKernel3
@@ -809,7 +966,7 @@ jobs:
 
 
     # ============================================================
-    # 15. Upload Kernel ZIP
+    # 16. Upload Kernel ZIP
     # ============================================================
 
     - name: Upload Kernel ZIP
@@ -821,7 +978,7 @@ jobs:
 
 
     # ============================================================
-    # 16. Upload Full Active .config
+    # 17. Upload Full Active .config
     # ============================================================
 
     - name: Upload Full Active Config
@@ -834,7 +991,7 @@ jobs:
 
 
     # ============================================================
-    # 17. Upload Build Log
+    # 18. Upload Build Log
     # ============================================================
 
     - name: Upload Build Log
