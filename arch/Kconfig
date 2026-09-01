@@ -674,6 +674,20 @@ config LTO_CLANG
 
 endchoice
 
+config POLLY_CLANG
+	bool "Use clang Polly loop optimizer (EXPERIMENTAL)"
+	depends on LTO_CLANG
+	help
+	  This option enables Polly, LLVM's polyhedral loop and
+	  data-locality optimizer, which performs additional loop
+	  transformations (tiling, fusion, vectorization) during
+	  compilation.
+
+	  If you select this option, you must compile the kernel with a
+	  clang toolchain that was built with Polly support.
+
+	  If unsure, say N.
+
 config CFI
 	bool
 
