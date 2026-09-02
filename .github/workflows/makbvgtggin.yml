@@ -630,8 +630,28 @@ jobs:
           echo "VERIFY GENERATED PGO LINKER SCRIPT"
           echo "============================================================"
 
+          LDS="out/arch/arm64/kernel/vmlinux.lds"
+
           echo
-          echo "[1] Generate vmlinux.lds"
+          echo "[1] Verify linker CPPFLAGS"
+
+          grep -n \
+            "CPPFLAGS_vmlinux.lds" \
+            arch/arm64/kernel/Makefile
+
+          if grep -q \
+              '^CPPFLAGS_vmlinux\.lds.*-DLINKER_SCRIPT' \
+              arch/arm64/kernel/Makefile; then
+
+            echo "[OK] Source Makefile contains -DLINKER_SCRIPT"
+
+          else
+            echo "[FAIL] Source Makefile does not contain -DLINKER_SCRIPT"
+            exit 1
+          fi
+
+          echo
+          echo "[2] Generate vmlinux.lds"
 
           make O=out \
             ARCH=arm64 \
@@ -648,12 +668,19 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
+            CPPFLAGS_vmlinux.lds='-DTEXT_OFFSET=$(TEXT_OFFSET) -DLINKER_SCRIPT' \
             arch/arm64/kernel/vmlinux.lds
 
-          LDS="out/arch/arm64/kernel/vmlinux.lds"
-
           echo
-          echo "[2] Generated linker script:"
+          echo "[3] Generated linker script"
+
+          if [ ! -f "$LDS" ]; then
+            echo "[FAIL] Generated linker script not found:"
+            echo "$LDS"
+            exit 1
+          fi
+
+          echo "[OK] Generated linker script:"
           ls -lh "$LDS"
 
           echo
@@ -677,6 +704,8 @@ jobs:
             __llvm_prf_cnts_end \
             __llvm_prf_names_start \
             __llvm_prf_names_end \
+            __llvm_prf_vals_start \
+            __llvm_prf_vals_end \
             __llvm_prf_vnds_start \
             __llvm_prf_vnds_end
           do
@@ -697,6 +726,11 @@ jobs:
           fi
 
           echo "[OK] All LLVM PGO linker symbols are present"
+
+          echo
+          echo "============================================================"
+          echo "PGO LINKER SCRIPT VERIFICATION PASSED"
+          echo "============================================================"
 
       # ============================================================
       # 12. CHECK CLANG PGO SUPPORT
