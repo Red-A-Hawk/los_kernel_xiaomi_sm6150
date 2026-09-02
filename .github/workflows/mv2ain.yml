@@ -60,7 +60,7 @@ jobs:
             binutils-aarch64-linux-gnu
 
       # ============================================================
-      # 2. Create swap
+      # 2. Setup swap
       # ============================================================
       - name: Setup swap
         shell: bash
@@ -74,7 +74,14 @@ jobs:
             sudo swapon /swapfile
           fi
 
+          echo "=========================================="
+          echo "MEMORY"
+          echo "=========================================="
+
           free -h
+
+          echo
+          echo "SWAP:"
           swapon --show
 
       # ============================================================
@@ -94,10 +101,18 @@ jobs:
           cd "${KERNEL_DIR}"
 
           echo "=========================================="
-          echo "Kernel commit"
+          echo "KERNEL"
           echo "=========================================="
 
+          echo "Branch:"
+          git branch --show-current
+
+          echo
+          echo "Commit:"
           git rev-parse HEAD
+
+          echo
+          echo "Commit message:"
           git log -1 --oneline
 
           echo
@@ -120,7 +135,7 @@ jobs:
           echo "${CLANG_DIR}/bin" >> "${GITHUB_PATH}"
 
           echo "=========================================="
-          echo "Clang"
+          echo "CLANG"
           echo "=========================================="
 
           "${CLANG_DIR}/bin/clang" --version
@@ -132,36 +147,31 @@ jobs:
 
           "${CLANG_DIR}/bin/ld.lld" --version
 
-          echo
-          echo "=========================================="
-          echo "LLVM Profdata"
-          echo "=========================================="
-
-          "${CLANG_DIR}/bin/llvm-profdata" --version
-
       # ============================================================
-      # 5. Verify required LLVM tools
+      # 5. Verify LLVM tools
       # ============================================================
       - name: Verify LLVM tools
         shell: bash
         run: |
           set -eux
 
-          tools="
-          clang
-          clang++
-          ld.lld
-          llvm-ar
-          llvm-nm
-          llvm-objcopy
-          llvm-objdump
-          llvm-strip
-          llvm-profdata
-          "
+          echo "=========================================="
+          echo "LLVM TOOLCHAIN CHECK"
+          echo "=========================================="
 
-          for tool in $tools; do
+          for tool in \
+            clang \
+            clang++ \
+            ld.lld \
+            llvm-ar \
+            llvm-nm \
+            llvm-objcopy \
+            llvm-objdump \
+            llvm-strip \
+            llvm-profdata
+          do
             if [ ! -x "${CLANG_DIR}/bin/${tool}" ]; then
-              echo "ERROR: Missing LLVM tool: ${tool}"
+              echo "ERROR: Missing tool: ${tool}"
               exit 1
             fi
 
@@ -169,12 +179,30 @@ jobs:
           done
 
           echo
-          echo "Checking opt:"
+          echo "=========================================="
+          echo "LLVM PROFData"
+          echo "=========================================="
+
+          # Old llvm-profdata from Clang r416183b
+          # does NOT support --version.
+          "${CLANG_DIR}/bin/llvm-profdata" merge --help >/dev/null
+
+          echo "llvm-profdata: WORKING"
+
+          echo
+          echo "Supported llvm-profdata commands:"
+          "${CLANG_DIR}/bin/llvm-profdata" \
+            merge --help \
+            | head -20
+
+          echo
+          echo "Checking opt..."
+
           if [ -x "${CLANG_DIR}/bin/opt" ]; then
-            "${CLANG_DIR}/bin/opt" --version
+            echo "opt: FOUND"
           else
-            echo "opt is not present."
-            echo "This is NOT required for PGO instrumentation build."
+            echo "opt: NOT FOUND"
+            echo "opt is not required for this PGO instrumentation build."
           fi
 
       # ============================================================
@@ -195,21 +223,26 @@ jobs:
             -o 0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch \
             "${PGO_PATCH_URL}"
 
-          echo
           echo "=========================================="
-          echo "Patch SHA256"
+          echo "PGO PATCH"
           echo "=========================================="
 
+          echo "SHA256:"
           sha256sum \
             0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
 
           echo
-          echo "Patch size:"
+          echo "Lines:"
           wc -l \
             0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
 
+          echo
+          echo "Header:"
+          head -15 \
+            0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
       # ============================================================
-      # 7. STRICT patch check
+      # 7. STRICT git apply --check
       # ============================================================
       - name: Check PGO v2 patch
         shell: bash
@@ -219,7 +252,7 @@ jobs:
           cd "${KERNEL_DIR}"
 
           echo "=========================================="
-          echo "STRICT GIT APPLY CHECK"
+          echo "STRICT PATCH CHECK"
           echo "=========================================="
 
           git status --short
@@ -230,7 +263,7 @@ jobs:
 
           echo
           echo "=========================================="
-          echo "PGO PATCH CHECK PASSED"
+          echo "PGO V2 PATCH CHECK PASSED"
           echo "=========================================="
 
       # ============================================================
@@ -243,25 +276,27 @@ jobs:
 
           cd "${KERNEL_DIR}"
 
-          echo "Applying PGO v2..."
+          echo "=========================================="
+          echo "APPLYING PGO V2"
+          echo "=========================================="
 
           git apply \
             0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
 
           echo
-          echo "Checking resulting diff..."
+          echo "Running git diff --check..."
 
           git diff --check
 
           echo
           echo "=========================================="
-          echo "PGO PATCH APPLIED"
+          echo "PGO V2 APPLIED SUCCESSFULLY"
           echo "=========================================="
 
           git status --short
 
       # ============================================================
-      # 9. Verify PGO source files
+      # 9. Verify PGO source integration
       # ============================================================
       - name: Verify PGO integration
         shell: bash
@@ -270,7 +305,9 @@ jobs:
 
           cd "${KERNEL_DIR}"
 
-          echo "Checking PGO files..."
+          echo "=========================================="
+          echo "PGO SOURCE CHECK"
+          echo "=========================================="
 
           test -f kernel/pgo/Kconfig
           test -f kernel/pgo/Makefile
@@ -278,33 +315,65 @@ jobs:
           test -f kernel/pgo/instrument.c
           test -f kernel/pgo/pgo.h
 
-          echo "Checking Kconfig integration..."
+          echo "PGO source files: OK"
 
-          grep -q 'source "kernel/pgo/Kconfig"' \
+          echo
+          echo "Checking arch/Kconfig..."
+
+          grep -q \
+            'source "kernel/pgo/Kconfig"' \
             arch/Kconfig
 
-          grep -q 'ARCH_SUPPORTS_PGO_CLANG' \
+          echo "arch/Kconfig: OK"
+
+          echo
+          echo "Checking arm64 Kconfig..."
+
+          grep -q \
+            'ARCH_SUPPORTS_PGO_CLANG' \
             arch/arm64/Kconfig
 
-          echo "Checking Makefile integration..."
+          echo "arm64 Kconfig: OK"
 
-          grep -q 'CFLAGS_PGO_CLANG' \
+          echo
+          echo "Checking root Makefile..."
+
+          grep -q \
+            'CFLAGS_PGO_CLANG' \
             Makefile
 
-          grep -q 'kernel/pgo' \
+          echo "Makefile: OK"
+
+          echo
+          echo "Checking kernel Makefile..."
+
+          grep -q \
+            'kernel/pgo' \
             kernel/Makefile
 
-          grep -q 'PGO_PROFILE' \
+          echo "kernel/Makefile: OK"
+
+          echo
+          echo "Checking scripts/Makefile.lib..."
+
+          grep -q \
+            'PGO_PROFILE' \
             scripts/Makefile.lib
 
-          echo "Checking linker integration..."
+          echo "scripts/Makefile.lib: OK"
 
-          grep -q 'PGO_CLANG_DATA' \
+          echo
+          echo "Checking linker script..."
+
+          grep -q \
+            'PGO_CLANG_DATA' \
             include/asm-generic/vmlinux.lds.h
+
+          echo "vmlinux.lds.h: OK"
 
           echo
           echo "=========================================="
-          echo "PGO SOURCE INTEGRATION: PASSED"
+          echo "PGO SOURCE INTEGRATION PASSED"
           echo "=========================================="
 
       # ============================================================
@@ -321,7 +390,7 @@ jobs:
           mkdir -p out
 
       # ============================================================
-      # 11. Load original Violet defconfig
+      # 11. Load vendor/violet-perf_defconfig
       # ============================================================
       - name: Load violet-perf_defconfig
         shell: bash
@@ -329,6 +398,10 @@ jobs:
           set -eux
 
           cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "LOADING DEFCONFIG"
+          echo "=========================================="
 
           make \
             O=out \
@@ -342,24 +415,28 @@ jobs:
             STRIP="${CLANG_DIR}/bin/llvm-strip" \
             "${DEFCONFIG}"
 
+          test -f out/.config
+
+          echo
+          echo "Defconfig loaded successfully."
+
       # ============================================================
       # 12. Enable PGO
       # ============================================================
-      - name: Enable CONFIG_PGO_CLANG
+      - name: Enable PGO
         shell: bash
         run: |
           set -eux
 
           cd "${KERNEL_DIR}"
 
+          echo "=========================================="
+          echo "ENABLE PGO"
+          echo "=========================================="
+
           test -f out/.config
+          test -f scripts/config
 
-          echo "Before PGO configuration:"
-          grep -E \
-            '^CONFIG_(PROC_FS|PGO_CLANG|POLLY_CLANG)' \
-            out/.config || true
-
-          # PGO requires PROC_FS.
           scripts/config \
             --file out/.config \
             --enable CONFIG_PROC_FS
@@ -368,9 +445,10 @@ jobs:
             --file out/.config \
             --enable CONFIG_PGO_CLANG
 
-          # Do NOT touch LTO/ThinLTO from the original defconfig.
-          # Do NOT add Polly.
-          # Do NOT add BOLT.
+          # No Polly is added.
+          # No BOLT is added.
+          # Existing LTO/ThinLTO configuration from
+          # vendor/violet-perf_defconfig is left untouched.
 
           make \
             O=out \
@@ -380,7 +458,7 @@ jobs:
             olddefconfig
 
       # ============================================================
-      # 13. Strict PGO configuration validation
+      # 13. Validate final configuration
       # ============================================================
       - name: Validate PGO configuration
         shell: bash
@@ -390,53 +468,58 @@ jobs:
           cd "${KERNEL_DIR}"
 
           echo "=========================================="
-          echo "FINAL CONFIGURATION"
+          echo "FINAL KERNEL CONFIG"
           echo "=========================================="
 
           grep -E \
             '^CONFIG_(PROC_FS|PGO_CLANG|LTO|THINLTO|LTO_CLANG|POLLY)' \
-            out/.config || true
+            out/.config \
+            || true
 
           echo
-          echo "Required PGO options:"
+          echo "Required options:"
 
-          grep '^CONFIG_PROC_FS=y$' \
+          grep \
+            '^CONFIG_PROC_FS=y$' \
             out/.config
 
-          grep '^CONFIG_PGO_CLANG=y$' \
+          grep \
+            '^CONFIG_PGO_CLANG=y$' \
             out/.config
 
           echo
-          echo "PGO configuration PASSED."
+          echo "PGO configuration: PASSED"
 
       # ============================================================
-      # 14. Verify PGO compiler flags are present
+      # 14. Verify compiler PGO flag
       # ============================================================
-      - name: Verify PGO compiler integration
+      - name: Verify PGO compiler flags
         shell: bash
         run: |
           set -eux
 
           cd "${KERNEL_DIR}"
 
-          echo "Checking PGO compiler flag..."
+          echo "=========================================="
+          echo "PGO COMPILER FLAGS"
+          echo "=========================================="
 
           grep -n \
             'CFLAGS_PGO_CLANG.*-fprofile-generate' \
             Makefile
 
           echo
-          echo "Checking PGO Makefile logic..."
+          echo "PGO Makefile rules:"
 
           grep -n \
             'PGO_PROFILE' \
             scripts/Makefile.lib
 
           echo
-          echo "PGO compiler integration: PASSED."
+          echo "PGO compiler integration: PASSED"
 
       # ============================================================
-      # 15. Build kernel with PGO instrumentation
+      # 15. Build instrumented PGO kernel
       # ============================================================
       - name: Build PGO kernel
         shell: bash
@@ -452,7 +535,12 @@ jobs:
           echo "BUILD ENVIRONMENT"
           echo "=========================================="
 
+          echo
+          echo "Clang:"
           clang --version
+
+          echo
+          echo "LLD:"
           ld.lld --version
 
           echo
@@ -493,11 +581,12 @@ jobs:
           cd "${KERNEL_DIR}"
 
           echo "=========================================="
-          echo "BUILD OUTPUT"
+          echo "KERNEL OUTPUT"
           echo "=========================================="
 
           test -f out/vmlinux
 
+          echo
           echo "vmlinux:"
           ls -lh out/vmlinux
 
@@ -505,13 +594,22 @@ jobs:
             echo
             echo "Image:"
             ls -lh out/arch/arm64/boot/Image
-          else
+          fi
+
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
             echo
-            echo "WARNING: Image was not generated."
+            echo "Image.gz:"
+            ls -lh out/arch/arm64/boot/Image.gz
+          fi
+
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo
+            echo "Image.gz-dtb:"
+            ls -lh out/arch/arm64/boot/Image.gz-dtb
           fi
 
           echo
-          echo "Kernel architecture:"
+          echo "vmlinux file:"
           file out/vmlinux
 
       # ============================================================
@@ -525,25 +623,35 @@ jobs:
           cd "${KERNEL_DIR}"
 
           echo "=========================================="
-          echo "LLVM PGO SECTIONS"
+          echo "LLVM PGO SECTION CHECK"
           echo "=========================================="
 
-          llvm-nm out/vmlinux 2>/dev/null \
-            | grep -E '__llvm_prf_(data|cnts|names|vals|vnds)' \
+          echo
+          echo "LLVM PGO symbols:"
+
+          llvm-nm \
+            out/vmlinux \
+            2>/dev/null \
+            | grep -E \
+              '__llvm_prf_(data|cnts|names|vals|vnds)' \
             | head -100 \
             || true
 
           echo
-          echo "Checking ELF sections..."
+          echo "ELF PGO sections:"
 
-          readelf -S out/vmlinux 2>/dev/null \
-            | grep -E '__llvm_prf|pgo' \
+          readelf \
+            -S \
+            out/vmlinux \
+            2>/dev/null \
+            | grep -E \
+              '__llvm_prf|pgo' \
             || true
 
       # ============================================================
-      # 18. Save final config
+      # 18. Save final configuration
       # ============================================================
-      - name: Save final defconfig
+      - name: Save final configuration
         shell: bash
         run: |
           set -eux
@@ -554,8 +662,12 @@ jobs:
             out/.config \
             out/PGO-final-defconfig
 
-          echo "PGO final configuration:"
-          grep '^CONFIG_PGO_CLANG=' \
+          echo "=========================================="
+          echo "FINAL PGO CONFIG"
+          echo "=========================================="
+
+          grep \
+            '^CONFIG_PGO_CLANG=' \
             out/.config
 
       # ============================================================
@@ -573,6 +685,10 @@ jobs:
             echo "=========================================="
             echo "PGO BUILD INFORMATION"
             echo "=========================================="
+
+            echo
+            echo "[Kernel branch]"
+            git branch --show-current
 
             echo
             echo "[Kernel commit]"
@@ -596,7 +712,7 @@ jobs:
 
             echo
             echo "[LLVM Profdata]"
-            "${CLANG_DIR}/bin/llvm-profdata" --version
+            "${CLANG_DIR}/bin/llvm-profdata" merge --help | head -20
 
             echo
             echo "[PGO configuration]"
@@ -612,7 +728,7 @@ jobs:
           } > pgo-build-info.txt
 
       # ============================================================
-      # 20. Upload kernel artifacts
+      # 20. Upload kernel
       # ============================================================
       - name: Upload PGO kernel
         if: success()
@@ -630,9 +746,9 @@ jobs:
             kernel/out/PGO-final-defconfig
 
       # ============================================================
-      # 21. Upload logs / patch
+      # 21. Upload logs and patch
       # ============================================================
-      - name: Upload PGO build logs
+      - name: Upload PGO debug artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
