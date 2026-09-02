@@ -95,8 +95,8 @@ jobs:
       # ============================================================
       # 6. Setup toolchain
       #
-      # Keep the same build environment used by the working
-      # Neutron compatibility/build workflow.
+      # Same compiler execution method as the known-working
+      # Neutron build workflow.
       # ============================================================
 
       - name: Setup Toolchain
@@ -147,13 +147,23 @@ jobs:
 
           echo
           echo "========================================"
-          echo "LLVM PROFILING TOOLS"
+          echo "LLVM PROF-DATA"
           echo "========================================"
 
-          which llvm-profdata
-          llvm-profdata --version
+          if command -v llvm-profdata >/dev/null 2>&1; then
+            echo "[OK] llvm-profdata found"
+            which llvm-profdata
+          else
+            echo "[FAIL] llvm-profdata missing"
+            exit 1
+          fi
 
-          which llvm-readelf || true
+          echo
+          echo "Testing llvm-profdata..."
+
+          llvm-profdata show --help >/dev/null 2>&1
+
+          echo "[OK] llvm-profdata is functional"
 
           echo
           echo "========================================"
@@ -212,8 +222,8 @@ jobs:
             -o /tmp/pgo_test_use.o \
             2>&1 | tee /tmp/pgo-use.log || true
 
-          if grep -Eq \
-            "Could not read profile|profile.*not found|No such file|cannot open profile" \
+          if grep -Eiq \
+            "could not read profile|profile.*not found|no such file|cannot open profile" \
             /tmp/pgo-use.log; then
 
             echo "[OK] PGO profile-use option recognized"
@@ -255,16 +265,13 @@ jobs:
 
           if [ ! -f pgo-arm64-4.14.patch ]; then
             echo "[FAIL] pgo-arm64-4.14.patch not found"
-            echo
-            echo "The kernel source must contain:"
-            echo "pgo-arm64-4.14.patch"
             exit 1
           fi
 
           echo "[OK] PGO patch found"
 
           echo
-          echo "Testing patch without applying..."
+          echo "Checking patch applicability..."
 
           git apply --check pgo-arm64-4.14.patch
 
@@ -272,7 +279,7 @@ jobs:
 
 
       # ============================================================
-      # 11. Apply ARM64 Kernel 4.14 PGO infrastructure
+      # 11. Apply ARM64 PGO patch
       # ============================================================
 
       - name: Apply ARM64 PGO Patch
@@ -280,7 +287,7 @@ jobs:
           set -e
 
           echo "========================================"
-          echo "APPLYING PGO PATCH"
+          echo "APPLYING ARM64 PGO PATCH"
           echo "========================================"
 
           git apply pgo-arm64-4.14.patch
@@ -363,7 +370,7 @@ jobs:
 
 
       # ============================================================
-      # 14. Prepare scripts/config if required
+      # 14. Prepare scripts/config
       # ============================================================
 
       - name: Prepare Kernel Scripts
@@ -380,7 +387,8 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
 
           if [ ! -x scripts/config ]; then
-            echo "[INFO] scripts/config not built yet"
+
+            echo "[INFO] Building scripts/config..."
 
             make \
               O=out \
@@ -393,7 +401,7 @@ jobs:
           fi
 
           if [ ! -x scripts/config ]; then
-            echo "[FAIL] scripts/config is unavailable"
+            echo "[FAIL] scripts/config unavailable"
             exit 1
           fi
 
@@ -421,9 +429,6 @@ jobs:
 
       # ============================================================
       # 16. Disable LTO
-      #
-      # PGO build is intentionally independent from LTO.
-      # Only disable symbols that actually exist.
       # ============================================================
 
       - name: Disable LTO
@@ -440,10 +445,17 @@ jobs:
             THINLTO
           do
             if grep -q "^CONFIG_${cfg}=" out/.config; then
-              scripts/config --file out/.config --disable "$cfg"
+
+              scripts/config \
+                --file out/.config \
+                --disable "$cfg"
+
               echo "[DISABLED] CONFIG_${cfg}"
+
             else
+
               echo "[NOT PRESENT] CONFIG_${cfg}"
+
             fi
           done
 
@@ -466,7 +478,7 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
 
           echo "========================================"
-          echo "FINALIZING CONFIGURATION"
+          echo "FINALIZING PGO CONFIGURATION"
           echo "========================================"
 
           make \
@@ -479,7 +491,7 @@ jobs:
 
           echo
           echo "========================================"
-          echo "PGO / LTO CONFIG"
+          echo "PGO / LTO CONFIGURATION"
           echo "========================================"
 
           grep -E \
@@ -511,8 +523,7 @@ jobs:
       # ============================================================
       # 18. Build PGO instrumented kernel
       #
-      # This is intentionally the same style of make invocation
-      # used by the previously working kernel build.
+      # This follows the known-working build invocation.
       # ============================================================
 
       - name: Build PGO Instrumented Kernel
@@ -557,7 +568,7 @@ jobs:
           echo "========================================"
 
           if [ -f out/arch/arm64/boot/Image ]; then
-            echo "[OK] Kernel Image"
+            echo "[OK] Image"
             ls -lh out/arch/arm64/boot/Image
           else
             echo "[FAIL] Image not found"
@@ -585,11 +596,13 @@ jobs:
           echo "VERIFYING LLVM PGO SECTIONS"
           echo "========================================"
 
-          llvm-readelf -S out/vmlinux > /tmp/vmlinux-sections.txt
+          llvm-readelf -S out/vmlinux \
+            > /tmp/vmlinux-sections.txt
 
           echo
           echo "LLVM PGO sections:"
-          grep -E '__llvm_prf_(data|cnts|names|vals|vnds)' \
+          grep -E \
+            '__llvm_prf_(data|cnts|names|vals|vnds)' \
             /tmp/vmlinux-sections.txt || true
 
           echo
@@ -601,12 +614,14 @@ jobs:
             __llvm_prf_cnts \
             __llvm_prf_names
           do
+
             if grep -q "$section" /tmp/vmlinux-sections.txt; then
               echo "[FOUND] $section"
               found=1
             else
               echo "[MISSING] $section"
             fi
+
           done
 
           if [ "$found" -eq 0 ]; then
@@ -616,7 +631,7 @@ jobs:
           fi
 
           echo
-          echo "[OK] LLVM PGO instrumentation is present"
+          echo "[OK] LLVM PGO instrumentation present"
 
 
       # ============================================================
@@ -684,7 +699,8 @@ jobs:
           echo
           echo "LTO:"
           grep -E '^CONFIG_(LTO|LTO_CLANG|THINLTO)=' \
-            out/.config 2>/dev/null || echo "[NO LTO CONFIG ENABLED]"
+            out/.config 2>/dev/null || \
+            echo "[NO LTO CONFIG ENABLED]"
 
           echo
           echo "Kernel:"
