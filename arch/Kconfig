@@ -674,8 +674,15 @@ config LTO_CLANG
 
 endchoice
 
+config ARCH_SUPPORTS_POLLY_CLANG
+	bool
+	help
+	  An architecture should select this if it supports
+	  building with clang's Polly polyhedral loop optimizer.
+
 config POLLY_CLANG
 	bool "Use clang Polly loop optimizer (EXPERIMENTAL)"
+	depends on ARCH_SUPPORTS_POLLY_CLANG
 	help
 	  This option enables Polly, LLVM's polyhedral loop and
 	  data-locality optimizer, which performs additional loop
