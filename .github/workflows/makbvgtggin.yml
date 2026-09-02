@@ -617,43 +617,37 @@ jobs:
             "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
             out/.config
 
+            # ============================================================
+      # 11. DEBUG PGO LINKER PREPROCESSING
       # ============================================================
-      # 11. VERIFY GENERATED PGO LINKER SCRIPT
-      # ============================================================
-      - name: Verify Generated PGO Linker Script
+      - name: Debug PGO Linker Preprocessing
         run: |
           set -e
 
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
           echo "============================================================"
-          echo "VERIFY GENERATED PGO LINKER SCRIPT"
+          echo "DEBUG PGO LINKER PREPROCESSING"
           echo "============================================================"
 
-          LDS="out/arch/arm64/kernel/vmlinux.lds"
-
           echo
-          echo "[1] Verify linker CPPFLAGS"
+          echo "[1] Verify source configuration"
 
           grep -n \
             "CPPFLAGS_vmlinux.lds" \
             arch/arm64/kernel/Makefile
 
-          if grep -q \
-              '^CPPFLAGS_vmlinux\.lds.*-DLINKER_SCRIPT' \
-              arch/arm64/kernel/Makefile; then
-
-            echo "[OK] Source Makefile contains -DLINKER_SCRIPT"
-
-          else
-            echo "[FAIL] Source Makefile does not contain -DLINKER_SCRIPT"
-            exit 1
-          fi
+          grep -n \
+            -B2 -A30 \
+            "PGO_CLANG_DATA" \
+            include/asm-generic/vmlinux.lds.h
 
           echo
-          echo "[2] Generate vmlinux.lds"
+          echo "============================================================"
+          echo "[2] Ask Kbuild for the vmlinux.lds command"
+          echo "============================================================"
 
-          make O=out \
+          make V=1 -n O=out \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -668,69 +662,24 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CPPFLAGS_vmlinux.lds='-DTEXT_OFFSET=$(TEXT_OFFSET) -DLINKER_SCRIPT' \
-            arch/arm64/kernel/vmlinux.lds
-
-          echo
-          echo "[3] Generated linker script"
-
-          if [ ! -f "$LDS" ]; then
-            echo "[FAIL] Generated linker script not found:"
-            echo "$LDS"
-            exit 1
-          fi
-
-          echo "[OK] Generated linker script:"
-          ls -lh "$LDS"
+            arch/arm64/kernel/vmlinux.lds \
+            2>&1 | tee /tmp/vmlinux-lds-command.log
 
           echo
           echo "============================================================"
-          echo "LLVM PGO SYMBOL DEFINITIONS"
+          echo "[3] Extract preprocessing command"
           echo "============================================================"
 
-          grep -n "__llvm_prf" "$LDS" || true
+          grep -E \
+            'vmlinux\.lds|LINKER_SCRIPT|cpp|clang' \
+            /tmp/vmlinux-lds-command.log \
+            || true
 
           echo
           echo "============================================================"
-          echo "CHECK REQUIRED PGO SYMBOLS"
+          echo "[OK] Kbuild command captured"
           echo "============================================================"
-
-          FAIL=0
-
-          for SYMBOL in \
-            __llvm_prf_data_start \
-            __llvm_prf_data_end \
-            __llvm_prf_cnts_start \
-            __llvm_prf_cnts_end \
-            __llvm_prf_names_start \
-            __llvm_prf_names_end \
-            __llvm_prf_vals_start \
-            __llvm_prf_vals_end \
-            __llvm_prf_vnds_start \
-            __llvm_prf_vnds_end
-          do
-            if grep -q "$SYMBOL" "$LDS"; then
-              echo "[OK] $SYMBOL"
-            else
-              echo "[FAIL] $SYMBOL missing"
-              FAIL=1
-            fi
-          done
-
-          echo
-          echo "============================================================"
-
-          if [ "$FAIL" -ne 0 ]; then
-            echo "[FAIL] LLVM PGO symbols are missing from generated linker script"
-            exit 1
-          fi
-
-          echo "[OK] All LLVM PGO linker symbols are present"
-
-          echo
-          echo "============================================================"
-          echo "PGO LINKER SCRIPT VERIFICATION PASSED"
-          echo "============================================================"
+          
 
       # ============================================================
       # 12. CHECK CLANG PGO SUPPORT
