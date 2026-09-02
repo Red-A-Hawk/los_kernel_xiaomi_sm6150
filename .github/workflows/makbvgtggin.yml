@@ -80,7 +80,7 @@ jobs:
             gcc32
 
       # ============================================================
-      # 4. TOOLCHAIN ENVIRONMENT
+      # 4. SET TOOLCHAIN ENVIRONMENT
       # ============================================================
       - name: Setup Toolchain Environment
         run: |
@@ -149,7 +149,14 @@ jobs:
 
           echo
           echo "LLVM PROF-DATA:"
-          llvm-profdata --version
+          command -v llvm-profdata
+
+          if llvm-profdata merge --help >/dev/null 2>&1; then
+            echo "[OK] llvm-profdata merge supported"
+          else
+            echo "[FAIL] llvm-profdata merge is not functional"
+            exit 1
+          fi
 
           echo
           echo "GCC64:"
@@ -171,7 +178,10 @@ jobs:
           command -v llvm-objcopy
           command -v llvm-objdump
           command -v llvm-strip
+          command -v llvm-readelf
           command -v llvm-profdata
+          command -v aarch64-linux-android-gcc
+          command -v arm-linux-androideabi-gcc
 
       # ============================================================
       # 6. DOWNLOAD PGO PATCH
@@ -216,7 +226,7 @@ jobs:
           echo "[OK] Patch SHA256 verified"
 
       # ============================================================
-      # 7. CHECK AND APPLY PATCH
+      # 7. CHECK AND APPLY PGO PATCH
       # ============================================================
       - name: Apply PGO Patch
         run: |
@@ -239,14 +249,14 @@ jobs:
 
           git apply "$PATCH_FILE"
 
-          echo "[OK] PGO patch applied"
+          echo "[OK] PGO patch applied successfully"
 
           echo
           echo "Changed files:"
           git status --short
 
       # ============================================================
-      # 8. VERIFY PGO PATCH
+      # 8. VERIFY PGO INTEGRATION
       # ============================================================
       - name: Verify PGO Integration
         run: |
@@ -262,9 +272,9 @@ jobs:
           echo "[1] Root Makefile"
 
           if grep -n "CFLAGS_PGO_CLANG" Makefile; then
-            echo "[OK]"
+            echo "[OK] CFLAGS_PGO_CLANG found"
           else
-            echo "[FAIL]"
+            echo "[FAIL] CFLAGS_PGO_CLANG missing"
             FAIL=1
           fi
 
@@ -272,9 +282,9 @@ jobs:
           echo "[2] arch/Kconfig"
 
           if grep -n 'source "kernel/pgo/Kconfig"' arch/Kconfig; then
-            echo "[OK]"
+            echo "[OK] kernel/pgo/Kconfig found"
           else
-            echo "[FAIL]"
+            echo "[FAIL] kernel/pgo/Kconfig missing"
             FAIL=1
           fi
 
@@ -282,20 +292,20 @@ jobs:
           echo "[3] ARM64 Kconfig"
 
           if grep -n "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
-            echo "[OK]"
+            echo "[OK] ARM64 PGO support found"
           else
-            echo "[FAIL]"
+            echo "[FAIL] ARM64 PGO support missing"
             FAIL=1
           fi
 
           echo
-          echo "[4] VDSO"
+          echo "[4] ARM64 VDSO"
 
           if grep -n "PGO_PROFILE := n" \
               arch/arm64/kernel/vdso/Makefile; then
-            echo "[OK]"
+            echo "[OK] VDSO PGO disabled"
           else
-            echo "[FAIL]"
+            echo "[FAIL] VDSO PGO setting missing"
             FAIL=1
           fi
 
@@ -304,9 +314,9 @@ jobs:
 
           if grep -n 'obj-\$(CONFIG_PGO_CLANG).*pgo' \
               kernel/Makefile; then
-            echo "[OK]"
+            echo "[OK] kernel/pgo registered"
           else
-            echo "[FAIL]"
+            echo "[FAIL] kernel/pgo not registered"
             FAIL=1
           fi
 
@@ -315,25 +325,25 @@ jobs:
 
           if grep -n "CFLAGS_PGO_CLANG" \
               scripts/Makefile.lib; then
-            echo "[OK]"
+            echo "[OK] PGO flags integrated"
           else
-            echo "[FAIL]"
+            echo "[FAIL] PGO flags missing"
             FAIL=1
           fi
 
           echo
-          echo "[7] Linker"
+          echo "[7] vmlinux linker"
 
           if grep -n "__llvm_prf_data" \
               include/asm-generic/vmlinux.lds.h; then
-            echo "[OK]"
+            echo "[OK] __llvm_prf_data found"
           else
-            echo "[FAIL]"
+            echo "[FAIL] __llvm_prf_data missing"
             FAIL=1
           fi
 
           echo
-          echo "[8] kernel/pgo"
+          echo "[8] kernel/pgo files"
 
           if [ -f kernel/pgo/Kconfig ] && \
              [ -f kernel/pgo/Makefile ] && \
@@ -356,7 +366,8 @@ jobs:
             FAIL=1
           fi
 
-          if git diff --quiet -- drivers/firmware/efi/libstub/Makefile; then
+          if git diff --quiet -- \
+              drivers/firmware/efi/libstub/Makefile; then
             echo "[OK] EFI libstub Makefile unchanged"
           else
             echo "[FAIL] EFI libstub Makefile was modified"
@@ -374,7 +385,7 @@ jobs:
           echo "PGO INTEGRATION: OK"
 
       # ============================================================
-      # 9. RUN DEFCONFIG
+      # 9. RUN VIOLET DEFCONFIG
       # ============================================================
       - name: Run Violet Defconfig
         run: |
@@ -383,7 +394,7 @@ jobs:
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
           echo "============================================================"
-          echo "VIOLET DEFCONFIG"
+          echo "VIOLET PERF DEFCONFIG"
           echo "============================================================"
 
           make O=out \
@@ -404,73 +415,17 @@ jobs:
             vendor/violet-perf_defconfig
 
           echo
-          echo "Defconfig completed"
-
-      # ============================================================
-      # 10. ENABLE PGO
-      # ============================================================
-      - name: Enable PGO Configuration
-        run: |
-          set -e
-
           echo "============================================================"
-          echo "ENABLE PGO"
+          echo "CHECK PGO CONFIGURATION"
           echo "============================================================"
-
-          scripts/config --file out/.config \
-            -e ARCH_SUPPORTS_PGO_CLANG \
-            -e PGO_CLANG
-
-          echo
-          echo "PGO options before olddefconfig:"
-
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
-            out/.config || true
-
-      # ============================================================
-      # 11. OLDDEFCONFIG
-      # ============================================================
-      - name: Run Olddefconfig With Clang
-        run: |
-          set -e
-
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "============================================================"
-          echo "OLDDEFCONFIG"
-          echo "============================================================"
-
-          make O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            olddefconfig
-
-          echo
-          echo "============================================================"
-          echo "FINAL PGO CONFIGURATION"
-          echo "============================================================"
-
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
-            out/.config || true
 
           if grep -q "^CONFIG_PGO_CLANG=y$" out/.config; then
             echo "[OK] CONFIG_PGO_CLANG=y"
           else
             echo "[FAIL] CONFIG_PGO_CLANG is not enabled"
+            grep -E \
+              "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
+              out/.config || true
             exit 1
           fi
 
@@ -484,54 +439,27 @@ jobs:
           if grep -q "^CONFIG_PROC_FS=y$" out/.config; then
             echo "[OK] CONFIG_PROC_FS=y"
           else
-            echo "[FAIL] CONFIG_PROC_FS is required by PGO"
+            echo "[FAIL] CONFIG_PROC_FS is required"
             exit 1
           fi
 
-      # ============================================================
-      # 12. PREPARE WITH CLANG
-      # ============================================================
-      - name: Prepare Kernel With Clang
-        run: |
-          set -e
-
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "============================================================"
-          echo "KERNEL PREPARE"
-          echo "============================================================"
-
-          make O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            prepare
-
           echo
-          echo "[OK] Kernel prepare completed with Clang"
+          echo "Relevant configuration:"
+          grep -E \
+            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
+            out/.config
 
       # ============================================================
-      # 13. TEST CLANG PGO
+      # 10. CHECK CLANG PGO SUPPORT
       # ============================================================
-      - name: Test Clang PGO
+      - name: Check Clang PGO Support
         run: |
           set -e
 
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
           echo "============================================================"
-          echo "CLANG PGO CAPABILITY"
+          echo "CLANG PGO SUPPORT"
           echo "============================================================"
 
           cat > pgo_test.c <<'EOF'
@@ -555,10 +483,19 @@ jobs:
 
           echo
           echo "llvm-profdata:"
-          llvm-profdata --version
+          command -v llvm-profdata
+
+          if llvm-profdata merge --help >/dev/null 2>&1; then
+            echo "[OK] llvm-profdata merge supported"
+          else
+            echo "[FAIL] llvm-profdata merge failed"
+            exit 1
+          fi
 
           echo
-          echo "Testing -fprofile-generate"
+          echo "============================================================"
+          echo "TEST -fprofile-generate"
+          echo "============================================================"
 
           clang \
             -O2 \
@@ -566,10 +503,12 @@ jobs:
             -c pgo_test.c \
             -o pgo_generate.o
 
-          echo "[OK] -fprofile-generate"
+          echo "[OK] -fprofile-generate supported"
 
           echo
-          echo "Testing -fprofile-instr-generate"
+          echo "============================================================"
+          echo "TEST -fprofile-instr-generate"
+          echo "============================================================"
 
           clang \
             -O2 \
@@ -577,10 +516,12 @@ jobs:
             -c pgo_test.c \
             -o pgo_instr.o
 
-          echo "[OK] -fprofile-instr-generate"
+          echo "[OK] -fprofile-instr-generate supported"
 
           echo
-          echo "Testing -fprofile-instr-use recognition"
+          echo "============================================================"
+          echo "TEST -fprofile-instr-use"
+          echo "============================================================"
 
           clang \
             -O2 \
@@ -598,16 +539,16 @@ jobs:
           echo "[OK] -fprofile-instr-use recognized"
 
       # ============================================================
-      # 14. BUILD KERNEL OBJECTS WITH PGO
+      # 11. BUILD KERNEL WITH PGO
       # ============================================================
-      - name: Build Kernel Objects With PGO
+      - name: Build Kernel With PGO
         run: |
           set -o pipefail
 
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
           echo "============================================================"
-          echo "BUILD KERNEL OBJECTS WITH PGO"
+          echo "BUILD KERNEL WITH PGO"
           echo "============================================================"
 
           make -j$(nproc --all) \
@@ -631,32 +572,32 @@ jobs:
             2>&1 | tee pgo-build.log
 
           echo
-          echo "[OK] kernel/ objects built"
+          echo "[OK] kernel/ build completed"
 
       # ============================================================
-      # 15. VERIFY PGO FLAGS
+      # 12. VERIFY PGO FLAGS
       # ============================================================
       - name: Verify PGO Compiler Flags
         run: |
           set -e
 
           echo "============================================================"
-          echo "VERIFY -fprofile-generate"
+          echo "VERIFY PGO COMPILER FLAGS"
           echo "============================================================"
 
           if grep -q -- "-fprofile-generate" pgo-build.log; then
             echo "[OK] -fprofile-generate found in kernel build"
           else
-            echo "[FAIL] -fprofile-generate was not found"
+            echo "[FAIL] -fprofile-generate not found in kernel build"
             exit 1
           fi
 
           echo
-          echo "PGO compiler flag occurrences:"
+          echo "Number of occurrences:"
           grep -o -- "-fprofile-generate" pgo-build.log | wc -l
 
       # ============================================================
-      # 16. VERIFY LLVM PGO SECTIONS
+      # 13. VERIFY LLVM PGO SECTIONS
       # ============================================================
       - name: Verify LLVM PGO Sections
         run: |
@@ -675,8 +616,8 @@ jobs:
             if llvm-readelf -S "$obj" 2>/dev/null | \
                 grep -q "__llvm_prf_"; then
 
-              echo "[OK] PGO sections found:"
-              echo "     $obj"
+              echo "[OK] PGO sections found in:"
+              echo "$obj"
 
               llvm-readelf -S "$obj" 2>/dev/null | \
                 grep "__llvm_prf_"
@@ -698,7 +639,7 @@ jobs:
           fi
 
       # ============================================================
-      # 17. BUILD VMLINUX
+      # 14. BUILD VMLINUX
       # ============================================================
       - name: Build Vmlinux With PGO
         run: |
@@ -731,10 +672,10 @@ jobs:
             2>&1 | tee vmlinux-build.log
 
           echo
-          echo "[OK] vmlinux built"
+          echo "[OK] vmlinux build completed"
 
       # ============================================================
-      # 18. VERIFY VMLINUX PGO SECTIONS
+      # 15. VERIFY VMLINUX PGO SECTIONS
       # ============================================================
       - name: Verify Vmlinux PGO Sections
         run: |
@@ -751,17 +692,19 @@ jobs:
             exit 1
           fi
 
-          llvm-readelf -S out/vmlinux | \
-            grep "__llvm_prf_" || {
-              echo "[FAIL] No LLVM PGO sections found in vmlinux"
-              exit 1
-            }
+          if llvm-readelf -S out/vmlinux | grep -q "__llvm_prf_"; then
+            echo "[OK] LLVM PGO sections found in vmlinux"
 
-          echo
-          echo "[OK] LLVM PGO sections are present in vmlinux"
+            echo
+            llvm-readelf -S out/vmlinux | \
+              grep "__llvm_prf_"
+          else
+            echo "[FAIL] No LLVM PGO sections found in vmlinux"
+            exit 1
+          fi
 
       # ============================================================
-      # 19. SAVE FINAL CONFIG
+      # 16. SAVE FINAL CONFIG
       # ============================================================
       - name: Save Final PGO Configuration
         run: |
@@ -770,7 +713,7 @@ jobs:
           cp out/.config pgo-final-defconfig
 
           echo "============================================================"
-          echo "FINAL PGO CONFIG"
+          echo "FINAL PGO CONFIGURATION"
           echo "============================================================"
 
           grep -E \
@@ -778,7 +721,7 @@ jobs:
             out/.config
 
       # ============================================================
-      # 20. UPLOAD BUILD ARTIFACTS
+      # 17. UPLOAD ARTIFACTS
       # ============================================================
       - name: Upload PGO Build Artifacts
         if: always()
@@ -796,7 +739,7 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # 21. FINAL SUMMARY
+      # 18. FINAL SUMMARY
       # ============================================================
       - name: Final Summary
         if: always()
@@ -824,7 +767,7 @@ jobs:
 
           echo
           echo "llvm-profdata:"
-          llvm-profdata --version || true
+          command -v llvm-profdata || true
 
           echo
           echo "PGO configuration:"
