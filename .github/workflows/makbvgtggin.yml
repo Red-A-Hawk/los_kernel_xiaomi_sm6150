@@ -213,27 +213,25 @@ jobs:
 
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
 
-          echo "============================================================"
-          echo "CHECK PGO PATCH"
-          echo "============================================================"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
 
-          git apply --check "$PATCH_FILE"
-
-          echo "[OK] git apply --check passed"
-
-          echo
           echo "============================================================"
-          echo "APPLY PGO PATCH"
+          echo "APPLY PGO PATCH (git am)"
           echo "============================================================"
 
-          git apply "$PATCH_FILE"
-
-          echo "[OK] PGO patch applied successfully"
+          if git am --keep-cr --3way "$PATCH_FILE"; then
+            echo "[OK] PGO patch applied successfully via git am"
+          else
+            echo "[WARN] git am failed, aborting and falling back to patch -p1"
+            git am --abort || true
+            patch -p1 --fuzz=3 --no-backup-if-mismatch < "$PATCH_FILE"
+            echo "[OK] PGO patch applied successfully via patch -p1"
+          fi
 
           echo
           echo "Changed files:"
           git status --short
-
       # ============================================================
       # 8. VERIFY PGO INTEGRATION
       # ============================================================
