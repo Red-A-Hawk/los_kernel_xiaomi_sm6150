@@ -1,28 +1,15 @@
 name: Test Clang PGO Build - Partial v7
-
-on:
-workflow_dispatch:
-
-jobs:
-test-pgo-build:
+on: null
+workflow_dispatch: null
+jobs: null
+test-pgo-build: null
 runs-on: ubuntu-22.04
-
 steps:
-
-  # ============================================================
-  # 1. CHECKOUT
-  # ============================================================
-
   - name: Checkout Kernel
     uses: actions/checkout@v4
     with:
       ref: 16
       fetch-depth: 1
-
-  # ============================================================
-  # 2. INSTALL DEPENDENCIES
-  # ============================================================
-
   - name: Install Dependencies
     run: |
       set -e
@@ -43,73 +30,84 @@ steps:
         cpio \
         python3 \
         unzip
-
-  # ============================================================
-  # 3. DOWNLOAD TOOLCHAINS
-  # ============================================================
-
   - name: Download Toolchains
-    run: |
+    run: >
       set -e
+
 
       mkdir -p "$GITHUB_WORKSPACE/toolchains"
 
+
       cd "$GITHUB_WORKSPACE/toolchains"
 
+
       echo "========================================"
+
       echo "LineageOS Clang r416183b"
+
       echo "========================================"
+
 
       git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
         clang
 
       echo
+
       echo "========================================"
+
       echo "GCC64 4.9"
+
       echo "========================================"
+
 
       git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
         gcc64
 
       echo
+
       echo "========================================"
+
       echo "GCC32 4.9"
+
       echo "========================================"
+
 
       git clone --depth=1 \
         https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
         gcc32
-
-  # ============================================================
-  # 4. SET TOOLCHAIN ENVIRONMENT
-  # ============================================================
-
   - name: Setup Toolchain Environment
-    run: |
+    run: >
       set -e
 
+
       export CLANG_PATH="$GITHUB_WORKSPACE/toolchains/clang"
+
       export GCC64_PATH="$GITHUB_WORKSPACE/toolchains/gcc64"
+
       export GCC32_PATH="$GITHUB_WORKSPACE/toolchains/gcc32"
 
+
       echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+
       echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+
       echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
 
+
       echo "CROSS_COMPILE=$GCC64_PATH/bin/aarch64-linux-android-" >> "$GITHUB_ENV"
+
       echo "CROSS_COMPILE_ARM32=$GCC32_PATH/bin/arm-linux-androideabi-" >> "$GITHUB_ENV"
+
       echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
 
+
       echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
+
       echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
+
       echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
-
-  # ============================================================
-  # 5. VERIFY TOOLCHAIN
-  # ============================================================
-
   - name: Verify Toolchain
     run: |
       set -e
@@ -167,58 +165,70 @@ steps:
       echo "CROSS_COMPILE=$CROSS_COMPILE"
       echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
       echo "CLANG_TRIPLE=$CLANG_TRIPLE"
-
-  # ============================================================
-  # 6. APPLY PGO PATCH
-  # ============================================================
-
   - name: Apply PGO Patch
-    run: |
+    run: >
       set -e
 
+
       PATCH_URL="https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
+
       PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
+
 
       EXPECTED_SHA256="94e2ba8240e4865001a4d7e4961e54f8fd07b0b3e818cffdf52249a37cbc01c4"
 
+
       echo "========================================"
+
       echo "DOWNLOAD PGO PATCH"
+
       echo "========================================"
+
 
       wget -O "$PATCH_FILE" "$PATCH_URL"
 
+
       echo
+
       echo "Patch SHA256:"
+
       sha256sum "$PATCH_FILE"
+
 
       ACTUAL_SHA256="$(sha256sum "$PATCH_FILE" | awk '{print $1}')"
 
+
       echo
+
       echo "Expected SHA256:"
+
       echo "$EXPECTED_SHA256"
+
 
       if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
         echo "[FAIL] PGO patch SHA256 mismatch"
         exit 1
       fi
 
+
       echo "[OK] PGO patch SHA256 verified"
 
+
       echo
+
       echo "Checking patch..."
+
 
       git apply --check "$PATCH_FILE"
 
+
       echo "[OK] Patch check passed"
+
 
       git apply "$PATCH_FILE"
 
+
       echo "[OK] PGO patch applied"
-
-  # ============================================================
-  # 7. VERIFY PGO INTEGRATION
-  # ============================================================
-
   - name: Verify PGO Integration
     run: |
       set -e
@@ -323,16 +333,6 @@ steps:
         echo "PGO PATCH INTEGRATION: FAILED"
         exit 1
       fi
-
-  # ============================================================
-  # 8. DEFCONFIG
-  #
-  # Same toolchain arrangement as the successful build:
-  # Clang r416183b
-  # GCC64 4.9
-  # GCC32 4.9
-  # ============================================================
-
   - name: Run Violet Defconfig
     run: |
       set -e
@@ -392,17 +392,6 @@ steps:
         echo "[FAIL] CONFIG_PGO_CLANG"
         exit 1
       fi
-
-  # ============================================================
-  # 9. PREPARE KERNEL
-  #
-  # IMPORTANT:
-  # Do NOT use HOSTCC=clang.
-  #
-  # Host compiler remains Ubuntu GCC.
-  # Target compiler is Clang r416183b.
-  # ============================================================
-
   - name: Prepare Kernel
     run: |
       set -e
@@ -494,13 +483,6 @@ steps:
       echo "========================================"
       echo "[OK] KERNEL PREPARATION COMPLETED"
       echo "========================================"
-
-  # ============================================================
-  # 10. PARTIAL KERNEL BUILD
-  #
-  # EXACT BUILD ARRANGEMENT FROM SUCCESSFUL WORKFLOW
-  # ============================================================
-
   - name: Partial Kernel Build - PGO
     run: |
       set -o pipefail
@@ -575,11 +557,6 @@ steps:
       echo "========================================"
       echo "[OK] PARTIAL KERNEL BUILD COMPLETED"
       echo "========================================"
-
-  # ============================================================
-  # 11. VERIFY PGO COMPILER FLAG
-  # ============================================================
-
   - name: Verify PGO Compiler Flags
     run: |
       set -e
@@ -609,11 +586,6 @@ steps:
 
         exit 1
       fi
-
-  # ============================================================
-  # 12. FIND PGO OBJECTS
-  # ============================================================
-
   - name: Find PGO Objects
     run: |
       set -e
@@ -674,11 +646,6 @@ steps:
         exit 1
 
       fi
-
-  # ============================================================
-  # 13. FINAL SUMMARY
-  # ============================================================
-
   - name: Final Summary
     if: always()
     run: |
