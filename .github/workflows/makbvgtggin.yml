@@ -617,7 +617,7 @@ jobs:
             "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
             out/.config
 
-            # ============================================================
+      # ============================================================
       # 11. DEBUG PGO LINKER PREPROCESSING
       # ============================================================
       - name: Debug PGO Linker Preprocessing
@@ -626,26 +626,38 @@ jobs:
 
           export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
 
+          DEBUG_DIR="$GITHUB_WORKSPACE/pgo-debug"
+          mkdir -p "$DEBUG_DIR"
+
+          LOG="$DEBUG_DIR/kbuild-vmlinux-lds.log"
+
           echo "============================================================"
           echo "DEBUG PGO LINKER PREPROCESSING"
           echo "============================================================"
 
           echo
-          echo "[1] Verify source configuration"
+          echo "[1] SOURCE CONFIGURATION"
 
-          grep -n \
-            "CPPFLAGS_vmlinux.lds" \
-            arch/arm64/kernel/Makefile
+          {
+            echo "===== arch/arm64/kernel/Makefile ====="
+            grep -n \
+              "CPPFLAGS_vmlinux.lds" \
+              arch/arm64/kernel/Makefile || true
 
-          grep -n \
-            -B2 -A30 \
-            "PGO_CLANG_DATA" \
-            include/asm-generic/vmlinux.lds.h
+            echo
+            echo "===== PGO_CLANG_DATA ====="
+            grep -n \
+              -B2 -A35 \
+              "PGO_CLANG_DATA" \
+              include/asm-generic/vmlinux.lds.h || true
+          } | tee "$DEBUG_DIR/source-config.txt"
 
           echo
           echo "============================================================"
-          echo "[2] Ask Kbuild for the vmlinux.lds command"
+          echo "[2] KBUILD DRY RUN"
           echo "============================================================"
+
+          set +e
 
           make V=1 -n O=out \
             ARCH=arm64 \
@@ -663,22 +675,104 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             arch/arm64/kernel/vmlinux.lds \
-            2>&1 | tee /tmp/vmlinux-lds-command.log
+            > "$LOG" 2>&1
+
+          MAKE_STATUS=$?
+
+          set -e
+
+          echo "Kbuild dry-run exit code: $MAKE_STATUS"
 
           echo
           echo "============================================================"
-          echo "[3] Extract preprocessing command"
+          echo "[3] EXTRACT vmlinux.lds COMMANDS"
           echo "============================================================"
 
-          grep -E \
-            'vmlinux\.lds|LINKER_SCRIPT|cpp|clang' \
-            /tmp/vmlinux-lds-command.log \
-            || true
+          grep -n \
+            -E \
+            'vmlinux\.lds(\.S)?|LINKER_SCRIPT|CPPFLAGS_vmlinux\.lds|clang|cpp' \
+            "$LOG" \
+            | tee "$DEBUG_DIR/relevant-lines.txt" || true
 
           echo
           echo "============================================================"
-          echo "[OK] Kbuild command captured"
+          echo "[4] KBUILD VARIABLES"
           echo "============================================================"
+
+          make -pn O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            2>/dev/null \
+            | grep -E \
+              '^(CPPFLAGS_vmlinux\.lds|KBUILD_CPPFLAGS|cppflags-y)[[:space:]]*=' \
+            | tee "$DEBUG_DIR/kbuild-variables.txt" || true
+
+          echo
+          echo "============================================================"
+          echo "[5] SEARCH GENERATED LINKER SCRIPT"
+          echo "============================================================"
+
+          if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
+            echo "[INFO] Existing vmlinux.lds found"
+
+            cp \
+              out/arch/arm64/kernel/vmlinux.lds \
+              "$DEBUG_DIR/vmlinux.lds"
+
+            grep -n "__llvm_prf" \
+              out/arch/arm64/kernel/vmlinux.lds \
+              | tee "$DEBUG_DIR/pgo-symbols.txt" || true
+          else
+            echo "[INFO] No generated vmlinux.lds found"
+          fi
+
+          echo
+          echo "============================================================"
+          echo "[6] ENVIRONMENT"
+          echo "============================================================"
+
+          {
+            echo "PATH=$PATH"
+            echo "CLANG_PATH=$CLANG_PATH"
+            echo "GCC64_PATH=$GCC64_PATH"
+            echo "GCC32_PATH=$GCC32_PATH"
+            echo "CROSS_COMPILE=$CROSS_COMPILE"
+            echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
+            echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+          } | tee "$DEBUG_DIR/environment.txt"
+
+          echo
+          echo "============================================================"
+          echo "DEBUG FILES"
+          echo "============================================================"
+
+          find "$DEBUG_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -printf '%f\n' \
+            | sort
+
+          echo
+          echo "============================================================"
+          echo "DEBUG COMPLETE"
+          echo "============================================================"
+
+      # ============================================================
+      # 11A. UPLOAD PGO DEBUG ARTIFACT
+      # ============================================================
+      - name: Upload PGO Debug Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGO-Linker-Debug
+          path: pgo-debug/
+          if-no-files-found: warn
+          retention-days: 7
+            
           
 
       # ============================================================
