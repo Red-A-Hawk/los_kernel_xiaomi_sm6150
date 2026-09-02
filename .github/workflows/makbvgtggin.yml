@@ -640,17 +640,49 @@ jobs:
 
           {
             echo "===== arch/arm64/kernel/Makefile ====="
+
             grep -n \
               "CPPFLAGS_vmlinux.lds" \
               arch/arm64/kernel/Makefile || true
 
             echo
             echo "===== PGO_CLANG_DATA ====="
+
             grep -n \
               -B2 -A35 \
               "PGO_CLANG_DATA" \
               include/asm-generic/vmlinux.lds.h || true
+
           } | tee "$DEBUG_DIR/source-config.txt"
+
+          echo
+          echo "============================================================"
+          echo "[1A] CHECK CONFIG_PGO_CLANG PREPROCESSOR"
+          echo "============================================================"
+
+          {
+            echo "===== out/.config ====="
+
+            grep -n \
+              -E '^CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)=' \
+              out/.config || true
+
+            echo
+            echo "===== include/linux/kconfig.h ====="
+
+            grep -n \
+              "CONFIG_PGO_CLANG" \
+              include/linux/kconfig.h || true
+
+            echo
+            echo "===== CONFIG HEADER DEFINITIONS ====="
+
+            grep -n \
+              -E \
+              'define CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)' \
+              include/linux/kconfig.h || true
+
+          } | tee "$DEBUG_DIR/pgo-config-preprocessor.txt"
 
           echo
           echo "============================================================"
@@ -695,6 +727,15 @@ jobs:
             | tee "$DEBUG_DIR/relevant-lines.txt" || true
 
           echo
+          echo "===== PGO CONFIG / LINKER DEFINES ====="
+
+          grep -n \
+            -E \
+            'CONFIG_PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|-DLINKER_SCRIPT' \
+            "$LOG" \
+            | tee "$DEBUG_DIR/pgo-defines.txt" || true
+
+          echo
           echo "============================================================"
           echo "[4] KBUILD VARIABLES"
           echo "============================================================"
@@ -717,17 +758,27 @@ jobs:
           echo "============================================================"
 
           if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
+
             echo "[INFO] Existing vmlinux.lds found"
 
             cp \
               out/arch/arm64/kernel/vmlinux.lds \
               "$DEBUG_DIR/vmlinux.lds"
 
+            echo
+            echo "===== LLVM PGO SYMBOLS ====="
+
             grep -n "__llvm_prf" \
               out/arch/arm64/kernel/vmlinux.lds \
               | tee "$DEBUG_DIR/pgo-symbols.txt" || true
+
           else
+
             echo "[INFO] No generated vmlinux.lds found"
+
+            echo "No generated linker script exists." \
+              > "$DEBUG_DIR/pgo-symbols.txt"
+
           fi
 
           echo
@@ -747,7 +798,7 @@ jobs:
 
           echo
           echo "============================================================"
-          echo "DEBUG FILES"
+          echo "[7] DEBUG FILE LIST"
           echo "============================================================"
 
           find "$DEBUG_DIR" \
