@@ -213,21 +213,28 @@ jobs:
 
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
 
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-
           echo "============================================================"
-          echo "APPLY PGO PATCH (git am)"
+          echo "APPLY PGO PATCH (patch -p1)"
           echo "============================================================"
 
-          if git am --keep-cr --3way "$PATCH_FILE"; then
-            echo "[OK] PGO patch applied successfully via git am"
-          else
-            echo "[WARN] git am failed, aborting and falling back to patch -p1"
-            git am --abort || true
-            patch -p1 --fuzz=3 --no-backup-if-mismatch < "$PATCH_FILE"
-            echo "[OK] PGO patch applied successfully via patch -p1"
+          patch -p1 \
+            --fuzz=3 \
+            --ignore-whitespace \
+            --no-backup-if-mismatch \
+            < "$PATCH_FILE"
+
+          echo
+          echo "============================================================"
+          echo "VERIFY NO REJECTED HUNKS"
+          echo "============================================================"
+
+          if find . -name "*.rej" | grep -q .; then
+            echo "[FAIL] Rejected hunks found:"
+            find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
+            exit 1
           fi
+
+          echo "[OK] PGO patch applied successfully with no rejects"
 
           echo
           echo "Changed files:"
