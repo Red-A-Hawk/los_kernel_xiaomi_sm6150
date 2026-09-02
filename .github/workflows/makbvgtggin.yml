@@ -744,8 +744,13 @@ jobs:
           echo "DEBUG PGO CONFIG + LINKER PREPROCESSING"
           echo "============================================================"
 
+          # --------------------------------------------------------
+          # 1. SOURCE CONFIGURATION
+          # --------------------------------------------------------
           echo
+          echo "============================================================"
           echo "[1] SOURCE CONFIGURATION"
+          echo "============================================================"
 
           {
             echo "===== arch/arm64/kernel/Makefile ====="
@@ -764,9 +769,12 @@ jobs:
 
           } | tee "$DEBUG_DIR/source-config.txt"
 
+          # --------------------------------------------------------
+          # 2. CONFIG BEFORE HEADER GENERATION
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[1A] CHECK CONFIG_PGO_CLANG PREPROCESSOR"
+          echo "[2] KCONFIG STATUS BEFORE HEADER GENERATION"
           echo "============================================================"
 
           {
@@ -783,19 +791,41 @@ jobs:
               "CONFIG_PGO_CLANG" \
               include/linux/kconfig.h || true
 
-            echo
-            echo "===== CONFIG HEADER DEFINITIONS ====="
+          } | tee "$DEBUG_DIR/pgo-config-preprocessor-before.txt"
 
-            grep -n \
-              -E \
-              'define CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)' \
-              include/linux/kconfig.h || true
-
-          } | tee "$DEBUG_DIR/pgo-config-preprocessor.txt"
-
+          # --------------------------------------------------------
+          # 3. GENERATE KCONFIG HEADERS
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[1B] FIND GENERATED CONFIG HEADERS"
+          echo "[3] GENERATE KCONFIG HEADERS"
+          echo "============================================================"
+
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            prepare
+
+          echo "[OK] Kconfig/generated headers prepared"
+
+          # --------------------------------------------------------
+          # 4. FIND GENERATED CONFIG HEADERS
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[4] FIND GENERATED CONFIG HEADERS"
           echo "============================================================"
 
           {
@@ -808,7 +838,8 @@ jobs:
                 -o -name auto.conf \
               \) \
               -print \
-              2>/dev/null || true
+              2>/dev/null \
+              | sort
 
             echo
             echo "===== PGO CONFIG DEFINITIONS ====="
@@ -822,9 +853,218 @@ jobs:
 
           } | tee "$DEBUG_DIR/pgo-config-definitions.txt"
 
+          # --------------------------------------------------------
+          # 5. CHECK GENERATED AUTOCONF DIRECTLY
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[2] KBUILD DRY RUN"
+          echo "[5] CHECK GENERATED AUTOCONF"
+          echo "============================================================"
+
+          {
+            echo "===== autoconf.h files ====="
+
+            find out/include \
+              -type f \
+              -name autoconf.h \
+              -print \
+              2>/dev/null \
+              | sort
+
+            echo
+            echo "===== PGO definitions ====="
+
+            find out/include \
+              -type f \
+              -name autoconf.h \
+              -exec grep -Hn \
+                -E \
+                'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)' \
+                {} \; \
+              2>/dev/null || true
+
+          } | tee "$DEBUG_DIR/autoconf-pgo.txt"
+
+          # --------------------------------------------------------
+          # 6. PREPROCESSOR MACRO TEST
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[6] DIRECT CLANG PREPROCESSOR MACRO TEST"
+          echo "============================================================"
+
+          cd out
+
+          {
+            echo "===== CONFIG_PGO_CLANG ====="
+
+            clang \
+              -E \
+              -dM \
+              -nostdinc \
+              -isystem "$CLANG_PATH/lib64/clang/12.0.5/include" \
+              -I../arch/arm64/include \
+              -I./arch/arm64/include/generated \
+              -I../include \
+              -I./include \
+              -I../arch/arm64/include/uapi \
+              -I./arch/arm64/include/generated/uapi \
+              -I../include/uapi \
+              -I./include/generated/uapi \
+              -include ../include/linux/kconfig.h \
+              -D__KERNEL__ \
+              -Qunused-arguments \
+              -mlittle-endian \
+              -DKASAN_SHADOW_SCALE_SHIFT=3 \
+              -DTEXT_OFFSET=0x00080000 \
+              -DLINKER_SCRIPT \
+              -D__ASSEMBLY__ \
+              ../arch/arm64/kernel/vmlinux.lds.S \
+              2>/dev/null \
+              | grep -E \
+                'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)|LINKER_SCRIPT' \
+              || true
+
+          } | tee "$DEBUG_DIR/preprocessor-macros.txt"
+
+          cd ..
+
+          # --------------------------------------------------------
+          # 7. ACTUAL vmlinux.lds PREPROCESSING
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[7] ACTUAL vmlinux.lds PREPROCESSING"
+          echo "============================================================"
+
+          cd out
+
+          rm -f \
+            arch/arm64/kernel/vmlinux.lds \
+            arch/arm64/kernel/.vmlinux.lds.d \
+            arch/arm64/kernel/.vmlinux.lds.cmd \
+            arch/arm64/kernel/.vmlinux.lds.tmp
+
+          clang \
+            -E \
+            -Wp,-MD,arch/arm64/kernel/.vmlinux.lds.d \
+            -nostdinc \
+            -isystem "$CLANG_PATH/lib64/clang/12.0.5/include" \
+            -I../arch/arm64/include \
+            -I./arch/arm64/include/generated \
+            -I../include \
+            -I./include \
+            -I../arch/arm64/include/uapi \
+            -I./arch/arm64/include/generated/uapi \
+            -I../include/uapi \
+            -I./include/generated/uapi \
+            -include ../include/linux/kconfig.h \
+            -D__KERNEL__ \
+            -Qunused-arguments \
+            -mlittle-endian \
+            -DKASAN_SHADOW_SCALE_SHIFT=3 \
+            -DTEXT_OFFSET=0x00080000 \
+            -DLINKER_SCRIPT \
+            -P \
+            -Uarm64 \
+            -D__ASSEMBLY__ \
+            -o arch/arm64/kernel/vmlinux.lds \
+            ../arch/arm64/kernel/vmlinux.lds.S
+
+          cd ..
+
+          echo "[OK] vmlinux.lds preprocessing completed"
+
+          # --------------------------------------------------------
+          # 8. VERIFY REAL PGO SYMBOLS IN GENERATED LINKER SCRIPT
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[8] VERIFY REAL PGO SYMBOLS"
+          echo "============================================================"
+
+          {
+            echo "===== LLVM PGO symbols ====="
+
+            if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
+
+              grep -n \
+                "__llvm_prf_" \
+                out/arch/arm64/kernel/vmlinux.lds \
+                || true
+
+            else
+
+              echo "[FAIL] vmlinux.lds was not generated"
+
+            fi
+
+          } | tee "$DEBUG_DIR/pgo-symbols.txt"
+
+          # --------------------------------------------------------
+          # 9. FAIL IF PGO SYMBOLS ARE NOT PRESENT
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[9] PGO LINKER RESULT"
+          echo "============================================================"
+
+          if grep -q \
+              "__llvm_prf_data_start" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_data_end" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_cnts_start" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_cnts_end" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_names_start" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_names_end" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_vals_start" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_vals_end" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_vnds_start" \
+              out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q \
+              "__llvm_prf_vnds_end" \
+              out/arch/arm64/kernel/vmlinux.lds; then
+
+            echo "[OK] ALL LLVM PGO LINKER SYMBOLS FOUND"
+
+          else
+
+            echo "[FAIL] LLVM PGO linker symbols are missing"
+
+            echo
+            echo "Generated linker script:"
+            grep -n \
+              -E \
+              'llvm_prf|BUG_TABLE|\.data' \
+              out/arch/arm64/kernel/vmlinux.lds \
+              | head -n 100 \
+              || true
+
+            exit 1
+
+          fi
+
+          # --------------------------------------------------------
+          # 10. KBUILD DRY RUN
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[10] KBUILD DRY RUN"
           echo "============================================================"
 
           set +e
@@ -853,31 +1093,42 @@ jobs:
 
           echo "Kbuild dry-run exit code: $MAKE_STATUS"
 
+          # --------------------------------------------------------
+          # 11. EXTRACT vmlinux.lds COMMAND
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[3] EXTRACT vmlinux.lds COMMANDS"
+          echo "[11] EXTRACT vmlinux.lds COMMAND"
           echo "============================================================"
 
           grep -n \
             -E \
             'vmlinux\.lds(\.S)?|LINKER_SCRIPT|CPPFLAGS_vmlinux.lds|clang|cpp' \
             "$LOG" \
-            | tee "$DEBUG_DIR/relevant-lines.txt" || true
+            | tee "$DEBUG_DIR/relevant-lines.txt" \
+            || true
 
+          # --------------------------------------------------------
+          # 12. EXTRACT PGO DEFINES
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[3A] PGO CONFIG / LINKER DEFINES"
+          echo "[12] PGO DEFINES"
           echo "============================================================"
 
           grep -n \
             -E \
             'CONFIG_PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|-DLINKER_SCRIPT' \
             "$LOG" \
-            | tee "$DEBUG_DIR/pgo-defines.txt" || true
+            | tee "$DEBUG_DIR/pgo-defines.txt" \
+            || true
 
+          # --------------------------------------------------------
+          # 13. KBUILD VARIABLES
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[4] KBUILD VARIABLES"
+          echo "[13] KBUILD VARIABLES"
           echo "============================================================"
 
           make -pn O=out \
@@ -890,41 +1141,15 @@ jobs:
             2>/dev/null \
             | grep -E \
               '^(CPPFLAGS_vmlinux\.lds|KBUILD_CPPFLAGS|cppflags-y)[[:space:]]*=' \
-            | tee "$DEBUG_DIR/kbuild-variables.txt" || true
+            | tee "$DEBUG_DIR/kbuild-variables.txt" \
+            || true
 
+          # --------------------------------------------------------
+          # 14. ENVIRONMENT
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[5] GENERATED LINKER SCRIPT"
-          echo "============================================================"
-
-          if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
-
-            echo "[INFO] Existing vmlinux.lds found"
-
-            cp \
-              out/arch/arm64/kernel/vmlinux.lds \
-              "$DEBUG_DIR/vmlinux.lds"
-
-            echo
-            echo "===== LLVM PGO SYMBOLS ====="
-
-            grep -n \
-              "__llvm_prf" \
-              out/arch/arm64/kernel/vmlinux.lds \
-              | tee "$DEBUG_DIR/pgo-symbols.txt" || true
-
-          else
-
-            echo "[INFO] No generated vmlinux.lds found"
-
-            echo "No generated linker script exists." \
-              > "$DEBUG_DIR/pgo-symbols.txt"
-
-          fi
-
-          echo
-          echo "============================================================"
-          echo "[6] ENVIRONMENT"
+          echo "[14] ENVIRONMENT"
           echo "============================================================"
 
           {
@@ -935,11 +1160,15 @@ jobs:
             echo "CROSS_COMPILE=$CROSS_COMPILE"
             echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32"
             echo "CLANG_TRIPLE=$CLANG_TRIPLE"
+
           } | tee "$DEBUG_DIR/environment.txt"
 
+          # --------------------------------------------------------
+          # 15. DEBUG FILE LIST
+          # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[7] DEBUG FILE LIST"
+          echo "[15] DEBUG FILE LIST"
           echo "============================================================"
 
           find "$DEBUG_DIR" \
@@ -950,20 +1179,12 @@ jobs:
 
           echo
           echo "============================================================"
-          echo "DEBUG COMPLETE"
+          echo "PGO LINKER DEBUG COMPLETE"
           echo "============================================================"
 
-      # ============================================================
-      # 11A. UPLOAD DEBUG ARTIFACT
-      # ============================================================
-      - name: Upload PGO Debug Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PGO-Linker-Debug
-          path: pgo-debug/
-          if-no-files-found: warn
-          retention-days: 7
+          
+
+
 
       # ============================================================
       # 12. CHECK CLANG PGO SUPPORT
