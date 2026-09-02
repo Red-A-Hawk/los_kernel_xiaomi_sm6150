@@ -1,11 +1,51 @@
-- name: Check __LINKER__ definition
-  run: |
-    echo "============================================================"
-    echo "CHECKING __LINKER__"
-    echo "============================================================"
+name: Check __LINKER__ Definition
 
-    grep -Rnw \
-      --exclude-dir=out \
-      --exclude-dir=.git \
-      . \
-      -e '__LINKER__' || true
+on:
+  workflow_dispatch:
+
+jobs:
+  check-linker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Search for __LINKER__
+        run: |
+          echo "## فحص __LINKER__" > linker_report.txt
+          echo "" >> linker_report.txt
+
+          echo "### جميع النتائج في الشجرة:" >> linker_report.txt
+          echo '```' >> linker_report.txt
+
+          grep -Rnw \
+            --exclude-dir=out \
+            --exclude-dir=.git \
+            . \
+            -e '__LINKER__' >> linker_report.txt || echo "لا يوجد __LINKER__ في الشجرة." >> linker_report.txt
+
+          echo '```' >> linker_report.txt
+          echo "" >> linker_report.txt
+
+          if grep -Rnw \
+            --exclude-dir=out \
+            --exclude-dir=.git \
+            . \
+            -e '__LINKER__' >/dev/null 2>&1; then
+
+            echo "❌ تم العثور على __LINKER__ في الشجرة." >> linker_report.txt
+
+          else
+
+            echo "✅ __LINKER__ غير موجود في الشجرة." >> linker_report.txt
+
+          fi
+
+          cat linker_report.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload full report
+        uses: actions/upload-artifact@v4
+        with:
+          name: linker-symbol-audit
+          path: linker_report.txt
