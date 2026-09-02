@@ -1,0 +1,644 @@
+name: Build PGO v2 - Kernel 4.14 - Clang r416183b
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: PGO Kernel Build
+    runs-on: ubuntu-22.04
+
+    env:
+      KERNEL_REPO: https://github.com/Red-A-Hawk/los_kernel_xiaomi_sm6150.git
+      KERNEL_BRANCH: 16
+
+      PGO_PATCH_URL: https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+      CLANG_REPO: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
+
+      KERNEL_DIR: ${{ github.workspace }}/kernel
+      CLANG_DIR: ${{ github.workspace }}/clang
+
+      ARCH: arm64
+      DEFCONFIG: vendor/violet-perf_defconfig
+
+    steps:
+
+      # ============================================================
+      # 1. Install dependencies
+      # ============================================================
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            curl \
+            wget \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            libncurses5-dev \
+            device-tree-compiler \
+            python3 \
+            python3-pip \
+            rsync \
+            unzip \
+            cpio \
+            xz-utils \
+            zstd \
+            lz4 \
+            binutils-aarch64-linux-gnu
+
+      # ============================================================
+      # 2. Create swap
+      # ============================================================
+      - name: Setup swap
+        shell: bash
+        run: |
+          set -eux
+
+          if ! swapon --show | grep -q /swapfile; then
+            sudo fallocate -l 16G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
+
+          free -h
+          swapon --show
+
+      # ============================================================
+      # 3. Clone kernel branch 16
+      # ============================================================
+      - name: Clone kernel
+        shell: bash
+        run: |
+          set -eux
+
+          git clone \
+            --depth=1 \
+            --branch "${KERNEL_BRANCH}" \
+            "${KERNEL_REPO}" \
+            "${KERNEL_DIR}"
+
+          cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "Kernel commit"
+          echo "=========================================="
+
+          git rev-parse HEAD
+          git log -1 --oneline
+
+          echo
+          echo "Kernel version:"
+          make kernelversion
+
+      # ============================================================
+      # 4. Clone Clang r416183b
+      # ============================================================
+      - name: Setup Clang r416183b
+        shell: bash
+        run: |
+          set -eux
+
+          git clone \
+            --depth=1 \
+            "${CLANG_REPO}" \
+            "${CLANG_DIR}"
+
+          echo "${CLANG_DIR}/bin" >> "${GITHUB_PATH}"
+
+          echo "=========================================="
+          echo "Clang"
+          echo "=========================================="
+
+          "${CLANG_DIR}/bin/clang" --version
+
+          echo
+          echo "=========================================="
+          echo "LLD"
+          echo "=========================================="
+
+          "${CLANG_DIR}/bin/ld.lld" --version
+
+          echo
+          echo "=========================================="
+          echo "LLVM Profdata"
+          echo "=========================================="
+
+          "${CLANG_DIR}/bin/llvm-profdata" --version
+
+      # ============================================================
+      # 5. Verify required LLVM tools
+      # ============================================================
+      - name: Verify LLVM tools
+        shell: bash
+        run: |
+          set -eux
+
+          tools="
+          clang
+          clang++
+          ld.lld
+          llvm-ar
+          llvm-nm
+          llvm-objcopy
+          llvm-objdump
+          llvm-strip
+          llvm-profdata
+          "
+
+          for tool in $tools; do
+            if [ ! -x "${CLANG_DIR}/bin/${tool}" ]; then
+              echo "ERROR: Missing LLVM tool: ${tool}"
+              exit 1
+            fi
+
+            echo "FOUND: ${tool}"
+          done
+
+          echo
+          echo "Checking opt:"
+          if [ -x "${CLANG_DIR}/bin/opt" ]; then
+            "${CLANG_DIR}/bin/opt" --version
+          else
+            echo "opt is not present."
+            echo "This is NOT required for PGO instrumentation build."
+          fi
+
+      # ============================================================
+      # 6. Download PGO v2 patch
+      # ============================================================
+      - name: Download PGO v2 patch
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          curl \
+            -L \
+            --fail \
+            --retry 3 \
+            --retry-delay 2 \
+            -o 0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch \
+            "${PGO_PATCH_URL}"
+
+          echo
+          echo "=========================================="
+          echo "Patch SHA256"
+          echo "=========================================="
+
+          sha256sum \
+            0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+          echo
+          echo "Patch size:"
+          wc -l \
+            0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+      # ============================================================
+      # 7. STRICT patch check
+      # ============================================================
+      - name: Check PGO v2 patch
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "STRICT GIT APPLY CHECK"
+          echo "=========================================="
+
+          git status --short
+
+          git apply \
+            --check \
+            0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+          echo
+          echo "=========================================="
+          echo "PGO PATCH CHECK PASSED"
+          echo "=========================================="
+
+      # ============================================================
+      # 8. Apply PGO v2 patch
+      # ============================================================
+      - name: Apply PGO v2 patch
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "Applying PGO v2..."
+
+          git apply \
+            0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+          echo
+          echo "Checking resulting diff..."
+
+          git diff --check
+
+          echo
+          echo "=========================================="
+          echo "PGO PATCH APPLIED"
+          echo "=========================================="
+
+          git status --short
+
+      # ============================================================
+      # 9. Verify PGO source files
+      # ============================================================
+      - name: Verify PGO integration
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "Checking PGO files..."
+
+          test -f kernel/pgo/Kconfig
+          test -f kernel/pgo/Makefile
+          test -f kernel/pgo/fs.c
+          test -f kernel/pgo/instrument.c
+          test -f kernel/pgo/pgo.h
+
+          echo "Checking Kconfig integration..."
+
+          grep -q 'source "kernel/pgo/Kconfig"' \
+            arch/Kconfig
+
+          grep -q 'ARCH_SUPPORTS_PGO_CLANG' \
+            arch/arm64/Kconfig
+
+          echo "Checking Makefile integration..."
+
+          grep -q 'CFLAGS_PGO_CLANG' \
+            Makefile
+
+          grep -q 'kernel/pgo' \
+            kernel/Makefile
+
+          grep -q 'PGO_PROFILE' \
+            scripts/Makefile.lib
+
+          echo "Checking linker integration..."
+
+          grep -q 'PGO_CLANG_DATA' \
+            include/asm-generic/vmlinux.lds.h
+
+          echo
+          echo "=========================================="
+          echo "PGO SOURCE INTEGRATION: PASSED"
+          echo "=========================================="
+
+      # ============================================================
+      # 10. Prepare output directory
+      # ============================================================
+      - name: Prepare output directory
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          rm -rf out
+          mkdir -p out
+
+      # ============================================================
+      # 11. Load original Violet defconfig
+      # ============================================================
+      - name: Load violet-perf_defconfig
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC="${CLANG_DIR}/bin/clang" \
+            LD="${CLANG_DIR}/bin/ld.lld" \
+            AR="${CLANG_DIR}/bin/llvm-ar" \
+            NM="${CLANG_DIR}/bin/llvm-nm" \
+            OBJCOPY="${CLANG_DIR}/bin/llvm-objcopy" \
+            OBJDUMP="${CLANG_DIR}/bin/llvm-objdump" \
+            STRIP="${CLANG_DIR}/bin/llvm-strip" \
+            "${DEFCONFIG}"
+
+      # ============================================================
+      # 12. Enable PGO
+      # ============================================================
+      - name: Enable CONFIG_PGO_CLANG
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          test -f out/.config
+
+          echo "Before PGO configuration:"
+          grep -E \
+            '^CONFIG_(PROC_FS|PGO_CLANG|POLLY_CLANG)' \
+            out/.config || true
+
+          # PGO requires PROC_FS.
+          scripts/config \
+            --file out/.config \
+            --enable CONFIG_PROC_FS
+
+          scripts/config \
+            --file out/.config \
+            --enable CONFIG_PGO_CLANG
+
+          # Do NOT touch LTO/ThinLTO from the original defconfig.
+          # Do NOT add Polly.
+          # Do NOT add BOLT.
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC="${CLANG_DIR}/bin/clang" \
+            LD="${CLANG_DIR}/bin/ld.lld" \
+            olddefconfig
+
+      # ============================================================
+      # 13. Strict PGO configuration validation
+      # ============================================================
+      - name: Validate PGO configuration
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "FINAL CONFIGURATION"
+          echo "=========================================="
+
+          grep -E \
+            '^CONFIG_(PROC_FS|PGO_CLANG|LTO|THINLTO|LTO_CLANG|POLLY)' \
+            out/.config || true
+
+          echo
+          echo "Required PGO options:"
+
+          grep '^CONFIG_PROC_FS=y$' \
+            out/.config
+
+          grep '^CONFIG_PGO_CLANG=y$' \
+            out/.config
+
+          echo
+          echo "PGO configuration PASSED."
+
+      # ============================================================
+      # 14. Verify PGO compiler flags are present
+      # ============================================================
+      - name: Verify PGO compiler integration
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "Checking PGO compiler flag..."
+
+          grep -n \
+            'CFLAGS_PGO_CLANG.*-fprofile-generate' \
+            Makefile
+
+          echo
+          echo "Checking PGO Makefile logic..."
+
+          grep -n \
+            'PGO_PROFILE' \
+            scripts/Makefile.lib
+
+          echo
+          echo "PGO compiler integration: PASSED."
+
+      # ============================================================
+      # 15. Build kernel with PGO instrumentation
+      # ============================================================
+      - name: Build PGO kernel
+        shell: bash
+        run: |
+          set -eux
+          set -o pipefail
+
+          cd "${KERNEL_DIR}"
+
+          export PATH="${CLANG_DIR}/bin:${PATH}"
+
+          echo "=========================================="
+          echo "BUILD ENVIRONMENT"
+          echo "=========================================="
+
+          clang --version
+          ld.lld --version
+
+          echo
+          echo "CPU:"
+          nproc --all
+
+          echo
+          echo "Memory:"
+          free -h
+
+          echo
+          echo "=========================================="
+          echo "BUILDING PGO INSTRUMENTED KERNEL"
+          echo "=========================================="
+
+          make \
+            O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            -j"$(nproc --all)" \
+            2>&1 | tee ../pgo-build.log
+
+      # ============================================================
+      # 16. Verify kernel output
+      # ============================================================
+      - name: Verify kernel output
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "BUILD OUTPUT"
+          echo "=========================================="
+
+          test -f out/vmlinux
+
+          echo "vmlinux:"
+          ls -lh out/vmlinux
+
+          if [ -f out/arch/arm64/boot/Image ]; then
+            echo
+            echo "Image:"
+            ls -lh out/arch/arm64/boot/Image
+          else
+            echo
+            echo "WARNING: Image was not generated."
+          fi
+
+          echo
+          echo "Kernel architecture:"
+          file out/vmlinux
+
+      # ============================================================
+      # 17. Verify LLVM PGO sections
+      # ============================================================
+      - name: Verify LLVM PGO sections
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          echo "=========================================="
+          echo "LLVM PGO SECTIONS"
+          echo "=========================================="
+
+          llvm-nm out/vmlinux 2>/dev/null \
+            | grep -E '__llvm_prf_(data|cnts|names|vals|vnds)' \
+            | head -100 \
+            || true
+
+          echo
+          echo "Checking ELF sections..."
+
+          readelf -S out/vmlinux 2>/dev/null \
+            | grep -E '__llvm_prf|pgo' \
+            || true
+
+      # ============================================================
+      # 18. Save final config
+      # ============================================================
+      - name: Save final defconfig
+        shell: bash
+        run: |
+          set -eux
+
+          cd "${KERNEL_DIR}"
+
+          cp \
+            out/.config \
+            out/PGO-final-defconfig
+
+          echo "PGO final configuration:"
+          grep '^CONFIG_PGO_CLANG=' \
+            out/.config
+
+      # ============================================================
+      # 19. Generate build information
+      # ============================================================
+      - name: Generate build information
+        if: always()
+        shell: bash
+        run: |
+          set +e
+
+          cd "${KERNEL_DIR}"
+
+          {
+            echo "=========================================="
+            echo "PGO BUILD INFORMATION"
+            echo "=========================================="
+
+            echo
+            echo "[Kernel commit]"
+            git rev-parse HEAD
+
+            echo
+            echo "[Kernel commit message]"
+            git log -1 --oneline
+
+            echo
+            echo "[Kernel version]"
+            make kernelversion
+
+            echo
+            echo "[Clang]"
+            "${CLANG_DIR}/bin/clang" --version
+
+            echo
+            echo "[LLD]"
+            "${CLANG_DIR}/bin/ld.lld" --version
+
+            echo
+            echo "[LLVM Profdata]"
+            "${CLANG_DIR}/bin/llvm-profdata" --version
+
+            echo
+            echo "[PGO configuration]"
+            grep -E \
+              '^CONFIG_(PROC_FS|PGO_CLANG|LTO|THINLTO|LTO_CLANG|POLLY)' \
+              out/.config 2>/dev/null
+
+            echo
+            echo "[Patch SHA256]"
+            sha256sum \
+              0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
+
+          } > pgo-build-info.txt
+
+      # ============================================================
+      # 20. Upload kernel artifacts
+      # ============================================================
+      - name: Upload PGO kernel
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-pgo-r416183b
+          if-no-files-found: error
+          path: |
+            kernel/out/vmlinux
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/arch/arm64/boot/Image.gz
+            kernel/out/arch/arm64/boot/Image.gz-dtb
+            kernel/out/arch/arm64/boot/dts/**/*.dtb
+            kernel/out/.config
+            kernel/out/PGO-final-defconfig
+
+      # ============================================================
+      # 21. Upload logs / patch
+      # ============================================================
+      - name: Upload PGO build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-build-debug
+          if-no-files-found: warn
+          path: |
+            pgo-build.log
+            kernel/pgo-build-info.txt
+            kernel/0001-ARM64-Clang-PGO-4.14-RedHawk-v2.patch
