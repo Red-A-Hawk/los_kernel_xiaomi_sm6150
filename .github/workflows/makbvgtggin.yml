@@ -760,28 +760,37 @@ jobs:
               arch/arm64/kernel/Makefile || true
 
             echo
-            echo "===== PGO_CLANG_DATA ====="
+            echo "===== PGO_CLANG_DATA DEFINITION ====="
 
             grep -n \
-              -B2 -A35 \
+              -B3 -A35 \
+              "PGO_CLANG_DATA" \
+              include/asm-generic/vmlinux.lds.h || true
+
+            echo
+            echo "===== PGO_CLANG_DATA REFERENCES ====="
+
+            grep -n \
+              -B8 -A12 \
               "PGO_CLANG_DATA" \
               include/asm-generic/vmlinux.lds.h || true
 
           } | tee "$DEBUG_DIR/source-config.txt"
 
           # --------------------------------------------------------
-          # 2. CONFIG BEFORE HEADER GENERATION
+          # 2. CONFIGURATION
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[2] KCONFIG STATUS BEFORE HEADER GENERATION"
+          echo "[2] KCONFIG STATUS"
           echo "============================================================"
 
           {
             echo "===== out/.config ====="
 
             grep -n \
-              -E '^CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)=' \
+              -E \
+              '^CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)=' \
               out/.config || true
 
             echo
@@ -791,7 +800,7 @@ jobs:
               "CONFIG_PGO_CLANG" \
               include/linux/kconfig.h || true
 
-          } | tee "$DEBUG_DIR/pgo-config-preprocessor-before.txt"
+          } | tee "$DEBUG_DIR/pgo-config-status.txt"
 
           # --------------------------------------------------------
           # 3. GENERATE KCONFIG HEADERS
@@ -854,7 +863,7 @@ jobs:
           } | tee "$DEBUG_DIR/pgo-config-definitions.txt"
 
           # --------------------------------------------------------
-          # 5. CHECK GENERATED AUTOCONF DIRECTLY
+          # 5. CHECK GENERATED AUTOCONF
           # --------------------------------------------------------
           echo
           echo "============================================================"
@@ -886,7 +895,7 @@ jobs:
           } | tee "$DEBUG_DIR/autoconf-pgo.txt"
 
           # --------------------------------------------------------
-          # 6. PREPROCESSOR MACRO TEST
+          # 6. DIRECT PREPROCESSOR MACRO TEST
           # --------------------------------------------------------
           echo
           echo "============================================================"
@@ -895,46 +904,118 @@ jobs:
 
           cd out
 
-          {
-            echo "===== CONFIG_PGO_CLANG ====="
-
-            clang \
-              -E \
-              -dM \
-              -nostdinc \
-              -isystem "$CLANG_PATH/lib64/clang/12.0.5/include" \
-              -I../arch/arm64/include \
-              -I./arch/arm64/include/generated \
-              -I../include \
-              -I./include \
-              -I../arch/arm64/include/uapi \
-              -I./arch/arm64/include/generated/uapi \
-              -I../include/uapi \
-              -I./include/generated/uapi \
-              -include ../include/linux/kconfig.h \
-              -D__KERNEL__ \
-              -Qunused-arguments \
-              -mlittle-endian \
-              -DKASAN_SHADOW_SCALE_SHIFT=3 \
-              -DTEXT_OFFSET=0x00080000 \
-              -DLINKER_SCRIPT \
-              -D__ASSEMBLY__ \
-              ../arch/arm64/kernel/vmlinux.lds.S \
-              2>/dev/null \
-              | grep -E \
-                'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)|LINKER_SCRIPT' \
-              || true
-
-          } | tee "$DEBUG_DIR/preprocessor-macros.txt"
+          clang \
+            -E \
+            -dM \
+            -nostdinc \
+            -isystem "$CLANG_PATH/lib64/clang/12.0.5/include" \
+            -I../arch/arm64/include \
+            -I./arch/arm64/include/generated \
+            -I../include \
+            -I./include \
+            -I../arch/arm64/include/uapi \
+            -I./arch/arm64/include/generated/uapi \
+            -I../include/uapi \
+            -I./include/generated/uapi \
+            -include ../include/linux/kconfig.h \
+            -D__KERNEL__ \
+            -Qunused-arguments \
+            -mlittle-endian \
+            -DKASAN_SHADOW_SCALE_SHIFT=3 \
+            -DTEXT_OFFSET=0x00080000 \
+            -DLINKER_SCRIPT \
+            -D__ASSEMBLY__ \
+            ../arch/arm64/kernel/vmlinux.lds.S \
+            2>/dev/null \
+            | grep -E \
+              'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)|LINKER_SCRIPT' \
+            | tee "$DEBUG_DIR/preprocessor-macros.txt" || true
 
           cd ..
 
           # --------------------------------------------------------
-          # 7. ACTUAL vmlinux.lds PREPROCESSING
+          # 7. FIND EVERY BUG_TABLE DEFINITION / USAGE
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[7] ACTUAL vmlinux.lds PREPROCESSING"
+          echo "[7] FIND ALL BUG_TABLE CONTEXTS"
+          echo "============================================================"
+
+          {
+            echo "===== BUG_TABLE occurrences ====="
+
+            grep -R -n \
+              -B12 \
+              -A20 \
+              "BUG_TABLE" \
+              include/asm-generic/vmlinux.lds.h \
+              arch/arm64 \
+              2>/dev/null || true
+
+          } | tee "$DEBUG_DIR/all-bug-table-context.txt"
+
+          # --------------------------------------------------------
+          # 8. FIND RW_DATA_SECTION
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[8] FIND RW_DATA_SECTION"
+          echo "============================================================"
+
+          {
+            grep -n \
+              -B10 \
+              -A50 \
+              "define RW_DATA_SECTION" \
+              include/asm-generic/vmlinux.lds.h \
+              2>/dev/null || true
+
+            echo
+            echo "===== DATA_DATA ====="
+
+            grep -n \
+              -B10 \
+              -A30 \
+              "define DATA_DATA" \
+              include/asm-generic/vmlinux.lds.h \
+              2>/dev/null || true
+
+          } | tee "$DEBUG_DIR/rw-data-section.txt"
+
+          # --------------------------------------------------------
+          # 9. FIND ALL PGO_CLANG_DATA REFERENCES
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[9] FIND PGO_CLANG_DATA REFERENCES"
+          echo "============================================================"
+
+          {
+            grep -n \
+              -B10 \
+              -A20 \
+              "PGO_CLANG_DATA" \
+              include/asm-generic/vmlinux.lds.h \
+              2>/dev/null || true
+
+            echo
+            echo "===== ALL REPOSITORY REFERENCES ====="
+
+            grep -R -n \
+              "PGO_CLANG_DATA" \
+              include \
+              arch \
+              kernel \
+              2>/dev/null || true
+
+          } | tee "$DEBUG_DIR/pgo-clang-data-usage.txt"
+
+          # --------------------------------------------------------
+          # 10. ACTUAL vmlinux.lds PREPROCESSING
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[10] ACTUAL vmlinux.lds PREPROCESSING"
           echo "============================================================"
 
           cd out
@@ -976,37 +1057,75 @@ jobs:
           echo "[OK] vmlinux.lds preprocessing completed"
 
           # --------------------------------------------------------
-          # 8. VERIFY REAL PGO SYMBOLS IN GENERATED LINKER SCRIPT
+          # 11. CHECK PGO SYMBOLS IN GENERATED LINKER SCRIPT
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[8] VERIFY REAL PGO SYMBOLS"
+          echo "[11] CHECK GENERATED LINKER SCRIPT"
           echo "============================================================"
 
           {
             echo "===== LLVM PGO symbols ====="
 
-            if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
+            grep -n \
+              "__llvm_prf_" \
+              out/arch/arm64/kernel/vmlinux.lds \
+              || true
 
-              grep -n \
-                "__llvm_prf_" \
-                out/arch/arm64/kernel/vmlinux.lds \
-                || true
+            echo
+            echo "===== BUG_TABLE ====="
 
-            else
+            grep -n \
+              "BUG_TABLE\|__bug_table" \
+              out/arch/arm64/kernel/vmlinux.lds \
+              || true
 
-              echo "[FAIL] vmlinux.lds was not generated"
+            echo
+            echo "===== DATA ====="
 
-            fi
+            grep -n \
+              "\.data" \
+              out/arch/arm64/kernel/vmlinux.lds \
+              | head -n 20 \
+              || true
 
           } | tee "$DEBUG_DIR/pgo-symbols.txt"
 
           # --------------------------------------------------------
-          # 9. FAIL IF PGO SYMBOLS ARE NOT PRESENT
+          # 12. SHOW GENERATED LINKER AREA AROUND .data
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[9] PGO LINKER RESULT"
+          echo "[12] GENERATED .data LINKER CONTEXT"
+          echo "============================================================"
+
+          {
+            LINE=$(grep -n \
+              '\.data :' \
+              out/arch/arm64/kernel/vmlinux.lds \
+              | head -n 1 \
+              | cut -d: -f1 || true)
+
+            if [ -n "$LINE" ]; then
+              START=$((LINE - 3))
+              END=$((LINE + 12))
+
+              if [ "$START" -lt 1 ]; then
+                START=1
+              fi
+
+              sed -n "${START},${END}p" \
+                out/arch/arm64/kernel/vmlinux.lds
+            fi
+
+          } | tee "$DEBUG_DIR/generated-data-context.txt"
+
+          # --------------------------------------------------------
+          # 13. PGO LINKER RESULT
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "[13] PGO LINKER RESULT"
           echo "============================================================"
 
           if grep -q \
@@ -1047,29 +1166,23 @@ jobs:
             echo "[FAIL] LLVM PGO linker symbols are missing"
 
             echo
-            echo "Generated linker script:"
-            grep -n \
-              -E \
-              'llvm_prf|BUG_TABLE|\.data' \
-              out/arch/arm64/kernel/vmlinux.lds \
-              | head -n 100 \
-              || true
-
-            exit 1
+            echo "This is a diagnostic failure only."
+            echo "No kernel build is started."
 
           fi
 
           # --------------------------------------------------------
-          # 10. KBUILD DRY RUN
+          # 14. KBUILD DRY RUN
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[10] KBUILD DRY RUN"
+          echo "[14] KBUILD DRY RUN"
           echo "============================================================"
 
           set +e
 
-          make V=1 -n O=out \
+          make V=1 -n \
+            O=out \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -1094,11 +1207,11 @@ jobs:
           echo "Kbuild dry-run exit code: $MAKE_STATUS"
 
           # --------------------------------------------------------
-          # 11. EXTRACT vmlinux.lds COMMAND
+          # 15. EXTRACT vmlinux.lds COMMAND
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[11] EXTRACT vmlinux.lds COMMAND"
+          echo "[15] EXTRACT vmlinux.lds COMMAND"
           echo "============================================================"
 
           grep -n \
@@ -1109,11 +1222,11 @@ jobs:
             || true
 
           # --------------------------------------------------------
-          # 12. EXTRACT PGO DEFINES
+          # 16. EXTRACT PGO DEFINES
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[12] PGO DEFINES"
+          echo "[16] PGO DEFINES"
           echo "============================================================"
 
           grep -n \
@@ -1124,14 +1237,15 @@ jobs:
             || true
 
           # --------------------------------------------------------
-          # 13. KBUILD VARIABLES
+          # 17. KBUILD VARIABLES
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[13] KBUILD VARIABLES"
+          echo "[17] KBUILD VARIABLES"
           echo "============================================================"
 
-          make -pn O=out \
+          make -pn \
+            O=out \
             ARCH=arm64 \
             LLVM=1 \
             CC=clang \
@@ -1145,11 +1259,11 @@ jobs:
             || true
 
           # --------------------------------------------------------
-          # 14. ENVIRONMENT
+          # 18. ENVIRONMENT
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[14] ENVIRONMENT"
+          echo "[18] ENVIRONMENT"
           echo "============================================================"
 
           {
@@ -1164,11 +1278,11 @@ jobs:
           } | tee "$DEBUG_DIR/environment.txt"
 
           # --------------------------------------------------------
-          # 15. DEBUG FILE LIST
+          # 19. DEBUG FILE LIST
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo "[15] DEBUG FILE LIST"
+          echo "[19] DEBUG FILE LIST"
           echo "============================================================"
 
           find "$DEBUG_DIR" \
@@ -1181,6 +1295,7 @@ jobs:
           echo "============================================================"
           echo "PGO LINKER DEBUG COMPLETE"
           echo "============================================================"
+
 
           
 
