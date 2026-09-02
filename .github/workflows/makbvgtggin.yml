@@ -301,28 +301,26 @@ jobs:
         run: |
           set -e
 
+          LDSH="include/asm-generic/vmlinux.lds.h"
+          ARM64_LDS_MK="arch/arm64/kernel/Makefile"
+          ARM64_LDS_S="arch/arm64/kernel/vmlinux.lds.S"
+
           echo "============================================================"
           echo "FIX PGO LINKER CONTEXT"
           echo "============================================================"
 
-          LDS="arch/arm64/kernel/vmlinux.lds.S"
-          LDSH="include/asm-generic/vmlinux.lds.h"
-
           echo
-          echo "[1] Add PGO_CLANG_LINKER marker"
+          echo "[1] Remove old PGO_CLANG_LINKER marker from vmlinux.lds.S"
 
-          if grep -q "^#define PGO_CLANG_LINKER$" "$LDS"; then
-            echo "[OK] PGO_CLANG_LINKER already defined"
+          if grep -q "^#define PGO_CLANG_LINKER$" "$ARM64_LDS_S"; then
+            sed -i '/^#define PGO_CLANG_LINKER$/d' "$ARM64_LDS_S"
+            echo "[OK] Removed PGO_CLANG_LINKER from $ARM64_LDS_S"
           else
-            sed -i \
-              '/#include <asm-generic\/vmlinux.lds.h>/i#define PGO_CLANG_LINKER' \
-              "$LDS"
-
-            echo "[OK] PGO_CLANG_LINKER added to $LDS"
+            echo "[OK] No PGO_CLANG_LINKER marker found in $ARM64_LDS_S"
           fi
 
           echo
-          echo "[2] Replace LINKER_SCRIPT condition"
+          echo "[2] Fix PGO condition in vmlinux.lds.h"
 
           if grep -q \
               '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
@@ -332,7 +330,7 @@ jobs:
               's/defined(LINKER_SCRIPT)/defined(PGO_CLANG_LINKER)/' \
               "$LDSH"
 
-            echo "[OK] PGO linker condition changed"
+            echo "[OK] Replaced LINKER_SCRIPT with PGO_CLANG_LINKER"
 
           elif grep -q \
               '#if defined(CONFIG_PGO_CLANG) && defined(PGO_CLANG_LINKER)' \
@@ -341,7 +339,7 @@ jobs:
             echo "[OK] PGO_CLANG_LINKER condition already present"
 
           else
-            echo "[FAIL] Could not find expected PGO linker condition"
+            echo "[FAIL] Could not find expected PGO condition"
 
             grep -n \
               -E 'PGO_CLANG|LINKER_SCRIPT' \
@@ -351,26 +349,63 @@ jobs:
           fi
 
           echo
+          echo "[3] Pass PGO_CLANG_LINKER through vmlinux.lds CPPFLAGS"
+
+          if grep -q \
+              '^CPPFLAGS_vmlinux\.lds.*-DPGO_CLANG_LINKER' \
+              "$ARM64_LDS_MK"; then
+
+            echo "[OK] -DPGO_CLANG_LINKER already present"
+
+          elif grep -q \
+              '^CPPFLAGS_vmlinux\.lds[[:space:]]*:=' \
+              "$ARM64_LDS_MK"; then
+
+            sed -i \
+              's/^\(CPPFLAGS_vmlinux\.lds[[:space:]]*:=[^$]*\)$/\1 -DPGO_CLANG_LINKER/' \
+              "$ARM64_LDS_MK"
+
+            echo "[OK] Added -DPGO_CLANG_LINKER to CPPFLAGS_vmlinux.lds"
+
+          else
+            echo "[FAIL] CPPFLAGS_vmlinux.lds not found"
+            exit 1
+          fi
+
+          echo
           echo "============================================================"
-          echo "VERIFY LINKER CONTEXT"
+          echo "VERIFY PGO LINKER CONTEXT"
           echo "============================================================"
 
           echo
-          echo "vmlinux.lds.S:"
+          echo "--- arch/arm64/kernel/vmlinux.lds.S ---"
+
+          if grep -n "^#define PGO_CLANG_LINKER$" "$ARM64_LDS_S"; then
+            echo "[FAIL] PGO_CLANG_LINKER must NOT be defined inside vmlinux.lds.S"
+            exit 1
+          else
+            echo "[OK] No direct PGO_CLANG_LINKER definition in vmlinux.lds.S"
+          fi
+
+          echo
+          echo "--- arch/arm64/kernel/Makefile ---"
+
           grep -n \
-            -B2 -A2 \
-            "PGO_CLANG_LINKER" \
-            "$LDS"
+            "CPPFLAGS_vmlinux.lds" \
+            "$ARM64_LDS_MK"
 
           echo
-          echo "vmlinux.lds.h:"
+          echo "--- include/asm-generic/vmlinux.lds.h ---"
+
           grep -n \
             -B2 -A30 \
             "PGO_CLANG_DATA" \
             "$LDSH"
 
           echo
-          echo "[OK] PGO linker context configured"
+          echo "============================================================"
+          echo "[OK] PGO linker context configured through CPPFLAGS"
+          echo "============================================================"
 
       # ============================================================
       # 9. VERIFY PGO INTEGRATION
@@ -464,14 +499,26 @@ jobs:
 
           if grep -n "^#define PGO_CLANG_LINKER$" \
               arch/arm64/kernel/vmlinux.lds.S; then
-            echo "[OK] PGO_CLANG_LINKER defined"
+            echo "[FAIL] PGO_CLANG_LINKER must not be defined directly in vmlinux.lds.S"
+            FAIL=1
           else
-            echo "[FAIL] PGO_CLANG_LINKER missing"
+            echo "[OK] PGO_CLANG_LINKER is not directly defined in vmlinux.lds.S"
+          fi
+
+          echo
+          echo "[9] PGO linker CPPFLAGS"
+
+          if grep -n \
+              '^CPPFLAGS_vmlinux\.lds.*-DPGO_CLANG_LINKER' \
+              arch/arm64/kernel/Makefile; then
+            echo "[OK] PGO_CLANG_LINKER passed through CPPFLAGS"
+          else
+            echo "[FAIL] -DPGO_CLANG_LINKER missing from vmlinux.lds CPPFLAGS"
             FAIL=1
           fi
 
           echo
-          echo "[9] PGO linker condition"
+          echo "[10] PGO linker condition"
 
           if grep -n \
               '#if defined(CONFIG_PGO_CLANG) && defined(PGO_CLANG_LINKER)' \
@@ -483,7 +530,7 @@ jobs:
           fi
 
           echo
-          echo "[10] kernel/pgo files"
+          echo "[11] kernel/pgo files"
 
           if [ -f kernel/pgo/Kconfig ] && \
              [ -f kernel/pgo/Makefile ] && \
@@ -498,7 +545,7 @@ jobs:
           fi
 
           echo
-          echo "[11] Protected files"
+          echo "[12] Protected files"
 
           if git diff --quiet -- arch/arm64/Makefile; then
             echo "[OK] arch/arm64/Makefile unchanged"
@@ -1030,8 +1077,8 @@ jobs:
           echo
           echo "PGO linker marker:"
           grep -n \
-            "^#define PGO_CLANG_LINKER$" \
-            arch/arm64/kernel/vmlinux.lds.S 2>/dev/null || true
+            "^CPPFLAGS_vmlinux.lds.*-DPGO_CLANG_LINKER" \
+            arch/arm64/kernel/Makefile 2>/dev/null || true
 
           echo
           echo "PGO linker condition:"
