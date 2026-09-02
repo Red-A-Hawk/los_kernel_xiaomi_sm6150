@@ -1,745 +1,425 @@
-name: Build PGO Only patch - Clang r416183b
+name: Build PGO patchh- Kernel 4.14 - Clang r416183b
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-pgo:
+  build:
     runs-on: ubuntu-22.04
+
+    env:
+      KERNEL_REPO: https://github.com/Red-A-Hawk/los_kernel_xiaomi_sm6150.git
+      KERNEL_BRANCH: 16
+      PGO_PATCH_URL: https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk.patch
+
+      CLANG_REPO: https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git
+      CLANG_DIR: ${{ github.workspace }}/clang
+
+      ARCH: arm64
+      DEFCONFIG: vendor/violet-perf_defconfig
 
     steps:
 
       # ============================================================
-      # 1. Checkout kernel
+      # 1. Install dependencies
       # ============================================================
-
-      - name: Checkout kernel
-        uses: actions/checkout@v4
-        with:
-          ref: 16
-          fetch-depth: 1
-
-
-      # ============================================================
-      # 2. Install dependencies
-      # ============================================================
-
       - name: Install dependencies
+        shell: bash
         run: |
-          set -e
+          set -eux
 
-          sudo apt update
+          sudo apt-get update
 
-          sudo apt install -y \
+          sudo apt-get install -y \
             git \
             curl \
             wget \
-            build-essential \
-            gcc \
-            g++ \
             bc \
             bison \
             flex \
+            build-essential \
             libssl-dev \
             libelf-dev \
+            libncurses5-dev \
             device-tree-compiler \
             python3 \
-            file
-
+            python3-pip \
+            rsync \
+            unzip \
+            cpio \
+            lz4 \
+            xz-utils \
+            zstd \
+            binutils-aarch64-linux-gnu
 
       # ============================================================
-      # 3. Clone LineageOS Toolchains
+      # 2. Clone kernel branch 16
       # ============================================================
-
-      - name: Clone LineageOS Toolchains
+      - name: Clone kernel
+        shell: bash
         run: |
-          set -e
-
-          echo "========================================"
-          echo "CLONING TOOLCHAINS"
-          echo "========================================"
-
-          rm -rf clang gcc64 gcc32
-
-          echo
-          echo "========================================"
-          echo "CLANG r416183b"
-          echo "========================================"
+          set -eux
 
           git clone \
             --depth=1 \
-            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
-            clang
+            --branch "${KERNEL_BRANCH}" \
+            "${KERNEL_REPO}" \
+            kernel
 
-          echo
-          echo "========================================"
-          echo "GCC64 4.9"
-          echo "========================================"
+          cd kernel
+
+          echo "Kernel commit:"
+          git rev-parse HEAD
+
+          echo "Kernel version:"
+          make kernelversion
+
+      # ============================================================
+      # 3. Clone Clang r416183b
+      # ============================================================
+      - name: Setup Clang r416183b
+        shell: bash
+        run: |
+          set -eux
 
           git clone \
             --depth=1 \
-            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
-            gcc64
+            "${CLANG_REPO}" \
+            "${CLANG_DIR}"
 
-          echo
-          echo "========================================"
-          echo "GCC32 4.9"
-          echo "========================================"
+          echo "Clang directory:"
+          ls -la "${CLANG_DIR}"
 
-          git clone \
-            --depth=1 \
-            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
-            gcc32
+          echo "Checking Clang:"
+          "${CLANG_DIR}/bin/clang" --version
 
-
-      # ============================================================
-      # 4. Setup Toolchain
-      # ============================================================
-
-      - name: Setup Toolchain
-        run: |
-          set -e
-
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH"
-
-          echo "PATH=$PATH" >> "$GITHUB_ENV"
-
-          echo "CLANG_PATH=$GITHUB_WORKSPACE/clang" >> "$GITHUB_ENV"
-          echo "GCC64_PATH=$GITHUB_WORKSPACE/gcc64" >> "$GITHUB_ENV"
-          echo "GCC32_PATH=$GITHUB_WORKSPACE/gcc32" >> "$GITHUB_ENV"
-
-          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
-
-
-      # ============================================================
-      # 5. Verify Toolchain
-      # ============================================================
-
-      - name: Verify Toolchain
-        run: |
-          set -e
-
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "========================================"
-          echo "CLANG"
-          echo "========================================"
-
-          which clang
-          clang --version
-
-          echo
-          echo "========================================"
-          echo "LLD"
-          echo "========================================"
-
-          which ld.lld
-          ld.lld --version
-
-          echo
-          echo "========================================"
-          echo "LLVM TOOLS"
-          echo "========================================"
-
+          echo "Checking LLVM tools:"
           for tool in \
+            clang \
+            clang++ \
+            ld.lld \
             llvm-ar \
             llvm-nm \
             llvm-objcopy \
             llvm-objdump \
             llvm-strip \
-            llvm-profdata \
-            opt
-
+            llvm-profdata
           do
-            if command -v "$tool" >/dev/null 2>&1; then
-              echo "[FOUND] $tool"
-              command -v "$tool"
+            if [ -x "${CLANG_DIR}/bin/${tool}" ]; then
+              echo "FOUND: ${tool}"
             else
-              echo "[MISSING] $tool"
+              echo "MISSING: ${tool}"
             fi
           done
 
-          echo
-          echo "========================================"
-          echo "GCC64"
-          echo "========================================"
-
-          which aarch64-linux-android-gcc
-          aarch64-linux-android-gcc --version | head -1
-
-          echo
-          echo "========================================"
-          echo "GCC32"
-          echo "========================================"
-
-          which arm-linux-androideabi-gcc
-          arm-linux-androideabi-gcc --version | head -1
-
-
       # ============================================================
-      # 6. Download PGO Patch
+      # 4. Apply Red-A-Hawk PGO patch
       # ============================================================
-
-      - name: Download PGO Patch
+      - name: Apply PGO patch
+        shell: bash
         run: |
-          set -e
+          set -eux
 
-          echo "========================================"
-          echo "DOWNLOAD PGO PATCH"
-          echo "========================================"
+          cd kernel
 
           curl -L \
             --fail \
             --retry 3 \
-            -o 0001-ARM64-Clang-PGO-4.14-1.patch \
-            https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-1.patch
+            -o 0001-ARM64-Clang-PGO-4.14-RedHawk.patch \
+            "${PGO_PATCH_URL}"
 
-          echo
-          echo "Patch information:"
-          wc -l 0001-ARM64-Clang-PGO-4.14-1.patch
-          wc -c 0001-ARM64-Clang-PGO-4.14-1.patch
-
-          echo
           echo "Patch SHA256:"
-          sha256sum 0001-ARM64-Clang-PGO-4.14-1.patch
+          sha256sum 0001-ARM64-Clang-PGO-4.14-RedHawk.patch
 
+          echo "Patch information:"
+          head -20 0001-ARM64-Clang-PGO-4.14-RedHawk.patch
 
-      # ============================================================
-      # 7. Check PGO Patch
-      # ============================================================
+          echo "Checking patch..."
 
-      - name: Check PGO Patch
-        run: |
-          set -e
+          git apply --check \
+            0001-ARM64-Clang-PGO-4.14-RedHawk.patch
 
-          echo "========================================"
-          echo "CHECKING PGO PATCH"
-          echo "========================================"
+          echo "Patch check PASSED"
 
           git apply \
-            --check \
-            0001-ARM64-Clang-PGO-4.14-1.patch
+            0001-ARM64-Clang-PGO-4.14-RedHawk.patch
 
-          echo
-          echo "[OK] Patch applies cleanly"
-
+          echo "PGO patch applied successfully."
 
       # ============================================================
-      # 8. Apply PGO Patch
+      # 5. Verify PGO source was actually added
       # ============================================================
-
-      - name: Apply PGO Patch
+      - name: Verify PGO integration
+        shell: bash
         run: |
-          set -e
+          set -eux
 
-          echo "========================================"
-          echo "APPLYING PGO PATCH"
-          echo "========================================"
-
-          git apply \
-            0001-ARM64-Clang-PGO-4.14-1.patch
-
-          echo
-          echo "[OK] PGO patch applied"
-
-
-      # ============================================================
-      # 9. Verify PGO Source Integration
-      # ============================================================
-
-      - name: Verify PGO Integration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "VERIFY PGO INTEGRATION"
-          echo "========================================"
-
-          echo
-          echo "Checking PGO files:"
+          cd kernel
 
           test -f kernel/pgo/Kconfig
           test -f kernel/pgo/Makefile
           test -f kernel/pgo/fs.c
           test -f kernel/pgo/instrument.c
           test -f kernel/pgo/pgo.h
+          test -f Documentation/dev-tools/pgo.rst
 
-          echo "[OK] kernel/pgo files found"
+          grep -q "CONFIG_PGO_CLANG" arch/Kconfig
+          grep -q "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig
+          grep -q "CFLAGS_PGO_CLANG" Makefile
+          grep -q "PGO_PROFILE" scripts/Makefile.lib
+          grep -q "PGO_CLANG_DATA" include/asm-generic/vmlinux.lds.h
 
-          echo
-          echo "Checking PGO Kconfig:"
-
-          grep -n "config PGO_CLANG" \
-            kernel/pgo/Kconfig
-
-          echo
-          echo "Checking ARM64 PGO support:"
-
-          grep -n "ARCH_SUPPORTS_PGO_CLANG" \
-            arch/arm64/Kconfig
-
-          echo
-          echo "Checking PGO compiler flag:"
-
-          grep -n "CFLAGS_PGO_CLANG" \
-            Makefile
-
-          echo
-          echo "Checking profile-generate flag:"
-
-          grep -n "fprofile-generate" \
-            Makefile
-
-          echo
-          echo "[OK] PGO source integration verified"
-
+          echo "=========================================="
+          echo "PGO source integration: OK"
+          echo "=========================================="
 
       # ============================================================
-      # 10. Prepare Output Directory
+      # 6. Prepare build directory
       # ============================================================
-
-      - name: Prepare Build Directory
+      - name: Prepare build directory
+        shell: bash
         run: |
-          set -e
+          set -eux
+
+          cd kernel
 
           rm -rf out
-
           mkdir -p out
 
-          echo "[OK] Build directory prepared"
-
-
       # ============================================================
-      # 11. Load Original Defconfig
+      # 7. Load original Violet defconfig
       # ============================================================
-
-      - name: Load violet-perf Defconfig
+      - name: Load violet-perf_defconfig
+        shell: bash
         run: |
-          set -e
+          set -eux
 
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "========================================"
-          echo "LOADING DEFCONFIG"
-          echo "========================================"
+          cd kernel
 
           make \
             O=out \
             ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            vendor/violet-perf_defconfig
-
-          echo
-          echo "[OK] vendor/violet-perf_defconfig loaded"
-
+            CC="${CLANG_DIR}/bin/clang" \
+            LD="${CLANG_DIR}/bin/ld.lld" \
+            AR="${CLANG_DIR}/bin/llvm-ar" \
+            NM="${CLANG_DIR}/bin/llvm-nm" \
+            OBJCOPY="${CLANG_DIR}/bin/llvm-objcopy" \
+            OBJDUMP="${CLANG_DIR}/bin/llvm-objdump" \
+            STRIP="${CLANG_DIR}/bin/llvm-strip" \
+            "${DEFCONFIG}"
 
       # ============================================================
-      # 12. Enable PGO
+      # 8. Enable PGO
       # ============================================================
-
       - name: Enable CONFIG_PGO_CLANG
+        shell: bash
         run: |
-          set -e
+          set -eux
 
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "========================================"
-          echo "ENABLE PGO"
-          echo "========================================"
+          cd kernel
 
           if [ ! -x scripts/config ]; then
-            echo "[INFO] Building scripts/config"
-
-            make \
-              O=out \
-              ARCH=arm64 \
-              CC=clang \
-              CLANG_TRIPLE="$CLANG_TRIPLE" \
-              CROSS_COMPILE="$CROSS_COMPILE" \
-              CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-              scripts
-
-          fi
-
-          echo
-          echo "Enabling CONFIG_PGO_CLANG..."
-
-          scripts/config \
-            --file out/.config \
-            --enable CONFIG_PGO_CLANG
-
-          echo
-          echo "Running olddefconfig..."
-
-          make \
-            O=out \
-            ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            olddefconfig
-
-          echo
-          echo "CONFIG_PGO_CLANG result:"
-
-          grep -n \
-            "^CONFIG_PGO_CLANG=" \
-            out/.config
-
-          echo
-          echo "[OK] PGO configuration enabled"
-
-
-      # ============================================================
-      # 13. Verify PGO Configuration
-      # ============================================================
-
-      - name: Verify PGO Configuration
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "PGO CONFIGURATION"
-          echo "========================================"
-
-          if grep -q "^CONFIG_PGO_CLANG=y$" out/.config; then
-            echo "[PASS] CONFIG_PGO_CLANG=y"
-          else
-            echo "[FAIL] CONFIG_PGO_CLANG is not enabled"
-            grep "PGO" out/.config || true
+            echo "scripts/config not found"
             exit 1
           fi
 
-          echo
-          echo "PROC_FS:"
+          # PGO requires procfs.
+          scripts/config \
+            --file out/.config \
+            --enable CONFIG_PROC_FS \
+            --enable CONFIG_PGO_CLANG
 
-          grep "^CONFIG_PROC_FS=" out/.config || true
-
-          echo
-          echo "LTO:"
-
-          grep "^CONFIG_LTO" out/.config || true
-
-          echo
-          echo "THINLTO:"
-
-          grep "^CONFIG_THINLTO" out/.config || true
-
-          echo
-          echo "POLLY:"
-
-          grep "^CONFIG_.*POLLY" out/.config || true
-
-          echo
-          echo "[OK] Configuration check completed"
-
-
-      # ============================================================
-      # 14. Export Final Defconfig
-      # ============================================================
-
-      - name: Save Final Defconfig
-        run: |
-          set -e
-
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          # Ensure PGO is the only NEW optimization feature enabled
+          # by this workflow.
+          scripts/config \
+            --file out/.config \
+            --disable CONFIG_POLLY_CLANG \
+            --disable CONFIG_BOLT
 
           make \
             O=out \
             ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            savedefconfig
-
-          cp \
-            out/defconfig \
-            out/violet-pgo-defconfig
-
-          echo "[OK] Final PGO defconfig saved"
-
+            CC="${CLANG_DIR}/bin/clang" \
+            LD="${CLANG_DIR}/bin/ld.lld" \
+            olddefconfig
 
       # ============================================================
-      # 15. Build PGO Instrumented Kernel
+      # 9. Verify final configuration
       # ============================================================
-
-      - name: Build PGO Kernel
+      - name: Verify PGO configuration
+        shell: bash
         run: |
-          set -o pipefail
+          set -eux
 
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          cd kernel
 
-          echo "========================================"
-          echo "BUILDING PGO INSTRUMENTED KERNEL"
-          echo "========================================"
+          echo "CONFIG_PGO_CLANG:"
+          grep '^CONFIG_PGO_CLANG=' out/.config
 
-          echo
+          echo "CONFIG_PROC_FS:"
+          grep '^CONFIG_PROC_FS=' out/.config
+
+          echo "PGO-related configuration:"
+          grep -E \
+            'CONFIG_(PGO|POLLY|BOLT|PROC_FS)' \
+            out/.config || true
+
+          test "$(grep '^CONFIG_PGO_CLANG=y' out/.config | wc -l)" -eq 1
+
+          if grep -q '^CONFIG_POLLY_CLANG=y' out/.config; then
+            echo "ERROR: Polly is enabled"
+            exit 1
+          fi
+
+          if grep -q '^CONFIG_BOLT=y' out/.config; then
+            echo "ERROR: BOLT is enabled"
+            exit 1
+          fi
+
+          echo "=========================================="
+          echo "PGO CONFIGURATION: OK"
+          echo "=========================================="
+
+      # ============================================================
+      # 10. Build kernel
+      # ============================================================
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -eux
+
+          cd kernel
+
+          export PATH="${CLANG_DIR}/bin:${PATH}"
+
           echo "Compiler:"
           clang --version
 
-          echo
-          echo "PGO configuration:"
-          grep "^CONFIG_PGO_CLANG=" out/.config
+          echo "Linker:"
+          ld.lld --version
 
-          echo
-          echo "PGO compiler flag from Makefile:"
-          grep "CFLAGS_PGO_CLANG" Makefile
-
-          echo
-          echo "========================================"
-          echo "START BUILD"
-          echo "========================================"
+          echo "Building with PGO instrumentation..."
 
           make \
             O=out \
             ARCH=arm64 \
             CC=clang \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            -j"$(nproc)" \
-            2>&1 | tee pgo-build.log
-
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            -j"$(nproc --all)"
 
       # ============================================================
-      # 16. Verify Kernel Build
+      # 11. Verify generated kernel
       # ============================================================
-
-      - name: Verify Kernel Build
-        if: always()
+      - name: Verify build output
+        shell: bash
         run: |
-          set +e
+          set -eux
 
-          echo "========================================"
-          echo "BUILD RESULT"
-          echo "========================================"
+          cd kernel
 
-          echo
-          echo "Searching kernel outputs..."
+          echo "=========================================="
+          echo "Build output"
+          echo "=========================================="
 
-          find out/arch/arm64/boot \
-            -maxdepth 2 \
-            -type f \
-            -print \
-            2>/dev/null || true
+          test -f out/.config
+          test -f out/vmlinux
 
-          echo
+          if [ -f out/arch/arm64/boot/Image ]; then
+            echo "Image: FOUND"
+            ls -lh out/arch/arm64/boot/Image
+          else
+            echo "Image: NOT FOUND"
+          fi
+
           echo "vmlinux:"
+          ls -lh out/vmlinux
 
-          if [ -f out/vmlinux ]; then
-            echo "[FOUND] out/vmlinux"
-            ls -lh out/vmlinux
-            file out/vmlinux
-          else
-            echo "[MISSING] out/vmlinux"
-          fi
-
-          echo
-          echo "Image:"
-
-          if [ -f out/arch/arm64/boot/Image ]; then
-            echo "[FOUND] Image"
-            ls -lh out/arch/arm64/boot/Image
-          else
-            echo "[MISSING] Image"
-          fi
-
-          echo
-          echo "Image.gz:"
-
-          if [ -f out/arch/arm64/boot/Image.gz ]; then
-            echo "[FOUND] Image.gz"
-            ls -lh out/arch/arm64/boot/Image.gz
-          else
-            echo "[MISSING] Image.gz"
-          fi
-
-          echo
-          echo "dtb/dtbo:"
-
-          find out/arch/arm64/boot \
-            -type f \
-            \( \
-              -name "*.dtb" \
-              -o \
-              -name "*.dtbo" \
-            \) \
-            -print \
-            2>/dev/null || true
-
+          echo "PGO symbols:"
+          llvm-nm out/vmlinux 2>/dev/null | grep -E \
+            '__llvm_prf_(data|cnts|names|vals|vnds)' \
+            | head -30 || true
 
       # ============================================================
-      # 17. Verify PGO LLVM Sections
+      # 12. Save final defconfig
       # ============================================================
-
-      - name: Verify LLVM PGO Sections
-        if: always()
+      - name: Save final defconfig
+        shell: bash
         run: |
-          set +e
+          set -eux
 
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+          cd kernel
 
-          echo "========================================"
-          echo "LLVM PGO SECTIONS"
-          echo "========================================"
+          cp out/.config \
+            out/PGO-final-defconfig
 
-          if [ -f out/vmlinux ]; then
-
-            echo
-            echo "Searching LLVM profiling sections..."
-
-            llvm-objdump \
-              -h \
-              out/vmlinux \
-              2>/dev/null \
-              | grep -E \
-                "__llvm_prf_(data|cnts|names|vals|vnds)" \
-              || true
-
-            echo
-            echo "Searching LLVM profiling symbols..."
-
-            llvm-nm \
-              out/vmlinux \
-              2>/dev/null \
-              | grep "__llvm_prf_" \
-              | head -50 \
-              || true
-
-          else
-
-            echo "[SKIP] vmlinux was not generated"
-
-          fi
-
+          grep '^CONFIG_PGO_CLANG=' \
+            out/.config
 
       # ============================================================
-      # 18. Check Build Log for PGO
+      # 13. Upload kernel artifacts
       # ============================================================
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-pgo-clang-r416183b
+          path: |
+            kernel/out/arch/arm64/boot/Image
+            kernel/out/vmlinux
+            kernel/out/.config
+            kernel/out/PGO-final-defconfig
+            kernel/0001-ARM64-Clang-PGO-4.14-RedHawk.patch
+          if-no-files-found: warn
 
-      - name: Inspect PGO Build Log
+      # ============================================================
+      # 14. Upload build log / metadata
+      # ============================================================
+      - name: Save build information
         if: always()
+        shell: bash
         run: |
-          set +e
+          cd kernel
 
-          echo "========================================"
-          echo "PGO BUILD LOG ANALYSIS"
-          echo "========================================"
-
-          if [ -f pgo-build.log ]; then
+          {
+            echo "===== KERNEL ====="
+            make kernelversion || true
 
             echo
-            echo "Occurrences of fprofile-generate:"
-
-            grep -n \
-              "fprofile-generate" \
-              pgo-build.log \
-              | head -50 \
-              || true
+            echo "===== COMMIT ====="
+            git rev-parse HEAD || true
 
             echo
-            echo "Occurrences of PGO:"
+            echo "===== CLANG ====="
+            "${CLANG_DIR}/bin/clang" --version || true
 
-            grep -ni \
-              "PGO" \
-              pgo-build.log \
-              | head -100 \
-              || true
+            echo
+            echo "===== LLD ====="
+            "${CLANG_DIR}/bin/ld.lld" --version || true
 
-          else
+            echo
+            echo "===== PGO CONFIG ====="
+            grep -E \
+              '^CONFIG_(PGO|PROC_FS|POLLY|BOLT)' \
+              out/.config 2>/dev/null || true
 
-            echo "[MISSING] pgo-build.log"
+            echo
+            echo "===== PATCH SHA256 ====="
+            sha256sum \
+              0001-ARM64-Clang-PGO-4.14-RedHawk.patch \
+              2>/dev/null || true
+          } > pgo-build-info.txt
 
-          fi
-
-
-      # ============================================================
-      # 19. Final PGO Summary
-      # ============================================================
-
-      - name: Final PGO Summary
-        if: always()
-        run: |
-          set +e
-
-          echo
-          echo "========================================"
-          echo "FINAL PGO SUMMARY"
-          echo "========================================"
-
-          echo
-          echo "Compiler:"
-          clang --version
-
-          echo
-          echo "PGO configuration:"
-
-          if [ -f out/.config ]; then
-            grep "^CONFIG_PGO_CLANG=" \
-              out/.config \
-              || true
-          fi
-
-          echo
-          echo "PGO source:"
-
-          if [ -d kernel/pgo ]; then
-            echo "[FOUND] kernel/pgo"
-          else
-            echo "[MISSING] kernel/pgo"
-          fi
-
-          echo
-          echo "Kernel:"
-
-          if [ -f out/vmlinux ]; then
-            echo "[BUILT] vmlinux"
-            ls -lh out/vmlinux
-          else
-            echo "[NOT BUILT] vmlinux"
-          fi
-
-          echo
-          echo "ARM64 Image:"
-
-          if [ -f out/arch/arm64/boot/Image ]; then
-            echo "[BUILT] Image"
-            ls -lh out/arch/arm64/boot/Image
-          else
-            echo "[NOT BUILT] Image"
-          fi
-
-          echo
-          echo "========================================"
-          echo "PGO TEST FINISHED"
-          echo "========================================"
-
-
-      # ============================================================
-      # 20. Upload PGO Build Artifacts
-      # ============================================================
-
-      - name: Upload PGO Artifacts
+      - name: Upload build information
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PGO-Clang-r416183b
-          path: |
-            0001-ARM64-Clang-PGO-4.14-1.patch
-            pgo-build.log
-            out/.config
-            out/defconfig
-            out/violet-pgo-defconfig
-            out/vmlinux
-            out/arch/arm64/boot/Image
-            out/arch/arm64/boot/Image.gz
-            out/arch/arm64/boot/*.dtb
-            out/arch/arm64/boot/*.dtbo
+          name: pgo-build-info
+          path: kernel/pgo-build-info.txt
           if-no-files-found: warn
