@@ -193,7 +193,7 @@ jobs:
           PATCH_URL="https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
 
-          EXPECTED_SHA256="b5a494183eeb764d04b3d428e30681abb5ae4a6b9ef9cb085491d2311a3c6b23"
+          EXPECTED_SHA256="fd9233086abf1c88bbe96cd6ea28e4b71026d8fddb63bd1c20eafcd0bf9c9298"
 
           echo "============================================================"
           echo "DOWNLOAD PGO PATCH"
