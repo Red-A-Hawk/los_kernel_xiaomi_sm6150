@@ -1,54 +1,36 @@
-name: Check Linker Preprocessor
+name: ARM64 Linker Files Only
 
 on:
   workflow_dispatch:
 
 jobs:
-  check-linker:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Inspect vmlinux.lds.S and linker preprocessing
+      - name: Dump ARM64 linker files
         run: |
-          echo "## فحص نظام Linker Script" > linker_report.txt
-          echo "" >> linker_report.txt
+          echo "## ARM64 Linker Files" > report.txt
+          echo "" >> report.txt
 
-          echo "### arch/arm64/kernel/vmlinux.lds.S" >> linker_report.txt
-          echo '```' >> linker_report.txt
+          echo "### arch/arm64/kernel/vmlinux.lds.S" >> report.txt
+          echo '```' >> report.txt
+          nl -ba arch/arm64/kernel/vmlinux.lds.S >> report.txt
+          echo '```' >> report.txt
+          echo "" >> report.txt
 
-          if [ -f arch/arm64/kernel/vmlinux.lds.S ]; then
-            cat arch/arm64/kernel/vmlinux.lds.S >> linker_report.txt
-          else
-            echo "الملف غير موجود!" >> linker_report.txt
-          fi
+          echo "### arch/arm64/kernel/Makefile" >> report.txt
+          echo '```' >> report.txt
+          nl -ba arch/arm64/kernel/Makefile >> report.txt
+          echo '```' >> report.txt
 
-          echo '```' >> linker_report.txt
-          echo "" >> linker_report.txt
+          cat report.txt >> "$GITHUB_STEP_SUMMARY"
 
-          echo "### البحث عن طريقة توليد vmlinux.lds" >> linker_report.txt
-          echo '```' >> linker_report.txt
-
-          grep -Rnw \
-            --exclude-dir=.git \
-            --exclude-dir=out \
-            . \
-            -e 'vmlinux.lds' \
-            -e 'vmlinux.lds.S' \
-            -e 'CPP' \
-            -e 'cpp' \
-            -e 'clang -E' \
-            -e 'gcc -E' \
-            >> linker_report.txt || true
-
-          echo '```' >> linker_report.txt
-
-          cat linker_report.txt >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload full report
+      - name: Upload report
         uses: actions/upload-artifact@v4
         with:
-          name: linker-preprocessor-audit
-          path: linker_report.txt
+          name: arm64-linker-files
+          path: report.txt
