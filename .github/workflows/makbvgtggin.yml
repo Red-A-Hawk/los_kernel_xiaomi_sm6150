@@ -243,16 +243,20 @@ jobs:
 
             if grep -q "select ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
               echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
+
             elif grep -q "select ARCH_SUPPORTS_THINLTO" arch/arm64/Kconfig; then
+
               sed -i \
                 '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
                 arch/arm64/Kconfig
 
               echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG after ARCH_SUPPORTS_THINLTO"
+
             else
               echo "[FAIL] Could not find ARCH_SUPPORTS_THINLTO"
               exit 1
             fi
+
           else
             echo "[OK] arch/arm64/Kconfig applied cleanly from patch"
           fi
@@ -329,16 +333,20 @@ jobs:
               "$LDSH"
 
             echo "[OK] PGO linker condition changed"
+
           elif grep -q \
               '#if defined(CONFIG_PGO_CLANG) && defined(PGO_CLANG_LINKER)' \
               "$LDSH"; then
 
             echo "[OK] PGO_CLANG_LINKER condition already present"
+
           else
             echo "[FAIL] Could not find expected PGO linker condition"
+
             grep -n \
               -E 'PGO_CLANG|LINKER_SCRIPT' \
               "$LDSH" || true
+
             exit 1
           fi
 
@@ -363,87 +371,6 @@ jobs:
 
           echo
           echo "[OK] PGO linker context configured"
-
-      # ============================================================
-      # 9.0. VERIFY GENERATED PGO LINKER SCRIPT
-      # ============================================================
-      - name: Verify Generated PGO Linker Script
-        run: |
-          set -e
-
-          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
-
-          echo "============================================================"
-          echo "VERIFY GENERATED PGO LINKER SCRIPT"
-          echo "============================================================"
-
-          echo
-          echo "[1] Generate vmlinux.lds"
-
-          make O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            arch/arm64/kernel/vmlinux.lds
-
-          LDS="out/arch/arm64/kernel/vmlinux.lds"
-
-          echo
-          echo "[2] Generated linker script:"
-          ls -lh "$LDS"
-
-          echo
-          echo "============================================================"
-          echo "LLVM PGO SYMBOL DEFINITIONS"
-          echo "============================================================"
-
-          grep -n "__llvm_prf" "$LDS" || true
-
-          echo
-          echo "============================================================"
-          echo "CHECK REQUIRED PGO SYMBOLS"
-          echo "============================================================"
-
-          FAIL=0
-
-          for SYMBOL in \
-            __llvm_prf_data_start \
-            __llvm_prf_data_end \
-            __llvm_prf_cnts_start \
-            __llvm_prf_cnts_end \
-            __llvm_prf_names_start \
-            __llvm_prf_names_end \
-            __llvm_prf_vnds_start \
-            __llvm_prf_vnds_end
-          do
-            if grep -q "$SYMBOL" "$LDS"; then
-              echo "[OK] $SYMBOL"
-            else
-              echo "[FAIL] $SYMBOL missing"
-              FAIL=1
-            fi
-          done
-
-          echo
-          echo "============================================================"
-
-          if [ "$FAIL" -ne 0 ]; then
-            echo "[FAIL] LLVM PGO symbols are missing from generated linker script"
-            exit 1
-          fi
-
-          echo "[OK] All LLVM PGO linker symbols are present"
 
       # ============================================================
       # 9. VERIFY PGO INTEGRATION
@@ -666,7 +593,88 @@ jobs:
             out/.config
 
       # ============================================================
-      # 11. CHECK CLANG PGO SUPPORT
+      # 11. VERIFY GENERATED PGO LINKER SCRIPT
+      # ============================================================
+      - name: Verify Generated PGO Linker Script
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "VERIFY GENERATED PGO LINKER SCRIPT"
+          echo "============================================================"
+
+          echo
+          echo "[1] Generate vmlinux.lds"
+
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            arch/arm64/kernel/vmlinux.lds
+
+          LDS="out/arch/arm64/kernel/vmlinux.lds"
+
+          echo
+          echo "[2] Generated linker script:"
+          ls -lh "$LDS"
+
+          echo
+          echo "============================================================"
+          echo "LLVM PGO SYMBOL DEFINITIONS"
+          echo "============================================================"
+
+          grep -n "__llvm_prf" "$LDS" || true
+
+          echo
+          echo "============================================================"
+          echo "CHECK REQUIRED PGO SYMBOLS"
+          echo "============================================================"
+
+          FAIL=0
+
+          for SYMBOL in \
+            __llvm_prf_data_start \
+            __llvm_prf_data_end \
+            __llvm_prf_cnts_start \
+            __llvm_prf_cnts_end \
+            __llvm_prf_names_start \
+            __llvm_prf_names_end \
+            __llvm_prf_vnds_start \
+            __llvm_prf_vnds_end
+          do
+            if grep -q "$SYMBOL" "$LDS"; then
+              echo "[OK] $SYMBOL"
+            else
+              echo "[FAIL] $SYMBOL missing"
+              FAIL=1
+            fi
+          done
+
+          echo
+          echo "============================================================"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "[FAIL] LLVM PGO symbols are missing from generated linker script"
+            exit 1
+          fi
+
+          echo "[OK] All LLVM PGO linker symbols are present"
+
+      # ============================================================
+      # 12. CHECK CLANG PGO SUPPORT
       # ============================================================
       - name: Check Clang PGO Support
         run: |
@@ -755,7 +763,7 @@ jobs:
           echo "[OK] -fprofile-instr-use recognized"
 
       # ============================================================
-      # 12. BUILD KERNEL WITH PGO
+      # 13. BUILD KERNEL WITH PGO
       # ============================================================
       - name: Build Kernel With PGO
         run: |
@@ -790,7 +798,7 @@ jobs:
           echo "[OK] Full kernel build completed"
 
       # ============================================================
-      # 13. VERIFY PGO COMPILER FLAGS
+      # 14. VERIFY PGO COMPILER FLAGS
       # ============================================================
       - name: Verify PGO Compiler Flags
         run: |
@@ -812,7 +820,7 @@ jobs:
           grep -o -- "-fprofile-generate" pgo-build.log | wc -l
 
       # ============================================================
-      # 14. VERIFY LLVM PGO SECTIONS IN OBJECTS
+      # 15. VERIFY LLVM PGO SECTIONS IN OBJECTS
       # ============================================================
       - name: Verify LLVM PGO Sections
         if: always()
@@ -872,7 +880,7 @@ jobs:
           fi
 
       # ============================================================
-      # 15. BUILD VMLINUX
+      # 16. BUILD VMLINUX
       # ============================================================
       - name: Build Vmlinux With PGO
         run: |
@@ -908,7 +916,7 @@ jobs:
           echo "[OK] vmlinux build completed"
 
       # ============================================================
-      # 16. VERIFY VMLINUX PGO SECTIONS
+      # 17. VERIFY VMLINUX PGO SECTIONS
       # ============================================================
       - name: Verify Vmlinux PGO Sections
         run: |
@@ -940,7 +948,7 @@ jobs:
           fi
 
       # ============================================================
-      # 17. SAVE FINAL CONFIG
+      # 18. SAVE FINAL CONFIG
       # ============================================================
       - name: Save Final PGO Configuration
         run: |
@@ -957,7 +965,7 @@ jobs:
             out/.config
 
       # ============================================================
-      # 18. UPLOAD ARTIFACTS
+      # 19. UPLOAD ARTIFACTS
       # ============================================================
       - name: Upload PGO Build Artifacts
         if: always()
@@ -975,7 +983,7 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # 19. FINAL SUMMARY
+      # 20. FINAL SUMMARY
       # ============================================================
       - name: Final Summary
         if: always()
