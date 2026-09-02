@@ -1,10 +1,13 @@
-name: Test Clang PGO Build - Partial v7
-on: null
-workflow_dispatch: null
-jobs: null
-test-pgo-build: null
-runs-on: ubuntu-22.04
-steps:
+name: Check Clang PGO v7
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-pgo:
+    runs-on: ubuntu-22.04
+
+    steps:
   - name: Checkout Kernel
     uses: actions/checkout@v4
     with:
