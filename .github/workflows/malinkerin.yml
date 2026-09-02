@@ -1,0 +1,11 @@
+- name: Check __LINKER__ definition
+  run: |
+    echo "============================================================"
+    echo "CHECKING __LINKER__"
+    echo "============================================================"
+
+    grep -Rnw \
+      --exclude-dir=out \
+      --exclude-dir=.git \
+      . \
+      -e '__LINKER__' || true
