@@ -217,24 +217,63 @@ jobs:
           echo "APPLY PGO PATCH (patch -p1)"
           echo "============================================================"
 
+          set +e
           patch -p1 \
             --fuzz=3 \
             --ignore-whitespace \
             --no-backup-if-mismatch \
             < "$PATCH_FILE"
+          set -e
 
           echo
           echo "============================================================"
-          echo "VERIFY NO REJECTED HUNKS"
+          echo "HANDLE arch/arm64/Kconfig SEPARATELY IF NEEDED"
+          echo "============================================================"
+
+          if [ -f arch/arm64/Kconfig.rej ]; then
+            echo "[WARN] arch/arm64/Kconfig hunk rejected, applying manually"
+
+            rm -f arch/arm64/Kconfig.rej arch/arm64/Kconfig.orig
+
+            if grep -q "select ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
+              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
+            elif grep -q "select ARCH_SUPPORTS_THINLTO" arch/arm64/Kconfig; then
+              sed -i \
+                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                arch/arm64/Kconfig
+              echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG after ARCH_SUPPORTS_THINLTO"
+            else
+              echo "[FAIL] Could not find anchor line ARCH_SUPPORTS_THINLTO in arch/arm64/Kconfig"
+              exit 1
+            fi
+          else
+            echo "[OK] arch/arm64/Kconfig applied cleanly from the patch"
+          fi
+
+          echo
+          echo "============================================================"
+          echo "VERIFY NO REMAINING REJECTED HUNKS"
           echo "============================================================"
 
           if find . -name "*.rej" | grep -q .; then
-            echo "[FAIL] Rejected hunks found:"
+            echo "[FAIL] Rejected hunks still remain:"
             find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
             exit 1
           fi
 
-          echo "[OK] PGO patch applied successfully with no rejects"
+          echo "[OK] All patches applied successfully"
+
+          echo
+          echo "============================================================"
+          echo "VERIFY ARCH_SUPPORTS_PGO_CLANG PRESENT"
+          echo "============================================================"
+
+          if grep -n "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
+            echo "[OK] ARCH_SUPPORTS_PGO_CLANG confirmed in arch/arm64/Kconfig"
+          else
+            echo "[FAIL] ARCH_SUPPORTS_PGO_CLANG missing after all attempts"
+            exit 1
+          fi
 
           echo
           echo "Changed files:"
