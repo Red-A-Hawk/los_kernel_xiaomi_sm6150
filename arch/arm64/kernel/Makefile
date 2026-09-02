@@ -3,7 +3,7 @@
 # Makefile for the linux kernel.
 #
 
-CPPFLAGS_vmlinux.lds	:= -DTEXT_OFFSET=$(TEXT_OFFSET)
+CPPFLAGS_vmlinux.lds := -DTEXT_OFFSET=$(TEXT_OFFSET) -DLINKER_SCRIPT
 AFLAGS_head.o		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 CFLAGS_armv8_deprecated.o := -I$(src)
 
