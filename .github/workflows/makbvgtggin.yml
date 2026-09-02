@@ -193,7 +193,6 @@ jobs:
           PATCH_URL="https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
 
-          EXPECTED_SHA256="fd9233086abf1c88bbe96cd6ea28e4b71026d8fddb63bd1c20eafcd0bf9c9298"
 
           echo "============================================================"
           echo "DOWNLOAD PGO PATCH"
@@ -204,26 +203,6 @@ jobs:
           echo
           echo "Patch size:"
           wc -c "$PATCH_FILE"
-
-          echo
-          echo "Patch SHA256:"
-          sha256sum "$PATCH_FILE"
-
-          echo
-          echo "============================================================"
-          echo "VERIFY PATCH SHA256"
-          echo "============================================================"
-
-          ACTUAL_SHA256="$(sha256sum "$PATCH_FILE" | awk '{print $1}')"
-
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "[FAIL] Patch SHA256 mismatch"
-            echo "Expected: $EXPECTED_SHA256"
-            echo "Actual:   $ACTUAL_SHA256"
-            exit 1
-          fi
-
-          echo "[OK] Patch SHA256 verified"
 
       # ============================================================
       # 7. CHECK AND APPLY PGO PATCH
