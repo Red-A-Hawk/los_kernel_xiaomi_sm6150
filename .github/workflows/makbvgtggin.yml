@@ -365,6 +365,87 @@ jobs:
           echo "[OK] PGO linker context configured"
 
       # ============================================================
+      # 9.0. VERIFY GENERATED PGO LINKER SCRIPT
+      # ============================================================
+      - name: Verify Generated PGO Linker Script
+        run: |
+          set -e
+
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
+          echo "============================================================"
+          echo "VERIFY GENERATED PGO LINKER SCRIPT"
+          echo "============================================================"
+
+          echo
+          echo "[1] Generate vmlinux.lds"
+
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            arch/arm64/kernel/vmlinux.lds
+
+          LDS="out/arch/arm64/kernel/vmlinux.lds"
+
+          echo
+          echo "[2] Generated linker script:"
+          ls -lh "$LDS"
+
+          echo
+          echo "============================================================"
+          echo "LLVM PGO SYMBOL DEFINITIONS"
+          echo "============================================================"
+
+          grep -n "__llvm_prf" "$LDS" || true
+
+          echo
+          echo "============================================================"
+          echo "CHECK REQUIRED PGO SYMBOLS"
+          echo "============================================================"
+
+          FAIL=0
+
+          for SYMBOL in \
+            __llvm_prf_data_start \
+            __llvm_prf_data_end \
+            __llvm_prf_cnts_start \
+            __llvm_prf_cnts_end \
+            __llvm_prf_names_start \
+            __llvm_prf_names_end \
+            __llvm_prf_vnds_start \
+            __llvm_prf_vnds_end
+          do
+            if grep -q "$SYMBOL" "$LDS"; then
+              echo "[OK] $SYMBOL"
+            else
+              echo "[FAIL] $SYMBOL missing"
+              FAIL=1
+            fi
+          done
+
+          echo
+          echo "============================================================"
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "[FAIL] LLVM PGO symbols are missing from generated linker script"
+            exit 1
+          fi
+
+          echo "[OK] All LLVM PGO linker symbols are present"
+
+      # ============================================================
       # 9. VERIFY PGO INTEGRATION
       # ============================================================
       - name: Verify PGO Integration
