@@ -208,12 +208,7 @@ jobs:
           echo "PGO LINKER HUNK FROM PATCH"
           echo "============================================================"
 
-          grep -n \
-            -B5 \
-            -A35 \
-            "PGO_CLANG_DATA" \
-            "$PATCH_FILE" \
-            || true
+          grep -n -B5 -A35 "PGO_CLANG_DATA" "$PATCH_FILE" || true
 
       # ============================================================
       # 7. APPLY PGO PATCH
