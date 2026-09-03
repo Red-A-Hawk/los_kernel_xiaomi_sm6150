@@ -112,7 +112,6 @@ jobs:
       # 5. VERIFY TOOLCHAINS
       # ============================================================
       - name: Verify toolchains
-        shell: bash
         run: |
           set -e
 
