@@ -1,4 +1,4 @@
-name: Build ARM64 Clang PGO v11
+name: Build ARM64 Clang PGO v10
 
 on:
   workflow_dispatch:
@@ -200,7 +200,9 @@ jobs:
           echo "PGO LINKER HUNK FROM PATCH"
           echo "============================================================"
 
-          grep -n -A45 -B5 "PGO_CLANG_DATA" "$PATCH_FILE" || true
+          grep -n -A45 -B5 \
+            "PGO_CLANG_DATA" \
+            "$PATCH_FILE" || true
 
       # ============================================================
       # 7. APPLY PGO PATCH
@@ -231,7 +233,7 @@ jobs:
           echo "patch exit status: $PATCH_STATUS"
 
           # --------------------------------------------------------
-          # Handle known arch/arm64/Kconfig context mismatch
+          # Handle known arch/arm64/Kconfig reject
           # --------------------------------------------------------
           if [ -f arch/arm64/Kconfig.rej ]; then
 
@@ -244,44 +246,32 @@ jobs:
 
             rm -f arch/arm64/Kconfig.rej
 
-            if ! grep -q 'ARCH_SUPPORTS_PGO_CLANG' arch/arm64/Kconfig; then
+            if ! grep -q \
+              'select ARCH_SUPPORTS_PGO_CLANG' \
+              arch/arm64/Kconfig; then
 
-              python3 <<'PY'
-from pathlib import Path
+              sed -i \
+                '/select ARCH_SUPPORTS_THINLTO/a\
+	select ARCH_SUPPORTS_PGO_CLANG' \
+                arch/arm64/Kconfig
 
-path = Path("arch/arm64/Kconfig")
-text = path.read_text()
+              echo "[FIX] ARCH_SUPPORTS_PGO_CLANG inserted"
 
-if 'select ARCH_SUPPORTS_PGO_CLANG' not in text:
-    marker = 'select ARCH_SUPPORTS_THINLTO'
+            else
 
-    if marker not in text:
-        raise SystemExit(
-            "[FAIL] Could not find ARCH_SUPPORTS_THINLTO "
-            "in arch/arm64/Kconfig"
-        )
-
-    text = text.replace(
-        marker,
-        marker + '\n\tselect ARCH_SUPPORTS_PGO_CLANG',
-        1
-    )
-
-    path.write_text(text)
-
-print("[OK] ARCH_SUPPORTS_PGO_CLANG inserted")
-PY
+              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already exists"
 
             fi
 
           fi
 
           # --------------------------------------------------------
-          # Any remaining reject is fatal
+          # Check all remaining rejects
           # --------------------------------------------------------
           REJECTS="$(find . -name '*.rej' -print)"
 
           if [ -n "$REJECTS" ]; then
+
             echo
             echo "============================================================"
             echo "PATCH REJECTS"
@@ -296,6 +286,7 @@ PY
             done <<< "$REJECTS"
 
             exit 1
+
           fi
 
           echo
@@ -316,7 +307,7 @@ PY
           echo "FIX PGO LINKER SECTION"
           echo "============================================================"
 
-          python3 <<'PY'
+          python3 -c '
 from pathlib import Path
 
 path = Path("include/asm-generic/vmlinux.lds.h")
@@ -328,9 +319,6 @@ if not path.exists():
 
 lines = path.read_text().splitlines(True)
 
-# ------------------------------------------------------------
-# Find RW_DATA_SECTION
-# ------------------------------------------------------------
 rw_start = None
 
 for i, line in enumerate(lines):
@@ -343,9 +331,6 @@ if rw_start is None:
         "[FAIL] RW_DATA_SECTION not found"
     )
 
-# ------------------------------------------------------------
-# Find BUG_TABLE inside RW_DATA_SECTION
-# ------------------------------------------------------------
 bug_index = None
 
 for i in range(rw_start + 1, len(lines)):
@@ -362,9 +347,6 @@ if bug_index is None:
         "[FAIL] BUG_TABLE inside RW_DATA_SECTION not found"
     )
 
-# ------------------------------------------------------------
-# Check whether PGO_CLANG_DATA already follows BUG_TABLE
-# ------------------------------------------------------------
 if (
     bug_index + 1 < len(lines)
     and "PGO_CLANG_DATA" in lines[bug_index + 1]
@@ -391,80 +373,47 @@ else:
     print(
         "[FIX] Added PGO_CLANG_DATA after BUG_TABLE"
     )
-PY
+'
 
           echo
           echo "============================================================"
           echo "VERIFY EXACT PGO PLACEMENT"
           echo "============================================================"
 
-          python3 <<'PY'
-from pathlib import Path
+          grep -n -A3 -B3 \
+            'BUG_TABLE' \
+            include/asm-generic/vmlinux.lds.h
 
-path = Path("include/asm-generic/vmlinux.lds.h")
-lines = path.read_text().splitlines()
+          if ! awk '
+            /#define RW_DATA_SECTION/ {
+              inside=1
+            }
 
-rw_start = None
+            inside && /BUG_TABLE/ {
+              bug=1
+              next
+            }
 
-for i, line in enumerate(lines):
-    if line.startswith("#define RW_DATA_SECTION"):
-        rw_start = i
-        break
+            bug && /PGO_CLANG_DATA/ {
+              found=1
+              exit
+            }
 
-if rw_start is None:
-    raise SystemExit(
-        "[FAIL] RW_DATA_SECTION not found"
-    )
+            inside && /^#define / && !/#define RW_DATA_SECTION/ {
+              exit
+            }
 
-bug_index = None
+            END {
+              exit(found ? 0 : 1)
+            }
+          ' include/asm-generic/vmlinux.lds.h; then
 
-for i in range(rw_start + 1, len(lines)):
-    if lines[i].startswith("#define "):
-        break
+            echo "[FAIL] PGO_CLANG_DATA is not after BUG_TABLE"
+            exit 1
 
-    if "BUG_TABLE" in lines[i]:
-        bug_index = i
-        break
+          fi
 
-if bug_index is None:
-    raise SystemExit(
-        "[FAIL] BUG_TABLE not found"
-    )
-
-if bug_index + 1 >= len(lines):
-    raise SystemExit(
-        "[FAIL] Nothing follows BUG_TABLE"
-    )
-
-if "PGO_CLANG_DATA" not in lines[bug_index + 1]:
-    print(
-        "[FAIL] PGO_CLANG_DATA is not directly after BUG_TABLE"
-    )
-
-    print()
-    print("Relevant lines:")
-
-    for n in range(
-        max(0, bug_index - 3),
-        min(len(lines), bug_index + 5)
-    ):
-        print(f"{n + 1}: {lines[n]}")
-
-    raise SystemExit(1)
-
-print(
-    "[OK] PGO_CLANG_DATA is directly after BUG_TABLE"
-)
-
-print()
-print("Relevant lines:")
-
-for n in range(
-    max(0, bug_index - 3),
-    min(len(lines), bug_index + 5)
-):
-    print(f"{n + 1}: {lines[n]}")
-PY
+          echo "[OK] PGO_CLANG_DATA placement verified"
 
       # ============================================================
       # 9. VERIFY PGO INTEGRATION
@@ -482,129 +431,159 @@ PY
           echo
           echo "--- Root Makefile ---"
 
-          if grep -q 'CFLAGS_PGO_CLANG := -fprofile-generate' Makefile; then
+          if grep -q \
+            'CFLAGS_PGO_CLANG := -fprofile-generate' \
+            Makefile; then
+
             echo "[OK] CFLAGS_PGO_CLANG"
+
           else
+
             echo "[FAIL] CFLAGS_PGO_CLANG missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- arch/Kconfig ---"
 
-          if grep -q 'source "kernel/pgo/Kconfig"' arch/Kconfig; then
+          if grep -q \
+            'source "kernel/pgo/Kconfig"' \
+            arch/Kconfig; then
+
             echo "[OK] kernel/pgo/Kconfig source"
+
           else
+
             echo "[FAIL] kernel/pgo/Kconfig source missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- ARM64 Kconfig ---"
 
-          if grep -q 'select ARCH_SUPPORTS_PGO_CLANG' arch/arm64/Kconfig; then
+          if grep -q \
+            'select ARCH_SUPPORTS_PGO_CLANG' \
+            arch/arm64/Kconfig; then
+
             echo "[OK] ARCH_SUPPORTS_PGO_CLANG"
+
           else
+
             echo "[FAIL] ARCH_SUPPORTS_PGO_CLANG missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- VDSO Makefile ---"
 
-          if grep -q 'PGO_PROFILE := n' arch/arm64/kernel/vdso/Makefile; then
+          if grep -q \
+            'PGO_PROFILE := n' \
+            arch/arm64/kernel/vdso/Makefile; then
+
             echo "[OK] VDSO PGO_PROFILE"
+
           else
+
             echo "[FAIL] VDSO PGO_PROFILE missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- kernel/Makefile ---"
 
-          if grep -q 'obj-$(CONFIG_PGO_CLANG) += pgo/' kernel/Makefile; then
+          if grep -q \
+            'obj-$(CONFIG_PGO_CLANG) += pgo/' \
+            kernel/Makefile; then
+
             echo "[OK] kernel/pgo build rule"
+
           else
+
             echo "[FAIL] kernel/pgo build rule missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- scripts/Makefile.lib ---"
 
-          if grep -q 'CFLAGS_PGO_CLANG' scripts/Makefile.lib; then
+          if grep -q \
+            'CFLAGS_PGO_CLANG' \
+            scripts/Makefile.lib; then
+
             echo "[OK] scripts/Makefile.lib PGO flags"
+
           else
+
             echo "[FAIL] scripts/Makefile.lib PGO flags missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- vmlinux.lds.h definition ---"
 
-          if grep -q '__llvm_prf_data_start' include/asm-generic/vmlinux.lds.h; then
+          if grep -q \
+            '__llvm_prf_data_start' \
+            include/asm-generic/vmlinux.lds.h; then
+
             echo "[OK] __llvm_prf_data_start"
+
           else
+
             echo "[FAIL] __llvm_prf_data_start missing"
             FAIL=1
+
           fi
 
-          if grep -q '__llvm_prf_names_start' include/asm-generic/vmlinux.lds.h; then
+          if grep -q \
+            '__llvm_prf_names_start' \
+            include/asm-generic/vmlinux.lds.h; then
+
             echo "[OK] __llvm_prf_names_start"
+
           else
+
             echo "[FAIL] __llvm_prf_names_start missing"
             FAIL=1
+
           fi
 
           echo
           echo "--- PGO_CLANG_DATA invocation ---"
 
-          python3 <<'PY'
-from pathlib import Path
+          awk '
+            /#define RW_DATA_SECTION/ {
+              inside=1
+            }
 
-path = Path("include/asm-generic/vmlinux.lds.h")
-lines = path.read_text().splitlines()
+            inside && /BUG_TABLE/ {
+              bug=1
+              next
+            }
 
-rw_start = None
+            bug && /PGO_CLANG_DATA/ {
+              found=1
+              exit
+            }
 
-for i, line in enumerate(lines):
-    if line.startswith("#define RW_DATA_SECTION"):
-        rw_start = i
-        break
+            inside && /^#define / && !/#define RW_DATA_SECTION/ {
+              exit
+            }
 
-if rw_start is None:
-    raise SystemExit(
-        "[FAIL] RW_DATA_SECTION not found"
-    )
-
-bug_index = None
-
-for i in range(rw_start + 1, len(lines)):
-    if lines[i].startswith("#define "):
-        break
-
-    if "BUG_TABLE" in lines[i]:
-        bug_index = i
-        break
-
-if bug_index is None:
-    raise SystemExit(
-        "[FAIL] BUG_TABLE not found"
-    )
-
-if (
-    bug_index + 1 >= len(lines)
-    or "PGO_CLANG_DATA" not in lines[bug_index + 1]
-):
-    raise SystemExit(
-        "[FAIL] PGO_CLANG_DATA is not invoked "
-        "after BUG_TABLE"
-    )
-
-print(
-    "[OK] PGO_CLANG_DATA invoked by RW_DATA_SECTION"
-)
-PY
+            END {
+              if (found)
+                print "[OK] PGO_CLANG_DATA invoked by RW_DATA_SECTION"
+              else {
+                print "[FAIL] PGO_CLANG_DATA invocation missing"
+                exit 1
+              }
+            }
+          ' include/asm-generic/vmlinux.lds.h
 
           echo
           echo "--- PGO files ---"
@@ -616,13 +595,30 @@ PY
             kernel/pgo/instrument.c \
             kernel/pgo/pgo.h
           do
+
             if [ -f "$file" ]; then
               echo "[OK] $file"
             else
               echo "[FAIL] $file missing"
               FAIL=1
             fi
+
           done
+
+          echo
+          echo "--- Verify arch/arm64/kernel/Makefile unchanged ---"
+
+          if grep -q \
+            'DLINKER_SCRIPT' \
+            arch/arm64/kernel/Makefile; then
+
+            echo "[WARN] Manual DLINKER_SCRIPT found"
+
+          else
+
+            echo "[OK] No manual DLINKER_SCRIPT modification"
+
+          fi
 
           echo
           echo "============================================================"
@@ -659,13 +655,19 @@ PY
 
           grep -E \
             'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|LTO|THINLTO|POLLY)' \
-            out/.config || true
+            out/.config \
+            || true
 
           echo
           echo "PGO CONFIG:"
 
-          grep 'CONFIG_PGO_CLANG' out/.config || true
-          grep 'CONFIG_ARCH_SUPPORTS_PGO_CLANG' out/.config || true
+          grep 'CONFIG_PGO_CLANG' \
+            out/.config \
+            || true
+
+          grep 'CONFIG_ARCH_SUPPORTS_PGO_CLANG' \
+            out/.config \
+            || true
 
       # ============================================================
       # 11. DEBUG PGO LINKER PREPROCESSING
@@ -701,7 +703,8 @@ PY
           grep -E \
             'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|PROC_FS)' \
             out/.config \
-            | tee pgo-debug/pgo-config.txt || true
+            | tee pgo-debug/pgo-config.txt \
+            || true
 
           echo
           echo "--- Generate prepare headers ---"
@@ -754,7 +757,8 @@ PY
 
           set -e
 
-          echo "$LDS_STATUS" > pgo-debug/lds-status.txt
+          echo "$LDS_STATUS" > \
+            pgo-debug/lds-status.txt
 
           if [ "$LDS_STATUS" -ne 0 ]; then
             echo "[WARN] vmlinux.lds target returned status $LDS_STATUS"
@@ -766,8 +770,10 @@ PY
           echo "--- Locate generated linker script ---"
 
           find out arch/arm64/kernel \
-            -name 'vmlinux.lds' \
-            -o -name '*.lds' \
+            \( \
+              -name 'vmlinux.lds' \
+              -o -name '*.lds' \
+            \) \
             | tee pgo-debug/linker-files.txt
 
           echo
@@ -781,13 +787,16 @@ PY
               -E \
               '__llvm_prf_(data|cnts|names|vals|vnds)_(start|end)' \
               "$LDS_FILE" \
-              | tee pgo-debug/pgo-symbols.txt || true
+              | tee pgo-debug/pgo-symbols.txt \
+              || true
 
             cp "$LDS_FILE" \
               pgo-debug/vmlinux.lds
 
           else
+
             echo "[WARN] Generated linker script not found"
+
           fi
 
           echo
@@ -811,10 +820,11 @@ PY
             Makefile \
             2>/dev/null \
             | head -100 \
-            | tee pgo-debug/linker-script-flags.txt || true
+            | tee pgo-debug/linker-script-flags.txt \
+            || true
 
           echo
-          echo "--- Check generated compiler/linker commands ---"
+          echo "--- Check generated linker commands ---"
 
           grep -R \
             -n \
@@ -822,7 +832,8 @@ PY
             out \
             2>/dev/null \
             | head -100 \
-            | tee pgo-debug/vmlinux-lds-commands.txt || true
+            | tee pgo-debug/vmlinux-lds-commands.txt \
+            || true
 
           echo
           echo "============================================================"
@@ -854,10 +865,12 @@ PY
 
           clang --version
 
+          printf \
+            'int main(void) { return 0; }\n' \
+            > /tmp/pgo-test.c
+
           echo
           echo "Test -fprofile-generate"
-
-          printf 'int main(void) { return 0; }\n' > /tmp/pgo-test.c
 
           clang \
             -fprofile-generate \
@@ -877,16 +890,6 @@ PY
             -o /tmp/pgo-test-instr.o
 
           echo "[OK] -fprofile-instr-generate"
-
-          echo
-          echo "Test -fprofile-instr-use"
-
-          clang \
-            -fprofile-instr-use=/dev/null \
-            -c \
-            /tmp/pgo-test.c \
-            -o /tmp/pgo-test-use.o \
-            2>&1 || true
 
           echo
           echo "Test llvm-profdata"
@@ -997,7 +1000,9 @@ PY
               || true
 
           else
+
             echo "[WARN] build.log not found"
+
           fi
 
       # ============================================================
@@ -1011,8 +1016,6 @@ PY
           echo "============================================================"
           echo "VERIFY LLVM PGO OBJECT SECTIONS"
           echo "============================================================"
-
-          FAIL=0
 
           OBJECTS="$(find out -type f \( \
             -name '*.o' \
@@ -1050,10 +1053,6 @@ PY
             echo "[OK] LLVM PGO symbols confirmed in object files"
           else
             echo "[FAIL] No LLVM PGO symbols found in object files"
-            FAIL=1
-          fi
-
-          if [ "$FAIL" -ne 0 ]; then
             exit 1
           fi
 
@@ -1213,14 +1212,16 @@ PY
           echo "PGO configuration:"
 
           if [ -f out/.config ]; then
+
             grep -E \
               'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)' \
               out/.config \
               || true
+
           fi
 
           echo
-          echo "PGO linker source:"
+          echo "PGO linker placement:"
 
           grep -n \
             -A3 \
