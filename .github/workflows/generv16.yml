@@ -85,7 +85,6 @@ jobs:
 
               mkdir -p "$(dirname "$output")"
 
-              # ✅ تصحيح: استخدام متغير marker بشكل صحيح مع awk
               awk -v m="$marker" '
                   $0 == m {
                       in_diff=1
@@ -195,7 +194,7 @@ jobs:
               echo "[OK] Already present"
           else
               sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
                 "$FILE"
           fi
 
@@ -265,7 +264,6 @@ jobs:
           if grep -q '^#define PGO_CLANG_DATA' "$FILE"; then
               echo "[OK] PGO linker macro already exists"
           else
-              # ✅ تصحيح: استخدام awk مع هروب صحيح للعلامات
               awk '
               BEGIN { inserted=0 }
 
@@ -341,7 +339,6 @@ jobs:
               exit 0
           fi
 
-          # ✅ تصحيح: استخدام awk مع هروب صحيح
           awk '
           /#define RW_DATA_SECTION/ { in_rw=1 }
 
@@ -399,21 +396,25 @@ jobs:
           echo "============================================================"
 
           if ! grep -q '^CFLAGS_PGO_CLANG := -fprofile-generate$' "$FILE"; then
-              sed -i '/^all: vmlinux$/a\
-              \
-              CFLAGS_PGO_CLANG := -fprofile-generate\
-              export CFLAGS_PGO_CLANG' "$FILE"
+              printf '\nCFLAGS_PGO_CLANG := -fprofile-generate\n' >> "$FILE"
+              printf 'export CFLAGS_PGO_CLANG\n' >> "$FILE"
           fi
 
           if ! grep -q '^ifdef CONFIG_PGO_CLANG$' "$FILE"; then
-              sed -i '/^ifdef CONFIG_CFI_CLANG$/i\
-              ifdef CONFIG_PGO_CLANG\
-              # NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented\
-              # builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only\
-              # for the final rebuild that consumes the collected .profdata.\
-              KBUILD_CFLAGS	+= -mllvm -disable-preinline -fno-if-conversion\
-              endif\
-             ' "$FILE"
+              awk '
+              /^ifdef CONFIG_CFI_CLANG/ && !inserted {
+                  print "ifdef CONFIG_PGO_CLANG"
+                  print "# NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented"
+                  print "# builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only"
+                  print "# for the final rebuild that consumes the collected .profdata."
+                  print "KBUILD_CFLAGS  += -mllvm -disable-preinline -fno-if-conversion"
+                  print "endif"
+                  print ""
+                  inserted=1
+              }
+              { print }
+              ' "$FILE" > "$FILE.tmp"
+              mv "$FILE.tmp" "$FILE"
           fi
 
           grep -n -A8 -B3 'CONFIG_PGO_CLANG' "$FILE"
@@ -436,7 +437,6 @@ jobs:
               exit 0
           fi
 
-          # ✅ تصحيح: استخدام awk مع هروب صحيح لعلامات الاقتباس
           awk '
           /# Enable gcov profiling flags/ {
               print
