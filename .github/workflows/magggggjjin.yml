@@ -1,0 +1,63 @@
+name: Debug certs - j1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  certs-debug:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git wget curl bc bison flex build-essential \
+            libssl-dev binutils-aarch64-linux-gnu \
+            device-tree-compiler cpio python3 unzip
+
+      - name: Clone Clang r416183b
+        run: |
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
+            toolchains/clang
+
+      - name: Setup Toolchain
+        run: |
+          echo "CLANG_PATH=$GITHUB_WORKSPACE/toolchains/clang" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/toolchains/clang/bin" >> "$GITHUB_PATH"
+
+          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+
+      - name: Verify Clang
+        run: |
+          clang --version
+          ld.lld --version
+
+      - name: Configure Kernel
+        run: |
+          make O=out ARCH=arm64 LLVM=1 vendor/violet-perf_defconfig
+
+      - name: Run certs Debug Only
+        run: |
+          make -j1 \
+            O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            V=1 \
+            certs 2>&1 | tee certs-debug.log
+
+      - name: Upload Debug Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certs-debug-log
+          path: certs-debug.log
