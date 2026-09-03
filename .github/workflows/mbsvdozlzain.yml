@@ -116,7 +116,7 @@ jobs:
           arm-linux-androideabi-gcc --version | head -n 1
 
       # ============================================================
-      # 6. APPLY PGO PATCH
+      # 6. APPLY PGO PATCH (FIXED)
       # ============================================================
       - name: Apply PGO Patch
         run: |
@@ -132,14 +132,16 @@ jobs:
           wc -c "$PATCH_FILE"
           echo
           echo "============================================================"
-          echo "APPLY PGO PATCH (patch -p1)"
+          echo "APPLY PGO PATCH (patch -p1 -N -f)"
           echo "============================================================"
           set +e
           patch -p1 \
+            -N \
+            -f \
             --fuzz=3 \
             --ignore-whitespace \
             --no-backup-if-mismatch \
-            < "$PATCH_FILE"
+            < "$PATCH_FILE" 2>&1
           PATCH_STATUS=$?
           set -e
           echo
