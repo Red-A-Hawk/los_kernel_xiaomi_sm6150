@@ -185,7 +185,7 @@ jobs:
       # ============================================================
       - name: Apply PGO patch
         shell: bash
-        run: |
+         run: |
           set -e
 
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
