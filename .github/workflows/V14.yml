@@ -326,9 +326,6 @@ jobs:
           echo "FIX PGO LINKER CONTEXT"
           echo "============================================================"
 
-          # --------------------------------------------------------
-          # 1. VERIFY PGO CONDITION
-          # --------------------------------------------------------
           echo
           echo "[1] Verify PGO condition"
 
@@ -350,9 +347,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 2. VERIFY / INSERT PGO_CLANG_DATA
-          # --------------------------------------------------------
           echo
           echo "[2] Verify PGO_CLANG_DATA placement"
 
@@ -450,9 +444,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 3. FINAL BUG_TABLE -> PGO_CLANG_DATA CHECK
-          # --------------------------------------------------------
           echo
           echo "[3] Final BUG_TABLE -> PGO_CLANG_DATA check"
 
@@ -483,7 +474,7 @@ jobs:
           else
 
             echo "[FAIL] PGO_CLANG_DATA is not immediately after BUG_TABLE"
-            echo
+
             grep -n \
               -B5 \
               -A10 \
@@ -494,9 +485,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 4. VERIFY vmlinux.lds.S HAS NO MANUAL PGO MARKER
-          # --------------------------------------------------------
           echo
           echo "[4] Verify vmlinux.lds.S has no manual PGO marker"
 
@@ -513,9 +501,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 5. VERIFY ARM64 KERNEL MAKEFILE WAS NOT MODIFIED
-          # --------------------------------------------------------
           echo
           echo "[5] Verify arch/arm64/kernel/Makefile unchanged"
 
@@ -531,9 +516,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 6. SHOW FINAL LINKER CONTEXT
-          # --------------------------------------------------------
           echo
           echo "[6] Final PGO linker context"
 
@@ -919,9 +901,6 @@ jobs:
           echo "DEBUG PGO CONFIG + LINKER PREPROCESSING"
           echo "============================================================"
 
-          # --------------------------------------------------------
-          # 1. SOURCE CONFIGURATION
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[1] SOURCE CONFIGURATION"
@@ -968,9 +947,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/source-config.txt"
 
-          # --------------------------------------------------------
-          # 2. CONFIGURATION
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[2] KCONFIG STATUS"
@@ -995,9 +971,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/pgo-config-status.txt"
 
-          # --------------------------------------------------------
-          # 3. GENERATE KCONFIG HEADERS
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[3] GENERATE KCONFIG HEADERS"
@@ -1022,9 +995,6 @@ jobs:
 
           echo "[OK] Kconfig/generated headers prepared"
 
-          # --------------------------------------------------------
-          # 4. FIND GENERATED CONFIG HEADERS
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[4] FIND GENERATED CONFIG HEADERS"
@@ -1055,9 +1025,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/pgo-config-definitions.txt"
 
-          # --------------------------------------------------------
-          # 5. CHECK GENERATED AUTOCONF
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[5] CHECK GENERATED AUTOCONF"
@@ -1087,9 +1054,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/autoconf-pgo.txt"
 
-          # --------------------------------------------------------
-          # 6. DIRECT PREPROCESSOR MACRO TEST
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[6] DIRECT CLANG PREPROCESSOR MACRO TEST"
@@ -1127,9 +1091,6 @@ jobs:
 
           cd ..
 
-          # --------------------------------------------------------
-          # 7. FIND EVERY BUG_TABLE DEFINITION / USAGE
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[7] FIND ALL BUG_TABLE CONTEXTS"
@@ -1148,9 +1109,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/all-bug-table-context.txt"
 
-          # --------------------------------------------------------
-          # 8. FIND RW_DATA_SECTION
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[8] FIND RW_DATA_SECTION"
@@ -1176,9 +1134,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/rw-data-section.txt"
 
-          # --------------------------------------------------------
-          # 9. FIND ALL PGO_CLANG_DATA REFERENCES
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[9] FIND PGO_CLANG_DATA REFERENCES"
@@ -1204,9 +1159,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/pgo-clang-data-usage.txt"
 
-          # --------------------------------------------------------
-          # 10. ACTUAL vmlinux.lds PREPROCESSING
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[10] ACTUAL vmlinux.lds PREPROCESSING"
@@ -1250,9 +1202,6 @@ jobs:
 
           echo "[OK] vmlinux.lds preprocessing completed"
 
-          # --------------------------------------------------------
-          # 11. CHECK PGO SYMBOLS IN GENERATED LINKER SCRIPT
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[11] CHECK GENERATED LINKER SCRIPT"
@@ -1285,9 +1234,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/pgo-symbols.txt"
 
-          # --------------------------------------------------------
-          # 12. SHOW GENERATED LINKER AREA AROUND .data
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[12] GENERATED .data LINKER CONTEXT"
@@ -1316,9 +1262,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/generated-data-context.txt"
 
-          # --------------------------------------------------------
-          # 13. PGO LINKER RESULT
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[13] PGO LINKER RESULT"
@@ -1366,9 +1309,6 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------
-          # 14. KBUILD DRY RUN
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[14] KBUILD DRY RUN"
@@ -1401,9 +1341,6 @@ jobs:
 
           echo "Kbuild dry-run exit code: $MAKE_STATUS"
 
-          # --------------------------------------------------------
-          # 15. EXTRACT vmlinux.lds COMMAND
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[15] EXTRACT vmlinux.lds COMMAND"
@@ -1416,9 +1353,6 @@ jobs:
             | tee "$DEBUG_DIR/relevant-lines.txt" \
             || true
 
-          # --------------------------------------------------------
-          # 16. EXTRACT PGO DEFINES
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[16] PGO DEFINES"
@@ -1431,9 +1365,6 @@ jobs:
             | tee "$DEBUG_DIR/pgo-defines.txt" \
             || true
 
-          # --------------------------------------------------------
-          # 17. KBUILD VARIABLES
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[17] KBUILD VARIABLES"
@@ -1453,9 +1384,6 @@ jobs:
             | tee "$DEBUG_DIR/kbuild-variables.txt" \
             || true
 
-          # --------------------------------------------------------
-          # 18. ENVIRONMENT
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[18] ENVIRONMENT"
@@ -1472,9 +1400,6 @@ jobs:
 
           } | tee "$DEBUG_DIR/environment.txt"
 
-          # --------------------------------------------------------
-          # 19. DEBUG FILE LIST
-          # --------------------------------------------------------
           echo
           echo "============================================================"
           echo "[19] DEBUG FILE LIST"
@@ -1617,6 +1542,10 @@ jobs:
           echo "BUILD FULL KERNEL WITH PGO"
           echo "============================================================"
 
+          rm -f \
+            pgo-build.log \
+            pgo-build-full.log
+
           make -j$(nproc --all) \
             O=out \
             ARCH=arm64 \
@@ -1634,10 +1563,51 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             V=1 \
-            2>&1 | tee pgo-build.log
+            2>&1 \
+            | tee pgo-build-full.log \
+            | awk '
+                /clang/ && / -c / {
+
+                  if ($0 ~ /__ASSEMBLY__|assembler/) {
+                    label="  AS      "
+                  } else {
+                    label="  CC      "
+                  }
+
+                  if (match($0, /-o ([^ ]+)/, m)) {
+                    print label m[1]
+                  }
+
+                  next
+                }
+
+                /ld\.lld/ && / -o / {
+
+                  if (match($0, /-o ([^ ]+)/, m)) {
+                    print "  LD      " m[1]
+                  }
+
+                  next
+                }
+
+                /error:|Error:|FAILED|No rule to make target|Stop\./ {
+                  print
+                }
+              ' \
+            | tee pgo-build.log
 
           echo
+          echo "============================================================"
           echo "[OK] Full kernel build completed"
+          echo "============================================================"
+
+          echo
+          echo "Short build log:"
+          cat pgo-build.log
+
+          echo
+          echo "Full verbose build log:"
+          ls -lh pgo-build-full.log
 
       # ============================================================
       # 14. VERIFY PGO COMPILER FLAGS
@@ -1650,9 +1620,16 @@ jobs:
           echo "VERIFY PGO COMPILER FLAGS"
           echo "============================================================"
 
+          if [ ! -f pgo-build-full.log ]; then
+
+            echo "[FAIL] pgo-build-full.log not found"
+            exit 1
+
+          fi
+
           if grep -q \
               -- "-fprofile-generate" \
-              pgo-build.log; then
+              pgo-build-full.log; then
 
             echo "[OK] -fprofile-generate found in kernel build"
 
@@ -1668,7 +1645,7 @@ jobs:
 
           grep -o \
             -- "-fprofile-generate" \
-            pgo-build.log \
+            pgo-build-full.log \
             | wc -l
 
       # ============================================================
@@ -1825,6 +1802,7 @@ jobs:
             out/.config
             pgo-final-defconfig
             pgo-build.log
+            pgo-build-full.log
             pgo-use-error.log
           if-no-files-found: warn
           retention-days: 7
@@ -1872,15 +1850,28 @@ jobs:
           echo
           echo "PGO flags:"
 
-          if [ -f pgo-build.log ]; then
+          if [ -f pgo-build-full.log ]; then
 
             echo "-fprofile-generate occurrences:"
 
             grep -o \
               -- "-fprofile-generate" \
-              pgo-build.log \
+              pgo-build-full.log \
               | wc -l \
               || true
+
+          fi
+
+          echo
+          echo "Short build log:"
+
+          if [ -f pgo-build.log ]; then
+
+            cat pgo-build.log
+
+          else
+
+            echo "not available"
 
           fi
 
