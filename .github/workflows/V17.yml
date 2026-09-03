@@ -256,7 +256,7 @@ jobs:
                 arch/arm64/Kconfig; then
 
               sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
                 arch/arm64/Kconfig
 
               echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
@@ -336,28 +336,14 @@ jobs:
           echo
           echo "[1] Verify PGO_CLANG_DATA definition"
 
-          if grep -q \
-         "^#ifdef CONFIG_PGO_CLANG$" \
-          "$LDSH" &&
-           grep -q \
-          "^#define PGO_CLANG_DATA" \
-          "$LDSH"; then
-
-           echo "[OK] PGO_CLANG_DATA definition found"
-
-           else
-
-          echo "[FAIL] PGO_CLANG_DATA definition missing"
-
-          grep -n \
-          -B3 \
-          -A35 \
-          "PGO_CLANG_DATA" \
-          "$LDSH" || true
-
-          exit 1
-
-         fi
+          if grep -q "^#ifdef CONFIG_PGO_CLANG$" "$LDSH" && \
+             grep -q "^#define PGO_CLANG_DATA" "$LDSH"; then
+            echo "[OK] PGO_CLANG_DATA definition found"
+          else
+            echo "[FAIL] PGO_CLANG_DATA definition missing"
+            grep -n -B3 -A35 "PGO_CLANG_DATA" "$LDSH" || true
+            exit 1
+          fi
 
           # --------------------------------------------------------
           # 2. VERIFY / INSERT PGO_CLANG_DATA
@@ -365,61 +351,33 @@ jobs:
           echo
           echo "[2] Verify PGO_CLANG_DATA placement"
 
-          if ! grep -q \
-              "__llvm_prf_data_start" \
-              "$LDSH"; then
-
+          if ! grep -q "__llvm_prf_data_start" "$LDSH"; then
             echo "[FAIL] PGO_CLANG_DATA definition is missing"
             exit 1
-
           fi
 
           if awk '
-            /^#define RW_DATA_SECTION/ {
-              in_rw=1
-              next
-            }
-
-            in_rw && /^#define / {
-              exit
-            }
-
+            /^#define RW_DATA_SECTION/ { in_rw=1; next }
+            in_rw && /^#define / { exit }
             in_rw && /BUG_TABLE/ {
               if (getline nextline > 0 && nextline ~ /PGO_CLANG_DATA/) {
                 found=1
               }
               exit
             }
-
-            END {
-              exit(found ? 0 : 1)
-            }
+            END { exit(found ? 0 : 1) }
           ' "$LDSH"; then
-
             echo "[OK] PGO_CLANG_DATA already follows BUG_TABLE"
-
           else
-
             echo "[WARN] PGO_CLANG_DATA is not immediately after BUG_TABLE"
             echo "[INFO] Fixing RW_DATA_SECTION"
 
             TMP_LDSH="${LDSH}.pgo.tmp"
 
             awk '
-              BEGIN {
-                in_rw=0
-                pending=0
-                inserted=0
-              }
-
-              /^#define RW_DATA_SECTION/ {
-                in_rw=1
-              }
-
-              in_rw && /^#define / && $0 !~ /^#define RW_DATA_SECTION/ {
-                in_rw=0
-              }
-
+              BEGIN { in_rw=0; pending=0; inserted=0 }
+              /^#define RW_DATA_SECTION/ { in_rw=1 }
+              in_rw && /^#define / && $0 !~ /^#define RW_DATA_SECTION/ { in_rw=0 }
               pending {
                 if ($0 ~ /PGO_CLANG_DATA/) {
                   print
@@ -427,26 +385,17 @@ jobs:
                   pending=0
                   next
                 }
-
-                print "\tPGO_CLANG_DATA"
+                print "  PGO_CLANG_DATA"
                 inserted=1
                 pending=0
               }
-
-              {
-                print
-              }
-
-              in_rw && /BUG_TABLE/ {
-                pending=1
-              }
-
+              { print }
+              in_rw && /BUG_TABLE/ { pending=1 }
               END {
                 if (pending) {
-                  print "\tPGO_CLANG_DATA"
+                  print "  PGO_CLANG_DATA"
                   inserted=1
                 }
-
                 if (!inserted) {
                   exit 1
                 }
@@ -454,9 +403,7 @@ jobs:
             ' "$LDSH" > "$TMP_LDSH"
 
             mv "$TMP_LDSH" "$LDSH"
-
             echo "[OK] PGO_CLANG_DATA inserted after BUG_TABLE"
-
           fi
 
           # --------------------------------------------------------
@@ -466,41 +413,22 @@ jobs:
           echo "[3] Final BUG_TABLE -> PGO_CLANG_DATA check"
 
           if awk '
-            /^#define RW_DATA_SECTION/ {
-              in_rw=1
-              next
-            }
-
-            in_rw && /^#define / {
-              exit
-            }
-
+            /^#define RW_DATA_SECTION/ { in_rw=1; next }
+            in_rw && /^#define / { exit }
             in_rw && /BUG_TABLE/ {
               if (getline nextline > 0 && nextline ~ /PGO_CLANG_DATA/) {
                 found=1
               }
               exit
             }
-
-            END {
-              exit(found ? 0 : 1)
-            }
+            END { exit(found ? 0 : 1) }
           ' "$LDSH"; then
-
             echo "[OK] BUG_TABLE -> PGO_CLANG_DATA"
-
           else
-
             echo "[FAIL] PGO_CLANG_DATA is not immediately after BUG_TABLE"
             echo
-            grep -n \
-              -B5 \
-              -A10 \
-              "BUG_TABLE" \
-              "$LDSH" || true
-
+            grep -n -B5 -A10 "BUG_TABLE" "$LDSH" || true
             exit 1
-
           fi
 
           # --------------------------------------------------------
@@ -509,17 +437,11 @@ jobs:
           echo
           echo "[4] Verify vmlinux.lds.S has no manual PGO marker"
 
-          if grep -q \
-              "^#define PGO_CLANG_LINKER$" \
-              "$ARM64_LDS_S"; then
-
+          if grep -q "^#define PGO_CLANG_LINKER$" "$ARM64_LDS_S"; then
             echo "[FAIL] PGO_CLANG_LINKER must not be defined in vmlinux.lds.S"
             exit 1
-
           else
-
             echo "[OK] No manual PGO linker marker in vmlinux.lds.S"
-
           fi
 
           # --------------------------------------------------------
@@ -529,15 +451,11 @@ jobs:
           echo "[5] Verify arch/arm64/kernel/Makefile unchanged"
 
           if git diff --quiet -- "$ARM64_LDS_MK"; then
-
             echo "[OK] arch/arm64/kernel/Makefile unchanged"
-
           else
-
             echo "[FAIL] arch/arm64/kernel/Makefile was modified"
             git diff -- "$ARM64_LDS_MK"
             exit 1
-
           fi
 
           # --------------------------------------------------------
@@ -546,20 +464,12 @@ jobs:
           echo
           echo "[6] Final PGO linker context"
 
-          grep -n \
-            -B5 \
-            -A15 \
-            "BUG_TABLE" \
-            "$LDSH" || true
+          grep -n -B5 -A15 "BUG_TABLE" "$LDSH" || true
 
           echo
           echo "PGO linker condition:"
 
-          grep -n \
-            -B3 \
-            -A20 \
-            "#if defined(CONFIG_PGO_CLANG)" \
-            "$LDSH" || true
+          grep -n -B3 -A20 "#if defined(CONFIG_PGO_CLANG)" "$LDSH" || true
 
           echo
           echo "============================================================"
@@ -581,247 +491,147 @@ jobs:
 
           echo
           echo "[1] Root Makefile"
-
-          if grep -n \
-              "CFLAGS_PGO_CLANG" \
-              Makefile; then
-
+          if grep -n "CFLAGS_PGO_CLANG" Makefile; then
             echo "[OK] CFLAGS_PGO_CLANG found"
-
           else
-
             echo "[FAIL] CFLAGS_PGO_CLANG missing"
             FAIL=1
-
           fi
 
           echo
           echo "[2] arch/Kconfig"
-
-          if grep -n \
-              'source "kernel/pgo/Kconfig"' \
-              arch/Kconfig; then
-
+          if grep -n 'source "kernel/pgo/Kconfig"' arch/Kconfig; then
             echo "[OK] kernel/pgo/Kconfig found"
-
           else
-
             echo "[FAIL] kernel/pgo/Kconfig missing"
             FAIL=1
-
           fi
 
           echo
           echo "[3] ARM64 Kconfig"
-
-          if grep -n \
-              "ARCH_SUPPORTS_PGO_CLANG" \
-              arch/arm64/Kconfig; then
-
+          if grep -n "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
             echo "[OK] ARM64 PGO support found"
-
           else
-
             echo "[FAIL] ARM64 PGO support missing"
             FAIL=1
-
           fi
 
           echo
           echo "[4] ARM64 VDSO"
-
-          if grep -n \
-              "PGO_PROFILE := n" \
-              arch/arm64/kernel/vdso/Makefile; then
-
+          if grep -n "PGO_PROFILE := n" arch/arm64/kernel/vdso/Makefile; then
             echo "[OK] VDSO PGO disabled"
-
           else
-
             echo "[FAIL] VDSO PGO setting missing"
             FAIL=1
-
           fi
 
           echo
           echo "[5] kernel/Makefile"
-
-          if grep -n \
-              'obj-\$(CONFIG_PGO_CLANG).*pgo' \
-              kernel/Makefile; then
-
+          if grep -n 'obj-\$(CONFIG_PGO_CLANG).*pgo' kernel/Makefile; then
             echo "[OK] kernel/pgo registered"
-
           else
-
             echo "[FAIL] kernel/pgo not registered"
             FAIL=1
-
           fi
 
           echo
           echo "[6] scripts/Makefile.lib"
-
-          if grep -n \
-              "CFLAGS_PGO_CLANG" \
-              scripts/Makefile.lib; then
-
+          if grep -n "CFLAGS_PGO_CLANG" scripts/Makefile.lib; then
             echo "[OK] PGO flags integrated"
-
           else
-
             echo "[FAIL] PGO flags missing"
             FAIL=1
-
           fi
 
           echo
           echo "[7] vmlinux linker"
-
-          if grep -n \
-              "__llvm_prf_data" \
-              include/asm-generic/vmlinux.lds.h; then
-
+          if grep -n "__llvm_prf_data" include/asm-generic/vmlinux.lds.h; then
             echo "[OK] LLVM PGO linker sections found"
-
           else
-
             echo "[FAIL] LLVM PGO linker sections missing"
             FAIL=1
-
           fi
 
           echo
           echo "[8] BUG_TABLE -> PGO_CLANG_DATA"
-
           if awk '
-            /^#define RW_DATA_SECTION/ {
-              in_rw=1
-              next
-            }
-
-            in_rw && /^#define / {
-              exit
-            }
-
+            /^#define RW_DATA_SECTION/ { in_rw=1; next }
+            in_rw && /^#define / { exit }
             in_rw && /BUG_TABLE/ {
               if (getline nextline > 0 && nextline ~ /PGO_CLANG_DATA/) {
                 found=1
               }
               exit
             }
-
-            END {
-              exit(found ? 0 : 1)
-            }
+            END { exit(found ? 0 : 1) }
           ' include/asm-generic/vmlinux.lds.h; then
-
             echo "[OK] BUG_TABLE -> PGO_CLANG_DATA"
-
           else
-
             echo "[FAIL] PGO_CLANG_DATA placement incorrect"
             FAIL=1
-
           fi
 
           echo
           echo "[9] PGO linker marker"
-
-          if grep -n \
-              "^#define PGO_CLANG_LINKER$" \
-              arch/arm64/kernel/vmlinux.lds.S; then
-
+          if grep -n "^#define PGO_CLANG_LINKER$" arch/arm64/kernel/vmlinux.lds.S; then
             echo "[FAIL] PGO_CLANG_LINKER must not be defined directly"
             FAIL=1
-
           else
-
             echo "[OK] No manual PGO_CLANG_LINKER definition"
-
           fi
 
           echo
           echo "[10] PGO linker condition"
-
-          if grep -n \
-              '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
+          if grep -n '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
               include/asm-generic/vmlinux.lds.h; then
-
             echo "[OK] PGO linker condition correct"
-
           else
-
             echo "[FAIL] PGO linker condition incorrect"
             FAIL=1
-
           fi
 
           echo
           echo "[11] kernel/pgo files"
-
           if [ -f kernel/pgo/Kconfig ] && \
              [ -f kernel/pgo/Makefile ] && \
              [ -f kernel/pgo/fs.c ] && \
              [ -f kernel/pgo/instrument.c ] && \
              [ -f kernel/pgo/pgo.h ]; then
-
             echo "[OK] kernel/pgo files complete"
-
           else
-
             echo "[FAIL] kernel/pgo files incomplete"
             FAIL=1
-
           fi
 
           echo
           echo "[12] Protected files"
-
           if git diff --quiet -- arch/arm64/Makefile; then
-
             echo "[OK] arch/arm64/Makefile unchanged"
-
           else
-
             echo "[FAIL] arch/arm64/Makefile was modified"
             FAIL=1
-
           fi
 
           if git diff --quiet -- arch/arm64/kernel/Makefile; then
-
             echo "[OK] arch/arm64/kernel/Makefile unchanged"
-
           else
-
             echo "[FAIL] arch/arm64/kernel/Makefile was modified"
             FAIL=1
-
           fi
 
-          if git diff --quiet -- \
-              drivers/firmware/efi/libstub/Makefile; then
-
+          if git diff --quiet -- drivers/firmware/efi/libstub/Makefile; then
             echo "[OK] EFI libstub Makefile unchanged"
-
           else
-
             echo "[FAIL] EFI libstub Makefile was modified"
             FAIL=1
-
           fi
 
           echo
           echo "============================================================"
-
           if [ "$FAIL" -ne 0 ]; then
-
             echo "PGO INTEGRATION: FAILED"
             exit 1
-
           fi
-
           echo "PGO INTEGRATION: OK"
 
       # ============================================================
@@ -859,56 +669,31 @@ jobs:
           echo "CHECK PGO CONFIGURATION"
           echo "============================================================"
 
-          if grep -q \
-              "^CONFIG_PGO_CLANG=y$" \
-              out/.config; then
-
+          if grep -q "^CONFIG_PGO_CLANG=y$" out/.config; then
             echo "[OK] CONFIG_PGO_CLANG=y"
-
           else
-
             echo "[FAIL] CONFIG_PGO_CLANG is not enabled"
-
-            grep -E \
-              "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-              out/.config || true
-
+            grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config || true
             exit 1
-
           fi
 
-          if grep -q \
-              "^CONFIG_ARCH_SUPPORTS_PGO_CLANG=y$" \
-              out/.config; then
-
+          if grep -q "^CONFIG_ARCH_SUPPORTS_PGO_CLANG=y$" out/.config; then
             echo "[OK] CONFIG_ARCH_SUPPORTS_PGO_CLANG=y"
-
           else
-
             echo "[FAIL] CONFIG_ARCH_SUPPORTS_PGO_CLANG is not enabled"
             exit 1
-
           fi
 
-          if grep -q \
-              "^CONFIG_DEBUG_FS=y$" \
-              out/.config; then
-
+          if grep -q "^CONFIG_DEBUG_FS=y$" out/.config; then
             echo "[OK] CONFIG_DEBUG_FS=y"
-
           else
-
             echo "[FAIL] CONFIG_DEBUG_FS is required for PGO debugfs"
             exit 1
-
           fi
 
           echo
           echo "Relevant configuration:"
-
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-            out/.config
+          grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config
 
       # ============================================================
       # 11. DEBUG PGO LINKER PREPROCESSING
@@ -938,7 +723,6 @@ jobs:
 
           {
             echo "===== arch/arm64/kernel/Makefile ====="
-
             if git diff --quiet -- arch/arm64/kernel/Makefile; then
               echo "[OK] File unchanged"
             else
@@ -947,33 +731,15 @@ jobs:
 
             echo
             echo "===== BUG_TABLE -> PGO_CLANG_DATA ====="
-
-            grep -n \
-              -B5 \
-              -A12 \
-              "BUG_TABLE" \
-              include/asm-generic/vmlinux.lds.h \
-              || true
+            grep -n -B5 -A12 "BUG_TABLE" include/asm-generic/vmlinux.lds.h || true
 
             echo
             echo "===== PGO_CLANG_DATA DEFINITION ====="
-
-            grep -n \
-              -B3 \
-              -A35 \
-              "PGO_CLANG_DATA" \
-              include/asm-generic/vmlinux.lds.h \
-              || true
+            grep -n -B3 -A35 "PGO_CLANG_DATA" include/asm-generic/vmlinux.lds.h || true
 
             echo
             echo "===== PGO_CLANG_DATA REFERENCES ====="
-
-            grep -n \
-              -B8 \
-              -A12 \
-              "PGO_CLANG_DATA" \
-              include/asm-generic/vmlinux.lds.h \
-              || true
+            grep -n -B8 -A12 "PGO_CLANG_DATA" include/asm-generic/vmlinux.lds.h || true
 
           } | tee "$DEBUG_DIR/source-config.txt"
 
@@ -987,20 +753,11 @@ jobs:
 
           {
             echo "===== out/.config ====="
-
-            grep -n \
-              -E \
-              '^CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)=' \
-              out/.config \
-              || true
+            grep -n -E '^CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)=' out/.config || true
 
             echo
             echo "===== include/linux/kconfig.h ====="
-
-            grep -n \
-              "CONFIG_PGO_CLANG" \
-              include/linux/kconfig.h \
-              || true
+            grep -n "CONFIG_PGO_CLANG" include/linux/kconfig.h || true
 
           } | tee "$DEBUG_DIR/pgo-config-status.txt"
 
@@ -1041,26 +798,11 @@ jobs:
 
           {
             echo "===== CONFIG HEADER LOCATIONS ====="
-
-            find out/include include \
-              -type f \
-              \( \
-                -name autoconf.h \
-                -o -name auto.conf \
-              \) \
-              -print \
-              2>/dev/null \
-              | sort
+            find out/include include -type f \( -name autoconf.h -o -name auto.conf \) -print 2>/dev/null | sort
 
             echo
             echo "===== PGO CONFIG DEFINITIONS ====="
-
-            grep -R -n \
-              -E \
-              '#define[[:space:]]+CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)[[:space:]]+1' \
-              out/include \
-              include \
-              2>/dev/null || true
+            grep -R -n -E '#define[[:space:]]+CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG)[[:space:]]+1' out/include include 2>/dev/null || true
 
           } | tee "$DEBUG_DIR/pgo-config-definitions.txt"
 
@@ -1074,25 +816,11 @@ jobs:
 
           {
             echo "===== autoconf.h files ====="
-
-            find out/include \
-              -type f \
-              -name autoconf.h \
-              -print \
-              2>/dev/null \
-              | sort
+            find out/include -type f -name autoconf.h -print 2>/dev/null | sort
 
             echo
             echo "===== PGO definitions ====="
-
-            find out/include \
-              -type f \
-              -name autoconf.h \
-              -exec grep -Hn \
-                -E \
-                'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)' \
-                {} \; \
-              2>/dev/null || true
+            find out/include -type f -name autoconf.h -exec grep -Hn -E 'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)' {} \; 2>/dev/null || true
 
           } | tee "$DEBUG_DIR/autoconf-pgo.txt"
 
@@ -1129,8 +857,7 @@ jobs:
             -D__ASSEMBLY__ \
             ../arch/arm64/kernel/vmlinux.lds.S \
             2>/dev/null \
-            | grep -E \
-              'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)|LINKER_SCRIPT' \
+            | grep -E 'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|DEBUG_FS)|LINKER_SCRIPT' \
             | tee "$DEBUG_DIR/preprocessor-macros.txt" \
             || true
 
@@ -1146,14 +873,7 @@ jobs:
 
           {
             echo "===== BUG_TABLE occurrences ====="
-
-            grep -R -n \
-              -B12 \
-              -A20 \
-              "BUG_TABLE" \
-              include/asm-generic/vmlinux.lds.h \
-              arch/arm64 \
-              2>/dev/null || true
+            grep -R -n -B12 -A20 "BUG_TABLE" include/asm-generic/vmlinux.lds.h arch/arm64 2>/dev/null || true
 
           } | tee "$DEBUG_DIR/all-bug-table-context.txt"
 
@@ -1166,22 +886,11 @@ jobs:
           echo "============================================================"
 
           {
-            grep -n \
-              -B10 \
-              -A50 \
-              "define RW_DATA_SECTION" \
-              include/asm-generic/vmlinux.lds.h \
-              2>/dev/null || true
+            grep -n -B10 -A50 "define RW_DATA_SECTION" include/asm-generic/vmlinux.lds.h 2>/dev/null || true
 
             echo
             echo "===== DATA_DATA ====="
-
-            grep -n \
-              -B10 \
-              -A30 \
-              "define DATA_DATA" \
-              include/asm-generic/vmlinux.lds.h \
-              2>/dev/null || true
+            grep -n -B10 -A30 "define DATA_DATA" include/asm-generic/vmlinux.lds.h 2>/dev/null || true
 
           } | tee "$DEBUG_DIR/rw-data-section.txt"
 
@@ -1194,22 +903,11 @@ jobs:
           echo "============================================================"
 
           {
-            grep -n \
-              -B10 \
-              -A20 \
-              "PGO_CLANG_DATA" \
-              include/asm-generic/vmlinux.lds.h \
-              2>/dev/null || true
+            grep -n -B10 -A20 "PGO_CLANG_DATA" include/asm-generic/vmlinux.lds.h 2>/dev/null || true
 
             echo
             echo "===== ALL REPOSITORY REFERENCES ====="
-
-            grep -R -n \
-              "PGO_CLANG_DATA" \
-              include \
-              arch \
-              kernel \
-              2>/dev/null || true
+            grep -R -n "PGO_CLANG_DATA" include arch kernel 2>/dev/null || true
 
           } | tee "$DEBUG_DIR/pgo-clang-data-usage.txt"
 
@@ -1269,28 +967,15 @@ jobs:
 
           {
             echo "===== LLVM PGO symbols ====="
-
-            grep -n \
-              "__llvm_prf_" \
-              out/arch/arm64/kernel/vmlinux.lds \
-              || true
+            grep -n "__llvm_prf_" out/arch/arm64/kernel/vmlinux.lds || true
 
             echo
             echo "===== BUG_TABLE ====="
-
-            grep -n \
-              "BUG_TABLE\|__bug_table" \
-              out/arch/arm64/kernel/vmlinux.lds \
-              || true
+            grep -n "BUG_TABLE\|__bug_table" out/arch/arm64/kernel/vmlinux.lds || true
 
             echo
             echo "===== DATA ====="
-
-            grep -n \
-              "\.data" \
-              out/arch/arm64/kernel/vmlinux.lds \
-              | head -n 20 \
-              || true
+            grep -n "\.data" out/arch/arm64/kernel/vmlinux.lds | head -n 20 || true
 
           } | tee "$DEBUG_DIR/pgo-symbols.txt"
 
@@ -1303,14 +988,9 @@ jobs:
           echo "============================================================"
 
           {
-            LINE=$(grep -n \
-              '\.data :' \
-              out/arch/arm64/kernel/vmlinux.lds \
-              | head -n 1 \
-              | cut -d: -f1 || true)
+            LINE=$(grep -n "\.data :" out/arch/arm64/kernel/vmlinux.lds | head -n 1 | cut -d: -f1 || true)
 
             if [ -n "$LINE" ]; then
-
               START=$((LINE - 3))
               END=$((LINE + 12))
 
@@ -1318,9 +998,7 @@ jobs:
                 START=1
               fi
 
-              sed -n "${START},${END}p" \
-                out/arch/arm64/kernel/vmlinux.lds
-
+              sed -n "${START},${END}p" out/arch/arm64/kernel/vmlinux.lds
             fi
 
           } | tee "$DEBUG_DIR/generated-data-context.txt"
@@ -1333,46 +1011,21 @@ jobs:
           echo "[13] PGO LINKER RESULT"
           echo "============================================================"
 
-          if grep -q \
-              "__llvm_prf_data_start" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_data_end" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_cnts_start" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_cnts_end" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_names_start" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_names_end" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_vals_start" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_vals_end" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_vnds_start" \
-              out/arch/arm64/kernel/vmlinux.lds && \
-             grep -q \
-              "__llvm_prf_vnds_end" \
-              out/arch/arm64/kernel/vmlinux.lds; then
-
+          if grep -q "__llvm_prf_data_start" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_data_end" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_cnts_start" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_cnts_end" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_names_start" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_names_end" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_vals_start" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_vals_end" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_vnds_start" out/arch/arm64/kernel/vmlinux.lds && \
+             grep -q "__llvm_prf_vnds_end" out/arch/arm64/kernel/vmlinux.lds; then
             echo "[OK] ALL LLVM PGO LINKER SYMBOLS FOUND"
-
           else
-
             echo "[FAIL] LLVM PGO linker symbols are missing"
-            echo
             echo "This is a diagnostic failure only."
             echo "No kernel build is started."
-
           fi
 
           # --------------------------------------------------------
@@ -1418,12 +1071,8 @@ jobs:
           echo "[15] EXTRACT vmlinux.lds COMMAND"
           echo "============================================================"
 
-          grep -n \
-            -E \
-            'vmlinux\.lds(\.S)?|LINKER_SCRIPT|CPPFLAGS_vmlinux.lds|clang|cpp' \
-            "$LOG" \
-            | tee "$DEBUG_DIR/relevant-lines.txt" \
-            || true
+          grep -n -E 'vmlinux\.lds(\.S)?|LINKER_SCRIPT|CPPFLAGS_vmlinux.lds|clang|cpp' "$LOG" \
+            | tee "$DEBUG_DIR/relevant-lines.txt" || true
 
           # --------------------------------------------------------
           # 16. EXTRACT PGO DEFINES
@@ -1433,12 +1082,8 @@ jobs:
           echo "[16] PGO DEFINES"
           echo "============================================================"
 
-          grep -n \
-            -E \
-            'CONFIG_PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|-DLINKER_SCRIPT' \
-            "$LOG" \
-            | tee "$DEBUG_DIR/pgo-defines.txt" \
-            || true
+          grep -n -E 'CONFIG_PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|-DLINKER_SCRIPT' "$LOG" \
+            | tee "$DEBUG_DIR/pgo-defines.txt" || true
 
           # --------------------------------------------------------
           # 17. KBUILD VARIABLES
@@ -1457,10 +1102,8 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
             2>/dev/null \
-            | grep -E \
-              '^(CPPFLAGS_vmlinux\.lds|KBUILD_CPPFLAGS|cppflags-y)[[:space:]]*=' \
-            | tee "$DEBUG_DIR/kbuild-variables.txt" \
-            || true
+            | grep -E '^(CPPFLAGS_vmlinux\.lds|KBUILD_CPPFLAGS|cppflags-y)[[:space:]]*=' \
+            | tee "$DEBUG_DIR/kbuild-variables.txt" || true
 
           # --------------------------------------------------------
           # 18. ENVIRONMENT
@@ -1489,11 +1132,7 @@ jobs:
           echo "[19] DEBUG FILE LIST"
           echo "============================================================"
 
-          find "$DEBUG_DIR" \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f\n' \
-            | sort
+          find "$DEBUG_DIR" -maxdepth 1 -type f -printf '%f\n' | sort
 
           echo
           echo "============================================================"
@@ -1550,14 +1189,10 @@ jobs:
           command -v llvm-profdata
 
           if llvm-profdata merge --help >/dev/null 2>&1; then
-
             echo "[OK] llvm-profdata merge supported"
-
           else
-
             echo "[FAIL] llvm-profdata merge failed"
             exit 1
-
           fi
 
           echo
@@ -1565,12 +1200,7 @@ jobs:
           echo "TEST -fprofile-generate"
           echo "============================================================"
 
-          clang \
-            -O2 \
-            -fprofile-generate \
-            -c pgo_test.c \
-            -o pgo_generate.o
-
+          clang -O2 -fprofile-generate -c pgo_test.c -o pgo_generate.o
           echo "[OK] -fprofile-generate supported"
 
           echo
@@ -1578,12 +1208,7 @@ jobs:
           echo "TEST -fprofile-instr-generate"
           echo "============================================================"
 
-          clang \
-            -O2 \
-            -fprofile-instr-generate \
-            -c pgo_test.c \
-            -o pgo_instr.o
-
+          clang -O2 -fprofile-instr-generate -c pgo_test.c -o pgo_instr.o
           echo "[OK] -fprofile-instr-generate supported"
 
           echo
@@ -1591,24 +1216,12 @@ jobs:
           echo "TEST -fprofile-instr-use"
           echo "============================================================"
 
-          clang \
-            -O2 \
-            -fprofile-instr-use=/tmp/nonexistent.profdata \
-            -c pgo_test.c \
-            -o /dev/null \
-            2>pgo-use-error.log \
-            || true
+          clang -O2 -fprofile-instr-use=/tmp/nonexistent.profdata -c pgo_test.c -o /dev/null 2>pgo-use-error.log || true
 
-          if grep -qi \
-              "unknown argument" \
-              pgo-use-error.log; then
-
+          if grep -qi "unknown argument" pgo-use-error.log; then
             echo "[FAIL] -fprofile-instr-use not recognized"
-
             cat pgo-use-error.log
-
             exit 1
-
           fi
 
           echo "[OK] -fprofile-instr-use recognized"
@@ -1659,26 +1272,16 @@ jobs:
           echo "VERIFY PGO COMPILER FLAGS"
           echo "============================================================"
 
-          if grep -q \
-              -- "-fprofile-generate" \
-              pgo-build.log; then
-
+          if grep -q -- "-fprofile-generate" pgo-build.log; then
             echo "[OK] -fprofile-generate found in kernel build"
-
           else
-
             echo "[FAIL] -fprofile-generate not found in kernel build"
             exit 1
-
           fi
 
           echo
           echo "Number of occurrences:"
-
-          grep -o \
-            -- "-fprofile-generate" \
-            pgo-build.log \
-            | wc -l
+          grep -o -- "-fprofile-generate" pgo-build.log | wc -l
 
       # ============================================================
       # 15. VERIFY LLVM PGO SECTIONS IN OBJECTS
@@ -1696,59 +1299,36 @@ jobs:
 
           FOUND=0
 
-          for OBJ in \
-            out/kernel/pgo/fs.o \
-            out/kernel/pgo/instrument.o
-          do
-
+          for OBJ in out/kernel/pgo/fs.o out/kernel/pgo/instrument.o; do
             echo
             echo "------------------------------------------------------------"
             echo "OBJECT: $OBJ"
             echo "------------------------------------------------------------"
 
             if [ ! -f "$OBJ" ]; then
-
               echo "[WARN] Object not found"
               continue
-
             fi
 
             echo
             echo "--- ELF SECTIONS ---"
-
-            llvm-readelf -SW "$OBJ" 2>/dev/null | \
-              grep -E \
-                'llvm_prf|profile' \
-              || true
+            llvm-readelf -SW "$OBJ" 2>/dev/null | grep -E 'llvm_prf|profile' || true
 
             echo
             echo "--- LLVM PGO SYMBOLS ---"
+            llvm-nm -a "$OBJ" 2>/dev/null | grep -E '__llvm_prf_' || true
 
-            llvm-nm -a "$OBJ" 2>/dev/null | \
-              grep -E \
-                '__llvm_prf_' \
-              || true
-
-            if llvm-readelf -SW "$OBJ" 2>/dev/null | \
-                grep -qE 'llvm_prf|profile'; then
-
+            if llvm-readelf -SW "$OBJ" 2>/dev/null | grep -qE 'llvm_prf|profile'; then
               FOUND=1
-
             fi
-
           done
 
           echo
           echo "============================================================"
-
           if [ "$FOUND" -eq 1 ]; then
-
             echo "[OK] LLVM PGO sections confirmed in object files"
-
           else
-
             echo "[WARN] No LLVM PGO sections found in inspected objects"
-
           fi
 
       # ============================================================
@@ -1765,41 +1345,25 @@ jobs:
           echo "============================================================"
 
           if [ ! -f out/vmlinux ]; then
-
             echo "[FAIL] out/vmlinux not found"
             exit 1
-
           fi
 
           echo
           echo "LLVM PGO sections:"
-
-          llvm-readelf -SW out/vmlinux | \
-            grep -E \
-              'llvm_prf|profile' \
-            || true
+          llvm-readelf -SW out/vmlinux | grep -E 'llvm_prf|profile' || true
 
           echo
           echo "LLVM PGO symbols:"
-
-          llvm-nm -a out/vmlinux 2>/dev/null | \
-            grep -E \
-              '__llvm_prf_' \
-            || true
+          llvm-nm -a out/vmlinux 2>/dev/null | grep -E '__llvm_prf_' || true
 
           echo
           echo "============================================================"
-
-          if llvm-readelf -SW out/vmlinux | \
-              grep -qE 'llvm_prf|profile'; then
-
+          if llvm-readelf -SW out/vmlinux | grep -qE 'llvm_prf|profile'; then
             echo "[OK] LLVM PGO sections found in vmlinux"
-
           else
-
             echo "[FAIL] No LLVM PGO sections found in vmlinux"
             exit 1
-
           fi
 
       # ============================================================
@@ -1809,17 +1373,13 @@ jobs:
         run: |
           set -e
 
-          cp \
-            out/.config \
-            pgo-final-defconfig
+          cp out/.config pgo-final-defconfig
 
           echo "============================================================"
           echo "FINAL PGO CONFIGURATION"
           echo "============================================================"
 
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-            out/.config
+          grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config
 
       # ============================================================
       # 18. UPLOAD BUILD ARTIFACTS
@@ -1871,64 +1431,35 @@ jobs:
 
           echo
           echo "PGO configuration:"
-
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-            out/.config \
-            2>/dev/null \
-            || true
+          grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config 2>/dev/null || true
 
           echo
           echo "PGO flags:"
-
           if [ -f pgo-build.log ]; then
-
             echo "-fprofile-generate occurrences:"
-
-            grep -o \
-              -- "-fprofile-generate" \
-              pgo-build.log \
-              | wc -l \
-              || true
-
+            grep -o -- "-fprofile-generate" pgo-build.log | wc -l || true
           fi
 
           echo
           echo "PGO linker section placement:"
-
           if awk '
-            /^#define RW_DATA_SECTION/ {
-              in_rw=1
-              next
-            }
-
-            in_rw && /^#define / {
-              exit
-            }
-
+            /^#define RW_DATA_SECTION/ { in_rw=1; next }
+            in_rw && /^#define / { exit }
             in_rw && /BUG_TABLE/ {
               if (getline nextline > 0 && nextline ~ /PGO_CLANG_DATA/) {
                 found=1
               }
               exit
             }
-
-            END {
-              exit(found ? 0 : 1)
-            }
+            END { exit(found ? 0 : 1) }
           ' include/asm-generic/vmlinux.lds.h; then
-
             echo "[OK] BUG_TABLE -> PGO_CLANG_DATA"
-
           else
-
             echo "[FAIL] PGO_CLANG_DATA placement invalid"
-
           fi
 
           echo
           echo "Protected linker Makefiles:"
-
           if git diff --quiet -- arch/arm64/kernel/Makefile; then
             echo "[OK] arch/arm64/kernel/Makefile unchanged"
           else
@@ -1943,33 +1474,18 @@ jobs:
 
           echo
           echo "PGO linker condition:"
-
-          grep -n \
-            "LINKER_SCRIPT" \
-            include/asm-generic/vmlinux.lds.h \
-            2>/dev/null \
-            || true
+          grep -n "LINKER_SCRIPT" include/asm-generic/vmlinux.lds.h 2>/dev/null || true
 
           echo
           echo "DebugFS:"
-
-          grep -E \
-            "^CONFIG_DEBUG_FS=" \
-            out/.config \
-            2>/dev/null \
-            || true
+          grep -E "^CONFIG_DEBUG_FS=" out/.config 2>/dev/null || true
 
           echo
           echo "Final vmlinux:"
-
           if [ -f out/vmlinux ]; then
-
             ls -lh out/vmlinux
-
           else
-
             echo "not built"
-
           fi
 
           echo
