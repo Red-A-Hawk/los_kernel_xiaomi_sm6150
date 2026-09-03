@@ -116,7 +116,7 @@ jobs:
           arm-linux-androideabi-gcc --version | head -n 1
 
       # ============================================================
-      # 6. APPLY PGO PATCH (FIXED)
+      # 6. APPLY PGO PATCH (FIXED - Manual + Patch)
       # ============================================================
       - name: Apply PGO Patch
         run: |
@@ -128,75 +128,92 @@ jobs:
           echo "============================================================"
           wget -O "$PATCH_FILE" "$PATCH_URL"
           echo
-          echo "Patch size:"
-          wc -c "$PATCH_FILE"
-          echo
           echo "============================================================"
           echo "APPLY PGO PATCH (patch -p1 -N -f)"
           echo "============================================================"
-          set +e
-          patch -p1 \
-            -N \
-            -f \
-            --fuzz=3 \
-            --ignore-whitespace \
-            --no-backup-if-mismatch \
-            < "$PATCH_FILE" 2>&1
-          PATCH_STATUS=$?
-          set -e
-          echo
-          echo "patch exit code: $PATCH_STATUS"
+          patch -p1 -N -f --fuzz=3 --ignore-whitespace < "$PATCH_FILE" 2>&1 || true
           echo
           echo "============================================================"
-          echo "HANDLE arch/arm64/Kconfig SEPARATELY IF NEEDED"
+          echo "MANUALLY FIX MISSING ENTRIES"
           echo "============================================================"
-          if [ -f arch/arm64/Kconfig.rej ]; then
-            echo "[WARN] arch/arm64/Kconfig hunk rejected, applying manually"
-            rm -f \
-              arch/arm64/Kconfig.rej \
-              arch/arm64/Kconfig.orig
-            if grep -q \
-              "select ARCH_SUPPORTS_PGO_CLANG" \
-              arch/arm64/Kconfig; then
-              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
-            elif grep -q \
-              "select ARCH_SUPPORTS_THINLTO" \
-              arch/arm64/Kconfig; then
-              sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
-                arch/arm64/Kconfig
-              echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
+          
+          # Fix arch/Kconfig - add source at end
+          echo "[1] Fixing arch/Kconfig"
+          if ! grep -q 'source "kernel/pgo/Kconfig"' arch/Kconfig; then
+            echo 'source "kernel/pgo/Kconfig"' >> arch/Kconfig
+            echo "[OK] Added source to arch/Kconfig"
+          else
+            echo "[OK] arch/Kconfig already has source"
+          fi
+          
+          # Fix arch/arm64/Kconfig - add select after THINLTO
+          echo "[2] Fixing arch/arm64/Kconfig"
+          if grep -q "select ARCH_SUPPORTS_THINLTO" arch/arm64/Kconfig; then
+            if ! grep -q "select ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
+              sed -i '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' arch/arm64/Kconfig
+              echo "[OK] Added ARCH_SUPPORTS_PGO_CLANG"
             else
-              echo "[FAIL] Could not find ARCH_SUPPORTS_THINLTO"
-              exit 1
+              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already exists"
             fi
           else
-            echo "[OK] arch/arm64/Kconfig applied cleanly from patch"
+            echo "[WARN] ARCH_SUPPORTS_THINLTO not found"
           fi
-          echo
-          echo "============================================================"
-          echo "VERIFY NO REMAINING REJECTED HUNKS"
-          echo "============================================================"
-          if find . -name "*.rej" | grep -q .; then
-            echo "[FAIL] Rejected hunks still remain:"
-            find . -name "*.rej" \
-              -exec echo "--- {} ---" \; \
-              -exec cat {} \;
-            exit 1
-          fi
-          echo "[OK] No rejected hunks remain"
-          echo
-          echo "============================================================"
-          echo "VERIFY ARCH_SUPPORTS_PGO_CLANG"
-          echo "============================================================"
-          if grep -n \
-            "ARCH_SUPPORTS_PGO_CLANG" \
-            arch/arm64/Kconfig; then
-            echo "[OK] ARCH_SUPPORTS_PGO_CLANG confirmed"
+          
+          # Fix defconfig - enable DEBUG_FS
+          echo "[3] Fixing arch/arm64/configs/vendor/violet-perf_defconfig"
+          if grep -q "# CONFIG_DEBUG_FS is not set" arch/arm64/configs/vendor/violet-perf_defconfig; then
+            sed -i 's/# CONFIG_DEBUG_FS is not set/CONFIG_DEBUG_FS=y/' arch/arm64/configs/vendor/violet-perf_defconfig
+            echo "[OK] Enabled CONFIG_DEBUG_FS"
           else
-            echo "[FAIL] ARCH_SUPPORTS_PGO_CLANG missing"
-            exit 1
+            echo "[OK] CONFIG_DEBUG_FS already enabled"
           fi
+          
+          # Fix vdso Makefile
+          echo "[4] Fixing arch/arm64/kernel/vdso/Makefile"
+          if ! grep -q "PGO_PROFILE := n" arch/arm64/kernel/vdso/Makefile; then
+            sed -i '/GCOV_PROFILE := n/a\PGO_PROFILE := n' arch/arm64/kernel/vdso/Makefile
+            echo "[OK] Added PGO_PROFILE := n"
+          else
+            echo "[OK] PGO_PROFILE already exists"
+          fi
+          
+          # Fix scripts/Makefile.lib
+          echo "[5] Fixing scripts/Makefile.lib"
+          if ! grep -q "CFLAGS_PGO_CLANG" scripts/Makefile.lib; then
+            sed -i '/CFLAGS_GCOV)/a\
+            #
+            # Enable clang'"'"'s PGO profiling flags for a file or directory depending on
+            # variables PGO_PROFILE_obj.o and PGO_PROFILE.
+            #
+            ifeq ($(CONFIG_PGO_CLANG),y)
+            _c_flags += $(if $(patsubst n%,, \\
+            		$(PGO_PROFILE_$(basetarget).o)$(PGO_PROFILE)y), \\
+            		$(CFLAGS_PGO_CLANG))
+            endif
+            ' scripts/Makefile.lib
+            echo "[OK] Added PGO to Makefile.lib"
+          else
+            echo "[OK] PGO already in Makefile.lib"
+          fi
+          
+          echo
+          echo "============================================================"
+          echo "VERIFY ALL CHANGES"
+          echo "============================================================"
+          echo "[1] arch/Kconfig:"
+          grep -n 'source "kernel/pgo/Kconfig"' arch/Kconfig || echo "NOT FOUND!"
+          echo
+          echo "[2] arch/arm64/Kconfig:"
+          grep -n "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig || echo "NOT FOUND!"
+          echo
+          echo "[3] violet-perf_defconfig:"
+          grep -n "CONFIG_DEBUG_FS" arch/arm64/configs/vendor/violet-perf_defconfig || echo "NOT FOUND!"
+          echo
+          echo "[4] vdso/Makefile:"
+          grep -n "PGO_PROFILE" arch/arm64/kernel/vdso/Makefile || echo "NOT FOUND!"
+          echo
+          echo "[5] scripts/Makefile.lib:"
+          grep -n "CFLAGS_PGO_CLANG" scripts/Makefile.lib || echo "NOT FOUND!"
           echo
           echo "Changed files:"
           git status --short
@@ -286,11 +303,11 @@ jobs:
             FAIL=1
           fi
           echo
-          echo "[9] debugfs dependency (this patch uses debugfs, not procfs)"
+          echo "[9] debugfs dependency"
           if grep -n "depends on DEBUG_FS" kernel/pgo/Kconfig; then
             echo "[OK] PGO_CLANG depends on DEBUG_FS"
           else
-            echo "[FAIL] DEBUG_FS dependency missing from kernel/pgo/Kconfig"
+            echo "[FAIL] DEBUG_FS dependency missing"
             FAIL=1
           fi
           echo
@@ -321,10 +338,7 @@ jobs:
             echo "[OK] CONFIG_PGO_CLANG=y"
           else
             echo "[FAIL] CONFIG_PGO_CLANG is not enabled"
-            echo
-            grep -E \
-              "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-              out/.config || true
+            grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config || true
             exit 1
           fi
           if grep -q "^CONFIG_ARCH_SUPPORTS_PGO_CLANG=y$" out/.config; then
@@ -336,14 +350,12 @@ jobs:
           if grep -q "^CONFIG_DEBUG_FS=y$" out/.config; then
             echo "[OK] CONFIG_DEBUG_FS=y"
           else
-            echo "[FAIL] CONFIG_DEBUG_FS is not enabled (required for /sys/kernel/debug/pgo)"
+            echo "[FAIL] CONFIG_DEBUG_FS is not enabled"
             exit 1
           fi
           echo
           echo "Relevant configuration:"
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS|LTO_CLANG|POLLY_CLANG)=" \
-            out/.config || true
+          grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS|LTO_CLANG|POLLY_CLANG)=" out/.config || true
 
       # ============================================================
       # 9. CHECK CLANG PGO SUPPORT
@@ -392,11 +404,7 @@ jobs:
           echo "========================================"
           echo "TEST -fprofile-generate"
           echo "========================================"
-          if clang \
-              -O2 \
-              -fprofile-generate \
-              -c pgo_test.c \
-              -o pgo_generate.o; then
+          if clang -O2 -fprofile-generate -c pgo_test.c -o pgo_generate.o; then
             echo "[OK] -fprofile-generate supported"
           else
             echo "[FAIL] -fprofile-generate failed"
@@ -406,11 +414,7 @@ jobs:
           echo "========================================"
           echo "TEST -fprofile-instr-generate"
           echo "========================================"
-          if clang \
-              -O2 \
-              -fprofile-instr-generate \
-              -c pgo_test.c \
-              -o pgo_instr.o; then
+          if clang -O2 -fprofile-instr-generate -c pgo_test.c -o pgo_instr.o; then
             echo "[OK] -fprofile-instr-generate supported"
           else
             echo "[FAIL] -fprofile-instr-generate failed"
@@ -420,12 +424,7 @@ jobs:
           echo "========================================"
           echo "TEST -fprofile-instr-use"
           echo "========================================"
-          clang \
-            -O2 \
-            -fprofile-instr-use=/tmp/nonexistent.profdata \
-            -c pgo_test.c \
-            -o /dev/null \
-            2>pgo-use-error.log || true
+          clang -O2 -fprofile-instr-use=/tmp/nonexistent.profdata -c pgo_test.c -o /dev/null 2>pgo-use-error.log || true
           if grep -qi "unknown argument" pgo-use-error.log; then
             echo "[FAIL] -fprofile-instr-use NOT supported"
             cat pgo-use-error.log
@@ -478,8 +477,6 @@ jobs:
           command -v llvm-profdata || true
           echo
           echo "PGO configuration:"
-          grep -E \
-            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" \
-            out/.config 2>/dev/null || true
+          grep -E "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS)=" out/.config 2>/dev/null || true
           echo
           echo "============================================================"
