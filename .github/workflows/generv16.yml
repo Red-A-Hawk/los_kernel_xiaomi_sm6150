@@ -393,7 +393,7 @@ jobs:
 
           echo "[OK] Top-level Makefile modified"
 
-      # ============================================================
+            # ============================================================
       # 12. MODIFY scripts/Makefile.lib
       # ============================================================
       - name: Modify scripts/Makefile.lib
@@ -403,15 +403,27 @@ jobs:
 
           FILE="scripts/Makefile.lib"
 
+          echo "============================================================"
+          echo "MODIFY scripts/Makefile.lib"
+          echo "============================================================"
+
           if grep -qF '$(CFLAGS_PGO_CLANG)' "$FILE"; then
             echo "[OK] PGO flags already exist"
             exit 0
           fi
 
           awk '
-            /^# Address Sanitizer flags/ && !inserted {
+            BEGIN {
+              inserted = 0
+            }
+
+            # Insert immediately after the existing GCOV block.
+            $0 == "endif" && prev_ifeq_gcov {
+              print
+
               print "#"
-              print "# Enable clang'\''s PGO profiling flags."
+              print "# Enable clang'\''s PGO profiling flags for a file or directory depending on"
+              print "# variables PGO_PROFILE_obj.o and PGO_PROFILE."
               print "#"
               print "ifeq ($(CONFIG_PGO_CLANG),y)"
               print "_c_flags += $(if $(patsubst n%,, \\"
@@ -420,7 +432,14 @@ jobs:
               print "endif"
               print ""
 
-              inserted=1
+              inserted = 1
+              prev_ifeq_gcov = 0
+              next
+            }
+
+            # Detect the beginning of the GCOV block.
+            $0 == "ifeq ($(CONFIG_GCOV_KERNEL),y)" {
+              prev_ifeq_gcov = 1
             }
 
             {
@@ -430,9 +449,21 @@ jobs:
 
           mv "$FILE.tmp" "$FILE"
 
+          echo
+          echo "============================================================"
+          echo "VERIFY"
+          echo "============================================================"
+
+          grep -qF 'Enable clang'\''s PGO profiling flags' "$FILE"
+          grep -qF 'ifeq ($(CONFIG_PGO_CLANG),y)' "$FILE"
           grep -qF '$(CFLAGS_PGO_CLANG)' "$FILE"
 
           echo "[OK] scripts/Makefile.lib modified"
+
+          echo
+          echo "Relevant section:"
+          sed -n '95,135p' "$FILE"
+"
 
       # ============================================================
       # 13. MODIFY VMLINUX LINKER HEADER
