@@ -1296,6 +1296,19 @@ jobs:
           echo "PGO LINKER DEBUG COMPLETE"
           echo "============================================================"
 
+      # ============================================================
+      # 11A. UPLOAD PGO DEBUG ARTIFACTS
+      # ============================================================
+      - name: Upload PGO Debug Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-linker-debug
+          path: |
+            pgo-debug/
+          if-no-files-found: warn
+          retention-days: 7
+
 
           
 
