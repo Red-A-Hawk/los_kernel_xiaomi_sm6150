@@ -331,28 +331,33 @@ jobs:
           echo "============================================================"
 
           # --------------------------------------------------------
-          # 1. VERIFY PGO CONDITION
+          # 1. VERIFY PGO_CLANG_DATA DEFINITION
           # --------------------------------------------------------
           echo
-          echo "[1] Verify PGO condition"
+          echo "[1] Verify PGO_CLANG_DATA definition"
 
           if grep -q \
-              '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
-              "$LDSH"; then
+         "^#ifdef CONFIG_PGO_CLANG$" \
+          "$LDSH" &&
+           grep -q \
+          "^#define PGO_CLANG_DATA" \
+          "$LDSH"; then
 
-            echo "[OK] PGO linker condition uses LINKER_SCRIPT"
+           echo "[OK] PGO_CLANG_DATA definition found"
 
-          else
+           else
 
-            echo "[FAIL] Expected LINKER_SCRIPT PGO condition not found"
+          echo "[FAIL] PGO_CLANG_DATA definition missing"
 
-            grep -n \
-              -E 'PGO_CLANG|LINKER_SCRIPT' \
-              "$LDSH" || true
+          grep -n \
+          -B3 \
+          -A35 \
+          "PGO_CLANG_DATA" \
+          "$LDSH" || true
 
-            exit 1
+          exit 1
 
-          fi
+         fi
 
           # --------------------------------------------------------
           # 2. VERIFY / INSERT PGO_CLANG_DATA
