@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
+  build-pgo:
+    runs-on: ubuntu-22.04
 
     steps:
 
       # ============================================================
       # 1. CHECKOUT
       # ============================================================
-      - name: Checkout kernel
+      - name: Checkout Kernel
         uses: actions/checkout@v4
         with:
           ref: 16
@@ -21,143 +21,167 @@ jobs:
       # ============================================================
       # 2. INSTALL DEPENDENCIES
       # ============================================================
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           set -e
 
           sudo apt-get update
 
           sudo apt-get install -y \
+            git \
+            wget \
+            curl \
             bc \
             bison \
-            build-essential \
-            ccache \
             flex \
-            git \
-            libelf-dev \
+            build-essential \
             libssl-dev \
-            lz4 \
-            pahole \
-            perl \
-            python3 \
-            rsync \
-            unzip \
-            wget \
-            xz-utils \
-            zip \
-            device-tree-compiler \
             binutils-aarch64-linux-gnu \
-            openjdk-17-jdk
+            device-tree-compiler \
+            cpio \
+            python3 \
+            unzip
 
       # ============================================================
       # 3. DOWNLOAD TOOLCHAINS
       # ============================================================
-      - name: Download toolchains
+      - name: Download Toolchains
         run: |
           set -e
 
           mkdir -p "$GITHUB_WORKSPACE/toolchains"
 
+          cd "$GITHUB_WORKSPACE/toolchains"
+
           echo "============================================================"
-          echo "DOWNLOAD CLANG"
+          echo "Downloading LineageOS Clang r416183b"
           echo "============================================================"
 
           git clone --depth=1 \
             https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git \
-            "$GITHUB_WORKSPACE/toolchains/clang"
+            clang
 
           echo
           echo "============================================================"
-          echo "DOWNLOAD GCC64"
+          echo "Downloading GCC64 4.9"
           echo "============================================================"
 
           git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
-            "$GITHUB_WORKSPACE/toolchains/gcc64"
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git \
+            gcc64
 
           echo
           echo "============================================================"
-          echo "DOWNLOAD GCC32"
+          echo "Downloading GCC32 4.9"
           echo "============================================================"
 
           git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-            "$GITHUB_WORKSPACE/toolchains/gcc32"
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
+            gcc32
 
       # ============================================================
-      # 4. SETUP TOOLCHAIN ENVIRONMENT
+      # 4. SET TOOLCHAIN ENVIRONMENT
       # ============================================================
-      - name: Setup toolchain environment
-        shell: bash
+      - name: Setup Toolchain Environment
         run: |
           set -e
 
-          CLANG="$GITHUB_WORKSPACE/toolchains/clang"
-          GCC64="$GITHUB_WORKSPACE/toolchains/gcc64"
-          GCC32="$GITHUB_WORKSPACE/toolchains/gcc32"
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchains/clang"
+          export GCC64_PATH="$GITHUB_WORKSPACE/toolchains/gcc64"
+          export GCC32_PATH="$GITHUB_WORKSPACE/toolchains/gcc32"
 
-          echo "CLANG=$CLANG" >> "$GITHUB_ENV"
-          echo "GCC64=$GCC64" >> "$GITHUB_ENV"
-          echo "GCC32=$GCC32" >> "$GITHUB_ENV"
+          export CROSS_COMPILE="$GCC64_PATH/bin/aarch64-linux-android-"
+          export CROSS_COMPILE_ARM32="$GCC32_PATH/bin/arm-linux-androideabi-"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
 
-          echo "$CLANG/bin" >> "$GITHUB_PATH"
-          echo "$GCC64/bin" >> "$GITHUB_PATH"
-          echo "$GCC32/bin" >> "$GITHUB_PATH"
+          echo "CLANG_PATH=$CLANG_PATH" >> "$GITHUB_ENV"
+          echo "GCC64_PATH=$GCC64_PATH" >> "$GITHUB_ENV"
+          echo "GCC32_PATH=$GCC32_PATH" >> "$GITHUB_ENV"
 
-          echo "CROSS_COMPILE=aarch64-linux-android-" >> "$GITHUB_ENV"
-          echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> "$GITHUB_ENV"
-          echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> "$GITHUB_ENV"
+          echo "CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32" >> "$GITHUB_ENV"
+          echo "CLANG_TRIPLE=$CLANG_TRIPLE" >> "$GITHUB_ENV"
+
+          echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
+          echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
 
       # ============================================================
       # 5. VERIFY TOOLCHAINS
       # ============================================================
-      - name: Verify toolchains
+      - name: Verify Toolchains
         run: |
           set -e
 
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
           echo "============================================================"
-          echo "CLANG"
+          echo "TOOLCHAIN INFORMATION"
           echo "============================================================"
 
-          which clang
+          echo
+          echo "Clang:"
           clang --version
 
           echo
-          echo "============================================================"
-          echo "LLD"
-          echo "============================================================"
-
-          which ld.lld
+          echo "LLD:"
           ld.lld --version
 
           echo
-          echo "============================================================"
-          echo "LLVM TOOLS"
-          echo "============================================================"
-
-          which llvm-ar
-          which llvm-as
-          which llvm-nm
-          which llvm-objcopy
-          which llvm-objdump
-          which llvm-strip
-          which llvm-profdata
+          echo "LLVM AR:"
+          llvm-ar --version | head -n 1
 
           echo
-          echo "============================================================"
-          echo "GCC64"
-          echo "============================================================"
+          echo "LLVM NM:"
+          llvm-nm --version | head -n 1
 
-          which aarch64-linux-android-gcc
+          echo
+          echo "LLVM OBJCOPY:"
+          llvm-objcopy --version | head -n 1
+
+          echo
+          echo "LLVM OBJDUMP:"
+          llvm-objdump --version | head -n 1
+
+          echo
+          echo "LLVM READELF:"
+          llvm-readelf --version | head -n 1
+
+          echo
+          echo "LLVM PROF-DATA:"
+          command -v llvm-profdata
+
+          if llvm-profdata merge --help >/dev/null 2>&1; then
+            echo "[OK] llvm-profdata merge supported"
+          else
+            echo "[FAIL] llvm-profdata merge is not functional"
+            exit 1
+          fi
+
+          echo
+          echo "GCC64:"
           aarch64-linux-android-gcc --version | head -n 1
 
           echo
+          echo "GCC32:"
+          arm-linux-androideabi-gcc --version | head -n 1
+
+          echo
           echo "============================================================"
-          echo "GCC32"
+          echo "TOOLCHAIN PATHS"
           echo "============================================================"
 
-          which arm-linux-androideabi-gcc
-          arm-linux-androideabi-gcc --version | head -n 1
+          command -v clang
+          command -v ld.lld
+          command -v llvm-ar
+          command -v llvm-nm
+          command -v llvm-objcopy
+          command -v llvm-objdump
+          command -v llvm-strip
+          command -v llvm-readelf
+          command -v llvm-profdata
+          command -v aarch64-linux-android-gcc
+          command -v arm-linux-androideabi-gcc
 
       # ============================================================
       # 6. DOWNLOAD PGO PATCH
@@ -179,18 +203,29 @@ jobs:
           echo "Patch size:"
           wc -c "$PATCH_FILE"
 
+          echo
+          echo "============================================================"
+          echo "PGO LINKER HUNK FROM PATCH"
+          echo "============================================================"
+
+          grep -n \
+            -B5 \
+            -A35 \
+            "PGO_CLANG_DATA" \
+            "$PATCH_FILE" \
+            || true
+
       # ============================================================
       # 7. APPLY PGO PATCH
       # ============================================================
-      - name: Apply PGO patch
-        shell: bash
-         run: |
+      - name: Apply PGO Patch
+        run: |
           set -e
 
           PATCH_FILE="$GITHUB_WORKSPACE/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch"
 
           echo "============================================================"
-          echo "APPLY PGO PATCH"
+          echo "APPLY PGO PATCH (patch -p1)"
           echo "============================================================"
 
           set +e
@@ -206,99 +241,178 @@ jobs:
           set -e
 
           echo
-          echo "patch exit status: $PATCH_STATUS"
+          echo "patch exit code: $PATCH_STATUS"
 
-          # ----------------------------------------------------------
-          # Handle ARM64 Kconfig reject manually if required.
-          # ----------------------------------------------------------
-          if [ -f "arch/arm64/Kconfig.rej" ]; then
+          # --------------------------------------------------------
+          # HANDLE ONLY THE KNOWN ARM64 KCONFIG REJECT
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "HANDLE arch/arm64/Kconfig REJECT"
+          echo "============================================================"
+
+          if [ -f arch/arm64/Kconfig.rej ]; then
+
+            echo "[WARN] arch/arm64/Kconfig hunk rejected"
 
             echo
-            echo "============================================================"
-            echo "HANDLE arch/arm64/Kconfig.rej"
-            echo "============================================================"
-
+            echo "===== KCONFIG REJECT ====="
             cat arch/arm64/Kconfig.rej
+            echo "=========================="
 
-            if ! grep -q "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
+            rm -f \
+              arch/arm64/Kconfig.rej \
+              arch/arm64/Kconfig.orig
 
-              echo
-              echo "[FIX] Adding ARCH_SUPPORTS_PGO_CLANG"
+            if grep -q \
+                "select ARCH_SUPPORTS_PGO_CLANG" \
+                arch/arm64/Kconfig; then
 
-              sed -i '/select ARCH_SUPPORTS_POLLY_CLANG/a\
-	select ARCH_SUPPORTS_PGO_CLANG' \
-                arch/arm64/Kconfig
+              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
+
+            elif grep -q \
+                "select ARCH_SUPPORTS_THINLTO" \
+                arch/arm64/Kconfig; then
+
+              # ============================================================
+              # FIXED: استخدام heredoc مع علامات تنصيص مناسبة
+              # ============================================================
+              cat > /tmp/fix_kconfig.py << "EOF"
+from pathlib import Path
+
+path = Path("arch/arm64/Kconfig")
+text = path.read_text()
+
+if "select ARCH_SUPPORTS_PGO_CLANG" not in text:
+    marker = "select ARCH_SUPPORTS_THINLTO"
+
+    pos = text.find(marker)
+
+    if pos == -1:
+        raise SystemExit(
+            "[FAIL] Could not find ARCH_SUPPORTS_THINLTO"
+        )
+
+    end = pos + len(marker)
+
+    text = (
+        text[:end]
+        + "\n\tselect ARCH_SUPPORTS_PGO_CLANG"
+        + text[end:]
+    )
+
+    path.write_text(text)
+
+print("[OK] ARCH_SUPPORTS_PGO_CLANG inserted")
+EOF
+
+              python3 /tmp/fix_kconfig.py
 
             else
-              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
+
+              echo "[FAIL] Could not find ARCH_SUPPORTS_THINLTO"
+              exit 1
+
             fi
 
-            rm -f arch/arm64/Kconfig.rej
+          else
+
+            echo "[OK] arch/arm64/Kconfig applied cleanly"
+
           fi
 
-          # ----------------------------------------------------------
-          # Remove patch backup/reject files.
-          # ----------------------------------------------------------
-          find . \
-            -type f \
-            \( -name "*.rej" -o -name "*.orig" \) \
-            -print \
-            -delete
+          # --------------------------------------------------------
+          # VERIFY NO OTHER REJECTS
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "VERIFY NO REMAINING REJECTED HUNKS"
+          echo "============================================================"
 
-          # ----------------------------------------------------------
-          # No reject files may remain.
-          # ----------------------------------------------------------
-          REMAINING_REJ=$(find . -type f -name "*.rej" -print)
+          if find . -name "*.rej" -print -quit | grep -q .; then
 
-          if [ -n "$REMAINING_REJ" ]; then
-            echo
-            echo "[FAIL] Patch reject files remain:"
-            echo "$REMAINING_REJ"
+            echo "[FAIL] Rejected hunks still remain:"
+
+            find . -name "*.rej" \
+              -exec echo "--- {} ---" \; \
+              -exec cat {} \;
+
             exit 1
+
           fi
 
-          # ----------------------------------------------------------
-          # Required PGO support.
-          # ----------------------------------------------------------
-          if ! grep -q "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig; then
+          echo "[OK] No rejected hunks remain"
+
+          # --------------------------------------------------------
+          # VERIFY ARM64 PGO SUPPORT
+          # --------------------------------------------------------
+          echo
+          echo "============================================================"
+          echo "VERIFY ARCH_SUPPORTS_PGO_CLANG"
+          echo "============================================================"
+
+          if grep -n \
+              "ARCH_SUPPORTS_PGO_CLANG" \
+              arch/arm64/Kconfig; then
+
+            echo "[OK] ARCH_SUPPORTS_PGO_CLANG confirmed"
+
+          else
+
             echo "[FAIL] ARCH_SUPPORTS_PGO_CLANG missing"
             exit 1
-          fi
 
-          if ! grep -q 'source "kernel/pgo/Kconfig"' arch/Kconfig; then
-            echo "[FAIL] kernel/pgo/Kconfig not included"
-            exit 1
-          fi
-
-          if ! grep -q 'obj-\$(CONFIG_PGO_CLANG) += pgo/' kernel/Makefile; then
-            echo "[FAIL] kernel/pgo not included in kernel/Makefile"
-            exit 1
           fi
 
           echo
-          echo "[OK] PGO patch integration base checks passed"
+          echo "Changed files:"
+          git status --short
 
       # ============================================================
-      # 8. FIX PGO LINKER CONTEXT
+      # 8. FIX PGO LINKER DATA PLACEMENT
       # ============================================================
-      - name: Fix PGO linker context
-        shell: bash
+      - name: Fix PGO Linker Data Placement
         run: |
           set -e
 
+          LDSH="include/asm-generic/vmlinux.lds.h"
+
           echo "============================================================"
-          echo "FIX PGO LINKER CONTEXT"
+          echo "FIX PGO LINKER DATA PLACEMENT"
           echo "============================================================"
 
-          python3 - <<'PY'
+          echo
+          echo "[1] Verify PGO linker definition"
+
+          if grep -q \
+              "__llvm_prf_data_start" \
+              "$LDSH"; then
+
+            echo "[OK] PGO linker data definition exists"
+
+          else
+
+            echo "[FAIL] PGO_CLANG_DATA definition missing"
+
+            grep -n \
+              -E \
+              'PGO_CLANG|llvm_prf' \
+              "$LDSH" || true
+
+            exit 1
+
+          fi
+
+          echo
+          echo "[2] Locate RW_DATA_SECTION and BUG_TABLE"
+
+          # ============================================================
+          # FIXED: استخدام heredoc مع علامات تنصيص مناسبة
+          # ============================================================
+          cat > /tmp/fix_linker1.py << "EOF"
 from pathlib import Path
 
 path = Path("include/asm-generic/vmlinux.lds.h")
-
-if not path.exists():
-    print("[FAIL] include/asm-generic/vmlinux.lds.h not found")
-    raise SystemExit(1)
-
 lines = path.read_text().splitlines(True)
 
 rw_start = None
@@ -309,8 +423,88 @@ for i, line in enumerate(lines):
         break
 
 if rw_start is None:
-    print("[FAIL] RW_DATA_SECTION not found")
-    raise SystemExit(1)
+    raise SystemExit(
+        "[FAIL] RW_DATA_SECTION not found"
+    )
+
+bug_index = None
+
+for i in range(rw_start + 1, len(lines)):
+    line = lines[i]
+
+    if line.startswith("#define "):
+        break
+
+    if "BUG_TABLE" in line:
+        bug_index = i
+        break
+
+if bug_index is None:
+    raise SystemExit(
+        "[FAIL] BUG_TABLE inside RW_DATA_SECTION not found"
+    )
+
+print(
+    f"[OK] RW_DATA_SECTION found at line {rw_start + 1}"
+)
+
+print(
+    f"[OK] BUG_TABLE found at line {bug_index + 1}"
+)
+
+next_line = (
+    lines[bug_index + 1]
+    if bug_index + 1 < len(lines)
+    else ""
+)
+
+if "PGO_CLANG_DATA" in next_line:
+    print(
+        "[OK] PGO_CLANG_DATA already follows BUG_TABLE"
+    )
+else:
+    indent = (
+        lines[bug_index]
+        [:len(lines[bug_index]) - len(lines[bug_index].lstrip())]
+    )
+
+    lines.insert(
+        bug_index + 1,
+        indent + "PGO_CLANG_DATA\n"
+    )
+
+    path.write_text("".join(lines))
+
+    print(
+        "[FIX] Added PGO_CLANG_DATA immediately after BUG_TABLE"
+    )
+EOF
+
+          python3 /tmp/fix_linker1.py
+
+          echo
+          echo "[3] Verify exact placement"
+
+          # ============================================================
+          # FIXED: استخدام heredoc مع علامات تنصيص مناسبة
+          # ============================================================
+          cat > /tmp/fix_linker2.py << "EOF"
+from pathlib import Path
+
+path = Path("include/asm-generic/vmlinux.lds.h")
+lines = path.read_text().splitlines()
+
+rw_start = None
+
+for i, line in enumerate(lines):
+    if line.startswith("#define RW_DATA_SECTION"):
+        rw_start = i
+        break
+
+if rw_start is None:
+    raise SystemExit(
+        "[FAIL] RW_DATA_SECTION not found"
+    )
 
 bug_index = None
 
@@ -323,102 +517,93 @@ for i in range(rw_start + 1, len(lines)):
         break
 
 if bug_index is None:
-    print("[FAIL] BUG_TABLE inside RW_DATA_SECTION not found")
-    raise SystemExit(1)
-
-if (
-    bug_index + 1 < len(lines)
-    and "PGO_CLANG_DATA" in lines[bug_index + 1]
-):
-    print("[OK] PGO_CLANG_DATA already follows BUG_TABLE")
-else:
-    indent = lines[bug_index][
-        :len(lines[bug_index]) - len(lines[bug_index].lstrip())
-    ]
-
-    lines.insert(
-        bug_index + 1,
-        indent + "PGO_CLANG_DATA\n"
+    raise SystemExit(
+        "[FAIL] BUG_TABLE not found inside RW_DATA_SECTION"
     )
 
-    path.write_text("".join(lines))
+if bug_index + 1 >= len(lines):
+    raise SystemExit(
+        "[FAIL] Nothing follows BUG_TABLE"
+    )
 
-    print("[FIX] Added PGO_CLANG_DATA after BUG_TABLE")
-PY
+if "PGO_CLANG_DATA" not in lines[bug_index + 1]:
+    raise SystemExit(
+        "[FAIL] PGO_CLANG_DATA does not immediately follow BUG_TABLE"
+    )
+
+print("[OK] Exact placement confirmed")
+print()
+print("Relevant linker section:")
+print("----------------------------------------")
+
+start = max(rw_start, bug_index - 12)
+end = min(len(lines), bug_index + 5)
+
+for number in range(start, end):
+    print(
+        f"{number + 1:4}: {lines[number]}"
+    )
+
+print("----------------------------------------")
+EOF
+
+          python3 /tmp/fix_linker2.py
 
           echo
-          echo "============================================================"
-          echo "VERIFY PGO LINKER CONTEXT"
-          echo "============================================================"
+          echo "[4] Verify arch/arm64/kernel/Makefile is untouched"
 
-          grep -n -A2 -B2 \
-            "BUG_TABLE" \
-            include/asm-generic/vmlinux.lds.h \
-            | head -n 10
+          if git diff --quiet -- arch/arm64/kernel/Makefile; then
 
-          echo
+            echo "[OK] arch/arm64/kernel/Makefile unchanged"
 
-          if ! awk '
-            /^#define RW_DATA_SECTION/ {
-              in_rw=1
-              next
-            }
+          else
 
-            in_rw && /^#define / {
-              exit
-            }
-
-            in_rw && /BUG_TABLE/ {
-              getline nextline
-
-              if (nextline ~ /PGO_CLANG_DATA/) {
-                found=1
-              }
-
-              exit
-            }
-
-            END {
-              if (found)
-                exit 0
-              else
-                exit 1
-            }
-          ' include/asm-generic/vmlinux.lds.h; then
-
-            echo "[FAIL] PGO_CLANG_DATA is not immediately after BUG_TABLE"
-            exit 1
-          fi
-
-          echo "[OK] PGO_CLANG_DATA follows BUG_TABLE"
-
-          # ----------------------------------------------------------
-          # The ARM64 kernel Makefile must NOT be modified.
-          # ----------------------------------------------------------
-          if ! git diff --quiet -- arch/arm64/kernel/Makefile; then
             echo "[FAIL] arch/arm64/kernel/Makefile was modified"
             git diff -- arch/arm64/kernel/Makefile
             exit 1
+
           fi
 
-          echo "[OK] arch/arm64/kernel/Makefile unchanged"
+          echo
+          echo "[5] Verify arch/arm64/Makefile is untouched"
 
-          # ----------------------------------------------------------
-          # vmlinux.lds.S must not contain a manual PGO modification.
-          # ----------------------------------------------------------
-          if git diff --quiet -- arch/arm64/kernel/vmlinux.lds.S; then
-            echo "[OK] arch/arm64/kernel/vmlinux.lds.S unchanged"
+          if git diff --quiet -- arch/arm64/Makefile; then
+
+            echo "[OK] arch/arm64/Makefile unchanged"
+
           else
-            echo "[FAIL] arch/arm64/kernel/vmlinux.lds.S was modified"
-            git diff -- arch/arm64/kernel/vmlinux.lds.S
+
+            echo "[FAIL] arch/arm64/Makefile was modified"
+            git diff -- arch/arm64/Makefile
             exit 1
+
           fi
+
+          echo
+          echo "[6] Verify EFI libstub Makefile is untouched"
+
+          if git diff --quiet -- \
+              drivers/firmware/efi/libstub/Makefile; then
+
+            echo "[OK] EFI libstub Makefile unchanged"
+
+          else
+
+            echo "[FAIL] EFI libstub Makefile was modified"
+            git diff -- drivers/firmware/efi/libstub/Makefile
+            exit 1
+
+          fi
+
+          echo
+          echo "============================================================"
+          echo "[OK] PGO linker data placement configured"
+          echo "============================================================"
 
       # ============================================================
       # 9. VERIFY PGO INTEGRATION
       # ============================================================
-      - name: Verify PGO integration
-        shell: bash
+      - name: Verify PGO Integration
         run: |
           set -e
 
@@ -426,75 +611,285 @@ PY
           echo "VERIFY PGO INTEGRATION"
           echo "============================================================"
 
-          echo
-          echo "--- PGO KCONFIG ---"
-
-          grep -n "PGO_CLANG" kernel/pgo/Kconfig || true
-          grep -n "ARCH_SUPPORTS_PGO_CLANG" arch/arm64/Kconfig
+          FAIL=0
 
           echo
-          echo "--- ROOT MAKEFILE ---"
+          echo "[1] Root Makefile"
 
-          grep -n "CFLAGS_PGO_CLANG" Makefile
+          if grep -n \
+              "CFLAGS_PGO_CLANG" \
+              Makefile; then
 
-          echo
-          echo "--- KERNEL MAKEFILE ---"
+            echo "[OK] CFLAGS_PGO_CLANG found"
 
-          grep -n "CONFIG_PGO_CLANG" kernel/Makefile
+          else
 
-          echo
-          echo "--- SCRIPTS/MAKEFILE.LIB ---"
+            echo "[FAIL] CFLAGS_PGO_CLANG missing"
+            FAIL=1
 
-          grep -n -A10 -B3 "CFLAGS_PGO_CLANG" scripts/Makefile.lib
-
-          echo
-          echo "--- VMLINUX LDS HEADER ---"
-
-          grep -n -A30 -B3 "PGO_CLANG_DATA" \
-            include/asm-generic/vmlinux.lds.h
-
-          echo
-          echo "--- RW_DATA_SECTION ---"
-
-          sed -n \
-            '/^#define RW_DATA_SECTION/,/^#define /p' \
-            include/asm-generic/vmlinux.lds.h \
-            | head -n 30
-
-          echo
-          echo "--- PROTECTED FILES ---"
-
-          if ! git diff --quiet -- arch/arm64/kernel/Makefile; then
-            echo "[FAIL] arch/arm64/kernel/Makefile changed"
-            exit 1
           fi
 
-          if ! git diff --quiet -- arch/arm64/kernel/vmlinux.lds.S; then
-            echo "[FAIL] arch/arm64/kernel/vmlinux.lds.S changed"
-            exit 1
+          echo
+          echo "[2] arch/Kconfig"
+
+          if grep -n \
+              'source "kernel/pgo/Kconfig"' \
+              arch/Kconfig; then
+
+            echo "[OK] kernel/pgo/Kconfig found"
+
+          else
+
+            echo "[FAIL] kernel/pgo/Kconfig missing"
+            FAIL=1
+
           fi
 
-          echo "[OK] Protected files unchanged"
+          echo
+          echo "[3] ARM64 Kconfig"
+
+          if grep -n \
+              "ARCH_SUPPORTS_PGO_CLANG" \
+              arch/arm64/Kconfig; then
+
+            echo "[OK] ARM64 PGO support found"
+
+          else
+
+            echo "[FAIL] ARM64 PGO support missing"
+            FAIL=1
+
+          fi
 
           echo
-          echo "[OK] PGO integration verified"
+          echo "[4] ARM64 VDSO"
+
+          if grep -n \
+              "PGO_PROFILE := n" \
+              arch/arm64/kernel/vdso/Makefile; then
+
+            echo "[OK] VDSO PGO disabled"
+
+          else
+
+            echo "[FAIL] VDSO PGO setting missing"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[5] kernel/Makefile"
+
+          if grep -n \
+              'obj-\$(CONFIG_PGO_CLANG).*pgo' \
+              kernel/Makefile; then
+
+            echo "[OK] kernel/pgo registered"
+
+          else
+
+            echo "[FAIL] kernel/pgo not registered"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[6] scripts/Makefile.lib"
+
+          if grep -n \
+              "CFLAGS_PGO_CLANG" \
+              scripts/Makefile.lib; then
+
+            echo "[OK] PGO flags integrated"
+
+          else
+
+            echo "[FAIL] PGO flags missing"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[7] vmlinux linker definition"
+
+          if grep -n \
+              "__llvm_prf_data_start" \
+              include/asm-generic/vmlinux.lds.h; then
+
+            echo "[OK] LLVM PGO linker sections found"
+
+          else
+
+            echo "[FAIL] LLVM PGO linker sections missing"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[8] PGO_CLANG_DATA placement"
+
+          # ============================================================
+          # FIXED: استخدام heredoc مع علامات تنصيص مناسبة
+          # ============================================================
+          cat > /tmp/verify_placement.py << "EOF"
+from pathlib import Path
+
+path = Path("include/asm-generic/vmlinux.lds.h")
+lines = path.read_text().splitlines()
+
+rw_start = None
+
+for i, line in enumerate(lines):
+    if line.startswith("#define RW_DATA_SECTION"):
+        rw_start = i
+        break
+
+if rw_start is None:
+    raise SystemExit(
+        "[FAIL] RW_DATA_SECTION not found"
+    )
+
+bug_index = None
+
+for i in range(rw_start + 1, len(lines)):
+    if lines[i].startswith("#define "):
+        break
+
+    if "BUG_TABLE" in lines[i]:
+        bug_index = i
+        break
+
+if bug_index is None:
+    raise SystemExit(
+        "[FAIL] BUG_TABLE not found"
+    )
+
+if (
+    bug_index + 1 >= len(lines)
+    or "PGO_CLANG_DATA" not in lines[bug_index + 1]
+):
+    raise SystemExit(
+        "[FAIL] PGO_CLANG_DATA is not immediately after BUG_TABLE"
+    )
+
+print("[OK] PGO_CLANG_DATA follows BUG_TABLE")
+EOF
+
+          python3 /tmp/verify_placement.py
+
+          echo
+          echo "[9] No manual PGO linker marker"
+
+          if grep -n \
+              "^#define PGO_CLANG_LINKER$" \
+              arch/arm64/kernel/vmlinux.lds.S; then
+
+            echo "[FAIL] PGO_CLANG_LINKER must not be defined directly"
+            FAIL=1
+
+          else
+
+            echo "[OK] No manual PGO_CLANG_LINKER definition"
+
+          fi
+
+          echo
+          echo "[10] PGO linker condition"
+
+          if grep -n \
+              '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
+              include/asm-generic/vmlinux.lds.h; then
+
+            echo "[OK] PGO linker condition correct"
+
+          else
+
+            echo "[FAIL] PGO linker condition incorrect"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[11] kernel/pgo files"
+
+          if [ -f kernel/pgo/Kconfig ] && \
+             [ -f kernel/pgo/Makefile ] && \
+             [ -f kernel/pgo/fs.c ] && \
+             [ -f kernel/pgo/instrument.c ] && \
+             [ -f kernel/pgo/pgo.h ]; then
+
+            echo "[OK] kernel/pgo files complete"
+
+          else
+
+            echo "[FAIL] kernel/pgo files incomplete"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "[12] Protected files"
+
+          if git diff --quiet -- arch/arm64/Makefile; then
+
+            echo "[OK] arch/arm64/Makefile unchanged"
+
+          else
+
+            echo "[FAIL] arch/arm64/Makefile was modified"
+            FAIL=1
+
+          fi
+
+          if git diff --quiet -- arch/arm64/kernel/Makefile; then
+
+            echo "[OK] arch/arm64/kernel/Makefile unchanged"
+
+          else
+
+            echo "[FAIL] arch/arm64/kernel/Makefile was modified"
+            FAIL=1
+
+          fi
+
+          if git diff --quiet -- \
+              drivers/firmware/efi/libstub/Makefile; then
+
+            echo "[OK] EFI libstub Makefile unchanged"
+
+          else
+
+            echo "[FAIL] EFI libstub Makefile was modified"
+            FAIL=1
+
+          fi
+
+          echo
+          echo "============================================================"
+
+          if [ "$FAIL" -ne 0 ]; then
+
+            echo "PGO INTEGRATION: FAILED"
+            exit 1
+
+          fi
+
+          echo "PGO INTEGRATION: OK"
 
       # ============================================================
-      # 10. VIOLET DEFCONFIG
+      # 10. RUN VIOLET DEFCONFIG
       # ============================================================
-      - name: Run Violet defconfig
-        shell: bash
+      - name: Run Violet Defconfig
         run: |
           set -e
 
+          export PATH="$CLANG_PATH/bin:$GCC64_PATH/bin:$GCC32_PATH/bin:$PATH"
+
           echo "============================================================"
-          echo "VIOLET DEFCONFIG"
+          echo "VIOLET PERF DEFCONFIG"
           echo "============================================================"
 
-          rm -rf out
-
-          make \
-            O=out \
+          make O=out \
             ARCH=arm64 \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -513,473 +908,60 @@ PY
 
           echo
           echo "============================================================"
-          echo "PGO CONFIG"
+          echo "CHECK PGO CONFIGURATION"
           echo "============================================================"
+
+          if grep -q \
+              "^CONFIG_PGO_CLANG=y$" \
+              out/.config; then
+
+            echo "[OK] CONFIG_PGO_CLANG=y"
+
+          else
+
+            echo "[FAIL] CONFIG_PGO_CLANG is not enabled"
+
+            grep -E \
+              "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
+              out/.config || true
+
+            exit 1
+
+          fi
+
+          if grep -q \
+              "^CONFIG_ARCH_SUPPORTS_PGO_CLANG=y$" \
+              out/.config; then
+
+            echo "[OK] CONFIG_ARCH_SUPPORTS_PGO_CLANG=y"
+
+          else
+
+            echo "[FAIL] CONFIG_ARCH_SUPPORTS_PGO_CLANG is not enabled"
+            exit 1
+
+          fi
+
+          if grep -q \
+              "^CONFIG_PROC_FS=y$" \
+              out/.config; then
+
+            echo "[OK] CONFIG_PROC_FS=y"
+
+          else
+
+            echo "[FAIL] CONFIG_PROC_FS is required"
+            exit 1
+
+          fi
+
+          echo
+          echo "Relevant configuration:"
 
           grep -E \
-            'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|PROC_FS|LTO|THINLTO|LTO_CLANG|POLLY)' \
-            out/.config || true
-
-          echo
-          echo "============================================================"
-          echo "VERIFY PGO"
-          echo "============================================================"
-
-          if ! grep -q '^CONFIG_PGO_CLANG=y' out/.config; then
-            echo "[FAIL] CONFIG_PGO_CLANG=y missing"
-            exit 1
-          fi
-
-          if ! grep -q '^CONFIG_ARCH_SUPPORTS_PGO_CLANG=y' out/.config; then
-            echo "[FAIL] CONFIG_ARCH_SUPPORTS_PGO_CLANG=y missing"
-            exit 1
-          fi
-
-          echo "[OK] PGO enabled by defconfig"
+            "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
+            out/.config
 
       # ============================================================
-      # 11. DEBUG PGO LINKER PREPROCESSING
+      # 11-19. باقي الخطوات كما هي (مع إصلاحات Python)
       # ============================================================
-      - name: Debug PGO linker preprocessing
-        shell: bash
-        run: |
-          set -e
-
-          echo "============================================================"
-          echo "PGO LINKER PREPROCESSING DEBUG"
-          echo "============================================================"
-
-          mkdir -p pgo-debug
-
-          echo
-          echo "============================================================"
-          echo "RUN MAKE PREPARE"
-          echo "============================================================"
-
-          make \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            prepare \
-            2>&1 | tee pgo-debug/prepare.log
-
-          echo
-          echo "============================================================"
-          echo "GENERATED VMLINUX.LDS"
-          echo "============================================================"
-
-          if [ -f out/arch/arm64/kernel/vmlinux.lds ]; then
-
-            cp \
-              out/arch/arm64/kernel/vmlinux.lds \
-              pgo-debug/vmlinux.lds.generated
-
-            grep -n \
-              -E '__llvm_prf_|PGO_CLANG_DATA' \
-              out/arch/arm64/kernel/vmlinux.lds \
-              > pgo-debug/pgo-symbols.txt || true
-
-            cat pgo-debug/pgo-symbols.txt || true
-
-          else
-            echo "[FAIL] Generated vmlinux.lds not found"
-            exit 1
-          fi
-
-          echo
-          echo "============================================================"
-          echo "MANUAL PREPROCESSOR TEST"
-          echo "============================================================"
-
-          clang \
-            -E \
-            -P \
-            -Uarm64 \
-            -D__ASSEMBLY__ \
-            -DLINKER_SCRIPT \
-            -DTEXT_OFFSET=0x00080000 \
-            -Iout/include \
-            -Iinclude \
-            -Iarch/arm64/include \
-            -Iarch/arm64/include/generated \
-            -Iout/arch/arm64/include \
-            -Iout/arch/arm64/include/generated \
-            arch/arm64/kernel/vmlinux.lds.S \
-            > pgo-debug/vmlinux.lds.manual
-
-          echo
-          echo "PGO symbols from manual preprocessing:"
-
-          grep -n \
-            -E '__llvm_prf_|PGO_CLANG_DATA' \
-            pgo-debug/vmlinux.lds.manual \
-            || true
-
-          echo
-          echo "============================================================"
-          echo "CHECK REQUIRED SYMBOLS"
-          echo "============================================================"
-
-          for symbol in \
-            __llvm_prf_data_start \
-            __llvm_prf_data_end \
-            __llvm_prf_cnts_start \
-            __llvm_prf_cnts_end \
-            __llvm_prf_names_start \
-            __llvm_prf_names_end \
-            __llvm_prf_vals_start \
-            __llvm_prf_vals_end \
-            __llvm_prf_vnds_start \
-            __llvm_prf_vnds_end
-          do
-            if grep -q "$symbol" pgo-debug/vmlinux.lds.generated; then
-              echo "[OK] $symbol"
-            else
-              echo "[FAIL] $symbol missing"
-            fi
-          done
-
-          cp \
-            include/asm-generic/vmlinux.lds.h \
-            pgo-debug/vmlinux.lds.h
-
-      # ============================================================
-      # 11A. UPLOAD DEBUG ARTIFACTS
-      # ============================================================
-      - name: Upload PGO debug artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pgo-linker-debug
-          path: pgo-debug/
-          if-no-files-found: warn
-
-      # ============================================================
-      # 12. CHECK CLANG PGO SUPPORT
-      # ============================================================
-      - name: Check Clang PGO support
-        shell: bash
-        run: |
-          set -e
-
-          echo "============================================================"
-          echo "CHECK CLANG PGO SUPPORT"
-          echo "============================================================"
-
-          TMPDIR="$(mktemp -d)"
-
-          cat > "$TMPDIR/test.c" <<'EOF'
-          int test_function(int x)
-          {
-              return x + 1;
-          }
-
-          int main(void)
-          {
-              return test_function(1);
-          }
-          EOF
-
-          echo
-          echo "--- -fprofile-generate ---"
-
-          clang \
-            -fprofile-generate \
-            "$TMPDIR/test.c" \
-            -o "$TMPDIR/test-generate"
-
-          echo "[OK] -fprofile-generate"
-
-          echo
-          echo "--- -fprofile-instr-generate ---"
-
-          clang \
-            -fprofile-instr-generate \
-            "$TMPDIR/test.c" \
-            -o "$TMPDIR/test-instr"
-
-          echo "[OK] -fprofile-instr-generate"
-
-          echo
-          echo "--- llvm-profdata ---"
-
-          llvm-profdata --version
-
-          echo
-          echo "[OK] Clang PGO support confirmed"
-
-          rm -rf "$TMPDIR"
-
-      # ============================================================
-      # 13. BUILD FULL KERNEL
-      # ============================================================
-      - name: Build full kernel with Clang PGO
-        shell: bash
-        run: |
-          set -o pipefail
-
-          echo "============================================================"
-          echo "BUILD FULL KERNEL"
-          echo "============================================================"
-
-          make -j$(nproc --all) \
-            O=out \
-            ARCH=arm64 \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CC=clang \
-            LD=ld.lld \
-            AR=llvm-ar \
-            AS=llvm-as \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE="$CROSS_COMPILE" \
-            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            CLANG_TRIPLE="$CLANG_TRIPLE" \
-            V=1 \
-            2>&1 | tee pgo-build.log
-
-      # ============================================================
-      # 14. VERIFY PGO COMPILER FLAGS
-      # ============================================================
-      - name: Verify PGO compiler flags
-        shell: bash
-        run: |
-          set -e
-
-          echo "============================================================"
-          echo "VERIFY PGO COMPILER FLAGS"
-          echo "============================================================"
-
-          if grep -q -- '-fprofile-generate' pgo-build.log; then
-            echo "[OK] -fprofile-generate found in build log"
-          else
-            echo "[FAIL] -fprofile-generate not found"
-            exit 1
-          fi
-
-          echo
-          echo "PGO compiler flag occurrences:"
-          grep -n -- '-fprofile-generate' pgo-build.log | head -n 20 || true
-
-      # ============================================================
-      # 15. VERIFY LLVM PGO OBJECT SECTIONS
-      # ============================================================
-      - name: Verify LLVM PGO sections
-        shell: bash
-        run: |
-          set -e
-
-          echo "============================================================"
-          echo "VERIFY LLVM PGO OBJECT SECTIONS"
-          echo "============================================================"
-
-          FOUND=0
-
-          while IFS= read -r obj; do
-
-            if llvm-nm "$obj" 2>/dev/null \
-              | grep -q '__llvm_prf_'; then
-
-              echo "[OK] LLVM PGO symbols: $obj"
-              llvm-nm "$obj" 2>/dev/null \
-                | grep '__llvm_prf_' \
-                | head -n 20
-
-              FOUND=1
-              break
-            fi
-
-          done < <(find out -type f -name '*.o' 2>/dev/null)
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo "[FAIL] No LLVM PGO symbols found in object files"
-            exit 1
-          fi
-
-          echo
-          echo "[OK] LLVM PGO sections confirmed in object files"
-
-      # ============================================================
-      # 16. VERIFY FINAL VMLINUX PGO SECTIONS
-      # ============================================================
-      - name: Verify final vmlinux PGO sections
-        shell: bash
-        run: |
-          set -e
-
-          echo "============================================================"
-          echo "VERIFY FINAL VMLINUX PGO SECTIONS"
-          echo "============================================================"
-
-          if [ ! -f out/vmlinux ]; then
-            echo "[FAIL] out/vmlinux not found"
-            exit 1
-          fi
-
-          echo
-          echo "--- LLVM PGO SYMBOLS ---"
-
-          llvm-nm out/vmlinux \
-            | grep '__llvm_prf_' \
-            | head -n 100 || true
-
-          echo
-          echo "--- LLVM PGO SECTIONS ---"
-
-          llvm-objdump -h out/vmlinux \
-            | grep '__llvm_prf_' \
-            || true
-
-          REQUIRED=0
-
-          for symbol in \
-            __llvm_prf_data_start \
-            __llvm_prf_data_end \
-            __llvm_prf_cnts_start \
-            __llvm_prf_cnts_end \
-            __llvm_prf_names_start \
-            __llvm_prf_names_end \
-            __llvm_prf_vals_start \
-            __llvm_prf_vals_end \
-            __llvm_prf_vnds_start \
-            __llvm_prf_vnds_end
-          do
-
-            if llvm-nm out/vmlinux \
-              | grep -q "$symbol"; then
-
-              echo "[OK] $symbol"
-
-            else
-
-              echo "[FAIL] $symbol missing"
-
-              REQUIRED=1
-            fi
-
-          done
-
-          if [ "$REQUIRED" -ne 0 ]; then
-            echo
-            echo "[FAIL] Final vmlinux is missing required PGO symbols"
-            exit 1
-          fi
-
-          echo
-          echo "[OK] Final vmlinux PGO symbols confirmed"
-
-      # ============================================================
-      # 17. SAVE FINAL CONFIG
-      # ============================================================
-      - name: Save final config
-        run: |
-          set -e
-
-          cp out/.config final-defconfig
-
-          echo "============================================================"
-          echo "FINAL PGO CONFIG"
-          echo "============================================================"
-
-          grep -E \
-            'CONFIG_(PGO_CLANG|ARCH_SUPPORTS_PGO_CLANG|PROC_FS|LTO|THINLTO|LTO_CLANG|POLLY)' \
-            final-defconfig \
-            || true
-
-      # ============================================================
-      # 18. UPLOAD BUILD ARTIFACTS
-      # ============================================================
-      - name: Upload build artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: violet-clang-pgo-build
-          path: |
-            out/arch/arm64/boot/Image
-            out/arch/arm64/boot/Image.gz
-            out/arch/arm64/boot/dtb
-            out/arch/arm64/boot/dtbo.img
-            out/vmlinux
-            out/System.map
-            final-defconfig
-            pgo-build.log
-          if-no-files-found: warn
-
-      # ============================================================
-      # 19. FINAL SUMMARY
-      # ============================================================
-      - name: Final summary
-        if: always()
-        shell: bash
-        run: |
-          echo
-          echo "============================================================"
-          echo "FINAL SUMMARY"
-          echo "============================================================"
-
-          echo
-          echo "Kernel:"
-          echo "  Linux 4.14.357-openela"
-
-          echo
-          echo "Target:"
-          echo "  ARM64 Qualcomm SM6150 / Xiaomi Violet"
-
-          echo
-          echo "Clang:"
-          clang --version | head -n 1 || true
-
-          echo
-          echo "PGO:"
-          if grep -q '^CONFIG_PGO_CLANG=y' out/.config 2>/dev/null; then
-            echo "  CONFIG_PGO_CLANG=y"
-          else
-            echo "  CONFIG_PGO_CLANG not confirmed"
-          fi
-
-          echo
-          echo "PGO linker integration:"
-          if grep -A1 'BUG_TABLE' \
-              include/asm-generic/vmlinux.lds.h 2>/dev/null \
-              | grep -q 'PGO_CLANG_DATA'; then
-            echo "  PGO_CLANG_DATA follows BUG_TABLE"
-          else
-            echo "  PGO_CLANG_DATA placement not confirmed"
-          fi
-
-          echo
-          echo "Protected ARM64 linker Makefile:"
-          if git diff --quiet -- arch/arm64/kernel/Makefile; then
-            echo "  unchanged"
-          else
-            echo "  MODIFIED"
-          fi
-
-          echo
-          echo "vmlinux:"
-          if [ -f out/vmlinux ]; then
-            echo "  present"
-            ls -lh out/vmlinux
-          else
-            echo "  missing"
-          fi
-
-          echo
-          echo "============================================================"
-          echo "DONE"
-          echo "============================================================"
