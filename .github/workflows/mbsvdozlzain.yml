@@ -39,6 +39,7 @@ jobs:
             cpio \
             python3 \
             unzip
+
       # ============================================================
       # 3. CLONE LINEAGEOS CLANG r416183b
       # ============================================================
@@ -67,6 +68,7 @@ jobs:
           git clone --depth=1 \
             https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git \
             gcc32
+
       # ============================================================
       # 4. SET TOOLCHAIN ENVIRONMENT
       # ============================================================
@@ -82,6 +84,7 @@ jobs:
           echo "$CLANG_PATH/bin" >> "$GITHUB_PATH"
           echo "$GCC64_PATH/bin" >> "$GITHUB_PATH"
           echo "$GCC32_PATH/bin" >> "$GITHUB_PATH"
+
       # ============================================================
       # 5. VERIFY TOOLCHAIN
       # ============================================================
@@ -111,41 +114,91 @@ jobs:
           echo
           echo "GCC32:"
           arm-linux-androideabi-gcc --version | head -n 1
+
       # ============================================================
-      # 6. DOWNLOAD + APPLY PGO PATCH
+      # 6. APPLY PGO PATCH
       # ============================================================
-      - name: Download and Apply PGO Patch
+      - name: Apply PGO Patch
         run: |
           set -e
           PATCH_URL="https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-Add-Clang-PGO-support.patch"
           PATCH_FILE="$GITHUB_WORKSPACE/0001-Add-Clang-PGO-support.patch"
-          echo "========================================"
+          echo "============================================================"
           echo "DOWNLOAD PGO PATCH"
-          echo "========================================"
+          echo "============================================================"
           wget -O "$PATCH_FILE" "$PATCH_URL"
           echo
           echo "Patch size:"
           wc -c "$PATCH_FILE"
           echo
-          echo "Patch SHA256 (informational only):"
-          sha256sum "$PATCH_FILE"
-          echo "Expected (at time of writing):"
-          echo "72c4eaae2e9e8fb65f3381dfeece020caefb2f91320e3425cb0d1c90c1ffffd0"
-          echo "(Note: this is not enforced as a hard check, since GitHub"
-          echo " may normalize line endings on commit; only used as a"
-          echo " sanity reference.)"
+          echo "============================================================"
+          echo "APPLY PGO PATCH (patch -p1)"
+          echo "============================================================"
+          set +e
+          patch -p1 \
+            --fuzz=3 \
+            --ignore-whitespace \
+            --no-backup-if-mismatch \
+            < "$PATCH_FILE"
+          PATCH_STATUS=$?
+          set -e
           echo
-          echo "========================================"
-          echo "CHECK PATCH"
-          echo "========================================"
-          git apply --check "$PATCH_FILE"
-          echo "[OK] Patch check passed"
+          echo "patch exit code: $PATCH_STATUS"
           echo
-          echo "========================================"
-          echo "APPLY PATCH"
-          echo "========================================"
-          git apply "$PATCH_FILE"
-          echo "[OK] PGO patch applied successfully"
+          echo "============================================================"
+          echo "HANDLE arch/arm64/Kconfig SEPARATELY IF NEEDED"
+          echo "============================================================"
+          if [ -f arch/arm64/Kconfig.rej ]; then
+            echo "[WARN] arch/arm64/Kconfig hunk rejected, applying manually"
+            rm -f \
+              arch/arm64/Kconfig.rej \
+              arch/arm64/Kconfig.orig
+            if grep -q \
+              "select ARCH_SUPPORTS_PGO_CLANG" \
+              arch/arm64/Kconfig; then
+              echo "[OK] ARCH_SUPPORTS_PGO_CLANG already present"
+            elif grep -q \
+              "select ARCH_SUPPORTS_THINLTO" \
+              arch/arm64/Kconfig; then
+              sed -i \
+                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                arch/arm64/Kconfig
+              echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
+            else
+              echo "[FAIL] Could not find ARCH_SUPPORTS_THINLTO"
+              exit 1
+            fi
+          else
+            echo "[OK] arch/arm64/Kconfig applied cleanly from patch"
+          fi
+          echo
+          echo "============================================================"
+          echo "VERIFY NO REMAINING REJECTED HUNKS"
+          echo "============================================================"
+          if find . -name "*.rej" | grep -q .; then
+            echo "[FAIL] Rejected hunks still remain:"
+            find . -name "*.rej" \
+              -exec echo "--- {} ---" \; \
+              -exec cat {} \;
+            exit 1
+          fi
+          echo "[OK] No rejected hunks remain"
+          echo
+          echo "============================================================"
+          echo "VERIFY ARCH_SUPPORTS_PGO_CLANG"
+          echo "============================================================"
+          if grep -n \
+            "ARCH_SUPPORTS_PGO_CLANG" \
+            arch/arm64/Kconfig; then
+            echo "[OK] ARCH_SUPPORTS_PGO_CLANG confirmed"
+          else
+            echo "[FAIL] ARCH_SUPPORTS_PGO_CLANG missing"
+            exit 1
+          fi
+          echo
+          echo "Changed files:"
+          git status --short
+
       # ============================================================
       # 7. VERIFY PGO INTEGRATION
       # ============================================================
@@ -246,6 +299,7 @@ jobs:
             echo "PGO PATCH INTEGRATION: FAILED"
             exit 1
           fi
+
       # ============================================================
       # 8. RUN DEFCONFIG
       # ============================================================
@@ -288,6 +342,7 @@ jobs:
           grep -E \
             "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|DEBUG_FS|LTO_CLANG|POLLY_CLANG)=" \
             out/.config || true
+
       # ============================================================
       # 9. CHECK CLANG PGO SUPPORT
       # ============================================================
@@ -381,6 +436,7 @@ jobs:
           echo "PGO CAPABILITY RESULT"
           echo "========================================"
           echo "[SUPPORTED] Clang PGO"
+
       # ============================================================
       # 10. DRY-RUN COMPILE kernel/pgo/*.c
       # ============================================================
@@ -392,6 +448,7 @@ jobs:
           echo "DRY-RUN COMPILE kernel/pgo/*.c"
           echo "========================================"
           make O=out ARCH=arm64 CC=clang kernel/pgo/fs.o kernel/pgo/instrument.o 2>&1 | tail -100
+
       # ============================================================
       # 11. SUMMARY
       # ============================================================
