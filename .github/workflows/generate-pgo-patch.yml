@@ -1,22 +1,25 @@
-name: Generate Clang PGO DebugFS v16
+name: Generate PGO DebugFS Patch
 
 on:
   workflow_dispatch:
 
 jobs:
-  generate-pgo-patch:
+  generate:
     runs-on: ubuntu-22.04
 
     steps:
-
-      # ============================================================
-      # 1. CHECKOUT pgo-debugfs
-      # ============================================================
       - name: Checkout pgo-debugfs
         uses: actions/checkout@v4
         with:
           ref: pgo-debugfs
-          fetch-depth: 1
+          fetch-depth: 0
+
+      - name: Check branch
+        run: |
+          echo "Branch:"
+          git branch --show-current
+          echo "Commit:"
+          git rev-parse HEAD
 
       # ============================================================
       # 2. INSTALL DEPENDENCIES
