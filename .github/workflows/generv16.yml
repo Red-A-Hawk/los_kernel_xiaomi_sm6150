@@ -400,20 +400,20 @@ jobs:
 
           if ! grep -q '^CFLAGS_PGO_CLANG := -fprofile-generate$' "$FILE"; then
               sed -i '/^all: vmlinux$/a\
-\
-CFLAGS_PGO_CLANG := -fprofile-generate\
-export CFLAGS_PGO_CLANG' "$FILE"
+              \
+              CFLAGS_PGO_CLANG := -fprofile-generate\
+              export CFLAGS_PGO_CLANG' "$FILE"
           fi
 
           if ! grep -q '^ifdef CONFIG_PGO_CLANG$' "$FILE"; then
               sed -i '/^ifdef CONFIG_CFI_CLANG$/i\
-ifdef CONFIG_PGO_CLANG\
-# NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented\
-# builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only\
-# for the final rebuild that consumes the collected .profdata.\
-KBUILD_CFLAGS	+= -mllvm -disable-preinline -fno-if-conversion\
-endif\
-' "$FILE"
+              ifdef CONFIG_PGO_CLANG\
+              # NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented\
+              # builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only\
+              # for the final rebuild that consumes the collected .profdata.\
+              KBUILD_CFLAGS	+= -mllvm -disable-preinline -fno-if-conversion\
+              endif\
+             ' "$FILE"
           fi
 
           grep -n -A8 -B3 'CONFIG_PGO_CLANG' "$FILE"
