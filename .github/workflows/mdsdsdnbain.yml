@@ -252,7 +252,7 @@ jobs:
                 arch/arm64/Kconfig; then
 
               sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
                 arch/arm64/Kconfig
 
               echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
@@ -416,7 +416,7 @@ jobs:
                   next
                 }
 
-                print "\tPGO_CLANG_DATA"
+                print "  PGO_CLANG_DATA"
                 inserted=1
                 pending=0
               }
@@ -431,7 +431,7 @@ jobs:
 
               END {
                 if (pending) {
-                  print "\tPGO_CLANG_DATA"
+                  print "  PGO_CLANG_DATA"
                   inserted=1
                 }
 
@@ -982,76 +982,76 @@ jobs:
           echo "============================================================"
 
           echo "[INFO] clang path:"
-which clang
+          which clang
 
-echo "[INFO] clang version:"
-clang --version | head -n 1
+          echo "[INFO] clang version:"
+          clang --version | head -n 1
 
-echo "[TEST 1] Plain -fstack-protector-strong"
-if clang -Werror -fstack-protector-strong -c -x c /dev/null -o /tmp/ssp.o; then
-    echo "[PASS] Plain Clang supports -fstack-protector-strong"
-else
-    echo "[FAIL] Plain Clang rejected -fstack-protector-strong"
-fi
-rm -f /tmp/ssp.o
+          echo "[TEST 1] Plain -fstack-protector-strong"
+          if clang -Werror -fstack-protector-strong -c -x c /dev/null -o /tmp/ssp.o; then
+              echo "[PASS] Plain Clang supports -fstack-protector-strong"
+          else
+              echo "[FAIL] Plain Clang rejected -fstack-protector-strong"
+          fi
+          rm -f /tmp/ssp.o
 
-echo "[TEST 2] With CLANG_TRIPLE"
-if clang -Werror \
-    --target="${CLANG_TRIPLE%-}" \
-    -fstack-protector-strong \
-    -c -x c /dev/null -o /tmp/ssp.o; then
-    echo "[PASS] --target + -fstack-protector-strong"
-else
-    echo "[FAIL] --target + -fstack-protector-strong"
-fi
-rm -f /tmp/ssp.o
+          echo "[TEST 2] With CLANG_TRIPLE"
+          if clang -Werror \
+              --target="${CLANG_TRIPLE%-}" \
+              -fstack-protector-strong \
+              -c -x c /dev/null -o /tmp/ssp.o; then
+              echo "[PASS] --target + -fstack-protector-strong"
+          else
+              echo "[FAIL] --target + -fstack-protector-strong"
+          fi
+          rm -f /tmp/ssp.o
 
-echo "[TEST 3] With GCC_TOOLCHAIN"
-if clang -Werror \
-    --target="${CLANG_TRIPLE%-}" \
-    --gcc-toolchain="$GCC64_PATH" \
-    -fstack-protector-strong \
-    -c -x c /dev/null -o /tmp/ssp.o; then
-    echo "[PASS] --target + --gcc-toolchain + -fstack-protector-strong"
-else
-    echo "[FAIL] --target + --gcc-toolchain + -fstack-protector-strong"
-fi
-rm -f /tmp/ssp.o
+          echo "[TEST 3] With GCC_TOOLCHAIN"
+          if clang -Werror \
+              --target="${CLANG_TRIPLE%-}" \
+              --gcc-toolchain="$GCC64_PATH" \
+              -fstack-protector-strong \
+              -c -x c /dev/null -o /tmp/ssp.o; then
+              echo "[PASS] --target + --gcc-toolchain + -fstack-protector-strong"
+          else
+              echo "[FAIL] --target + --gcc-toolchain + -fstack-protector-strong"
+          fi
+          rm -f /tmp/ssp.o
 
-echo "[TEST 4] ARM CPU flags"
-if clang -Werror \
-    --target="${CLANG_TRIPLE%-}" \
-    --gcc-toolchain="$GCC64_PATH" \
-    -mcpu=cortex-a76+crc+crypto \
-    -mtune=cortex-a76 \
-    -march=armv8.2-a+crc+crypto \
-    -fstack-protector-strong \
-    -c -x c /dev/null -o /tmp/ssp.o; then
-    echo "[PASS] ARM CPU flags + -fstack-protector-strong"
-else
-    echo "[FAIL] ARM CPU flags + -fstack-protector-strong"
-fi
-rm -f /tmp/ssp.o
+          echo "[TEST 4] ARM CPU flags"
+          if clang -Werror \
+              --target="${CLANG_TRIPLE%-}" \
+              --gcc-toolchain="$GCC64_PATH" \
+              -mcpu=cortex-a76+crc+crypto \
+              -mtune=cortex-a76 \
+              -march=armv8.2-a+crc+crypto \
+              -fstack-protector-strong \
+              -c -x c /dev/null -o /tmp/ssp.o; then
+              echo "[PASS] ARM CPU flags + -fstack-protector-strong"
+          else
+              echo "[FAIL] ARM CPU flags + -fstack-protector-strong"
+          fi
+          rm -f /tmp/ssp.o
 
-echo "[INFO] Generating Kconfig headers..."
+          echo "[INFO] Generating Kconfig headers..."
 
-make O=out \
-  ARCH=arm64 \
-  LLVM=1 \
-  LLVM_IAS=1 \
-  CC=clang \
-  LD=ld.lld \
-  AR=llvm-ar \
-  AS=llvm-as \
-  NM=llvm-nm \
-  OBJCOPY=llvm-objcopy \
-  OBJDUMP=llvm-objdump \
-  STRIP=llvm-strip \
-  CROSS_COMPILE="$CROSS_COMPILE" \
-  CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-  CLANG_TRIPLE="$CLANG_TRIPLE" \
-  GCC_TOOLCHAIN="$GCC64_PATH" \
-  prepare
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            prepare
 
           echo "[OK] Kconfig/generated headers prepared"
 
