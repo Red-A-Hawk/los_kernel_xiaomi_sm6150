@@ -997,6 +997,7 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH"
             prepare
 
           echo "[OK] Kconfig/generated headers prepared"
