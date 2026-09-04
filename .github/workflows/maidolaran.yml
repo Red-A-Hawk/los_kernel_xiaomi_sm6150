@@ -1,0 +1,689 @@
+name: Extract Real Clang PGO Patch - 4.14 (debugs)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract-pgo-patch:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      # ============================================================
+      # 1. CHECKOUT KERNEL
+      # ============================================================
+      - name: Checkout Kernel Branch 16
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
+
+      # ============================================================
+      # 2. DEPENDENCIES
+      # ============================================================
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl
+
+      # ============================================================
+      # 3. CLEAN TREE
+      # ============================================================
+      - name: Clean Working Tree
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+
+      # ============================================================
+      # 4. DOWNLOAD ORIGINAL PGO PATCH
+      # ============================================================
+      - name: Download Original PGO Patch
+        run: |
+          PATCH="$RUNNER_TEMP/original-pgo.patch"
+
+          curl -L \
+            "https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-Add-Clang-PGO-support.patch" \
+            -o "$PATCH"
+
+          echo "PATCH=$PATCH" >> "$GITHUB_ENV"
+
+          echo "============================================================"
+          echo "PATCH"
+          echo "============================================================"
+
+          ls -lh "$PATCH"
+
+          echo
+          echo "Lines:"
+          wc -l "$PATCH"
+
+          echo
+          echo "PGO sections:"
+          grep -n "diff --git a/kernel/pgo/" "$PATCH"
+
+      # ============================================================
+      # 5. EXTRACT NEW PGO FILES
+      # ============================================================
+      - name: Extract New PGO Files
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "EXTRACT NEW PGO FILES"
+          echo "============================================================"
+
+          extract_new_file() {
+              local file="$1"
+              local output="$GITHUB_WORKSPACE/$file"
+              local marker="diff --git a/$file b/$file"
+
+              echo
+              echo "------------------------------------------------------------"
+              echo "FILE: $file"
+              echo "------------------------------------------------------------"
+
+              mkdir -p "$(dirname "$output")"
+
+              awk -v m="$marker" '
+                  $0 == m {
+                      in_diff=1
+                      in_hunk=0
+                      next
+                  }
+
+                  in_diff && /^diff --git / {
+                      exit
+                  }
+
+                  in_diff && /^@@ / {
+                      in_hunk=1
+                      next
+                  }
+
+                  in_hunk && /^\+/ {
+                      print substr($0, 2)
+                  }
+              ' "$PATCH" > "$output"
+
+              if [ ! -s "$output" ]; then
+                  echo "[ERROR] Failed to extract $file"
+                  echo
+                  echo "Searching patch:"
+                  grep -nF "$marker" "$PATCH" || true
+                  exit 1
+              fi
+
+              echo "[OK] Extracted $file"
+              echo "Lines: $(wc -l < "$output")"
+
+              echo
+              echo "First lines:"
+              sed -n '1,12p' "$output"
+          }
+
+          extract_new_file "kernel/pgo/Kconfig"
+          extract_new_file "kernel/pgo/Makefile"
+          extract_new_file "kernel/pgo/fs.c"
+          extract_new_file "kernel/pgo/instrument.c"
+          extract_new_file "kernel/pgo/pgo.h"
+
+      # ============================================================
+      # 6. REMOVE CC_IS_CLANG DEPENDENCY
+      # ============================================================
+      - name: Remove CC_IS_CLANG Dependency
+        run: |
+          set -e
+
+          FILE="kernel/pgo/Kconfig"
+
+          echo "============================================================"
+          echo "REMOVE CC_IS_CLANG"
+          echo "============================================================"
+
+          grep -n "CC_IS_CLANG" "$FILE" || true
+
+          sed -i '/^[[:space:]]*depends on CC_IS_CLANG[[:space:]]*$/d' "$FILE"
+
+          echo
+          echo "After modification:"
+          grep -n "depends on" "$FILE" || true
+
+          if grep -q "CC_IS_CLANG" "$FILE"; then
+              echo "[ERROR] CC_IS_CLANG still exists"
+              exit 1
+          fi
+
+      # ============================================================
+      # 7. arch/Kconfig
+      # ============================================================
+      - name: Modify arch Kconfig
+        run: |
+          set -e
+
+          FILE="arch/Kconfig"
+
+          echo "============================================================"
+          echo "MODIFY arch/Kconfig"
+          echo "============================================================"
+
+          if grep -q 'source "kernel/pgo/Kconfig"' "$FILE"; then
+              echo "[OK] Already present"
+          else
+              sed -i \
+                '/source "kernel\/gcov\/Kconfig"/a source "kernel/pgo/Kconfig"' \
+                "$FILE"
+          fi
+
+          grep -n -A2 -B2 'kernel/pgo/Kconfig' "$FILE"
+
+      # ============================================================
+      # 8. arch/arm64/Kconfig
+      # ============================================================
+      - name: Modify arm64 Kconfig
+        run: |
+          set -e
+
+          FILE="arch/arm64/Kconfig"
+
+          echo "============================================================"
+          echo "MODIFY arch/arm64/Kconfig"
+          echo "============================================================"
+
+          if grep -q 'select ARCH_SUPPORTS_PGO_CLANG' "$FILE"; then
+              echo "[OK] Already present"
+          else
+              sed -i \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
+                "$FILE"
+          fi
+
+          grep -n -A3 -B3 'ARCH_SUPPORTS_PGO_CLANG' "$FILE"
+
+      # ============================================================
+      # 9. DEFCONFIG
+      # ============================================================
+      - name: Modify Violet Defconfig
+        run: |
+          set -e
+
+          FILE="arch/arm64/configs/vendor/violet-perf_defconfig"
+
+          echo "============================================================"
+          echo "MODIFY DEFCONFIG"
+          echo "============================================================"
+
+          if grep -q '^CONFIG_DEBUG_FS=y$' "$FILE"; then
+              echo "[OK] CONFIG_DEBUG_FS already enabled"
+          elif grep -q '^# CONFIG_DEBUG_FS is not set$' "$FILE"; then
+              sed -i \
+                's/^# CONFIG_DEBUG_FS is not set$/CONFIG_DEBUG_FS=y/' \
+                "$FILE"
+          else
+              echo "CONFIG_DEBUG_FS=y" >> "$FILE"
+          fi
+
+          grep -n 'CONFIG_DEBUG_FS' "$FILE"
+
+      # ============================================================
+      # 10. VDSO
+      # ============================================================
+      - name: Modify VDSO Makefile
+        run: |
+          set -e
+
+          FILE="arch/arm64/kernel/vdso/Makefile"
+
+          echo "============================================================"
+          echo "MODIFY VDSO MAKEFILE"
+          echo "============================================================"
+
+          if grep -q '^PGO_PROFILE := n$' "$FILE"; then
+              echo "[OK] Already present"
+          else
+              sed -i \
+                '/^GCOV_PROFILE := n$/a PGO_PROFILE := n' \
+                "$FILE"
+          fi
+
+          grep -n -A2 -B2 'PGO_PROFILE' "$FILE"
+
+      # ============================================================
+      # 11. LINKER HEADER (FIXED)
+      #
+      # IMPORTANT: "#define BUG_TABLE" appears TWICE in this file:
+      #   1) The full multi-line definition inside "#ifdef CONFIG_GENERIC_BUG"
+      #   2) The empty fallback inside "#else"
+      #
+      # Matching on "^#define BUG_TABLE" alone is ambiguous and matches
+      # occurrence #1 first, which - combined with a getline - inserts
+      # PGO_CLANG_DATA in the MIDDLE of the BUG_TABLE macro's backslash
+      # continuation, corrupting it (this was a real bug in an earlier
+      # version of this script/patch).
+      #
+      # The fix: match the exact, unique 3-line sequence
+      #   #else
+      #   #define BUG_TABLE
+      #   #endif
+      # which only occurs once in the file (the fallback branch), and
+      # insert PGO_CLANG_DATA immediately after it.
+      # ============================================================
+      - name: Modify vmlinux.lds.h (linker macro definition)
+        run: |
+          set -e
+
+          FILE="include/asm-generic/vmlinux.lds.h"
+
+          echo "============================================================"
+          echo "MODIFY vmlinux.lds.h - define PGO_CLANG_DATA"
+          echo "============================================================"
+
+          if grep -q '^#define PGO_CLANG_DATA' "$FILE"; then
+              echo "[OK] PGO linker macro already exists"
+          else
+              awk '
+              BEGIN { inserted=0; state=0 }
+
+              {
+                  print
+              }
+
+              $0 == "#else" && !inserted { state = 1; next }
+              state == 1 && $0 == "#define BUG_TABLE" { state = 2; next }
+              state == 2 && $0 == "#endif" && !inserted {
+                  print ""
+                  print "#ifdef CONFIG_PGO_CLANG"
+                  print "#define PGO_CLANG_DATA \\"
+                  print "  __llvm_prf_data : AT(ADDR(__llvm_prf_data) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_data_start) = .; \\"
+                  print "    *(__llvm_prf_data) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_data_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_cnts : AT(ADDR(__llvm_prf_cnts) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_cnts_start) = .; \\"
+                  print "    *(__llvm_prf_cnts) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_cnts_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_names : AT(ADDR(__llvm_prf_names) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_names_start) = .; \\"
+                  print "    *(__llvm_prf_names) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_names_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_vals : AT(ADDR(__llvm_prf_vals) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vals_start) = .; \\"
+                  print "    *(__llvm_prf_vals) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vals_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_vnds : AT(ADDR(__llvm_prf_vnds) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vnds_start) = .; \\"
+                  print "    *(__llvm_prf_vnds) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vnds_end) = .; \\"
+                  print "  }"
+                  print "#else"
+                  print "#define PGO_CLANG_DATA"
+                  print "#endif"
+                  inserted=1
+                  state=0
+                  next
+              }
+              state != 0 && !($0 == "#define BUG_TABLE" || $0 == "#endif") { state = 0 }
+              ' "$FILE" > "$FILE.tmp"
+
+              mv "$FILE.tmp" "$FILE"
+
+              if ! grep -q '^#define PGO_CLANG_DATA' "$FILE"; then
+                  echo "[ERROR] PGO_CLANG_DATA was not inserted"
+                  exit 1
+              fi
+
+              echo "[OK] PGO linker macro inserted"
+          fi
+
+          echo
+          echo "Sanity check: BUG_TABLE macro must NOT be corrupted."
+          echo "Expected sequence around the insertion point:"
+          grep -n -B2 -A35 '^#define BUG_TABLE$' "$FILE" | head -45
+
+      # ============================================================
+      # 12. INSERT PGO_CLANG_DATA INTO RW_DATA_SECTION
+      #
+      # This step is safe as-is: it matches the USAGE of BUG_TABLE
+      # inside RW_DATA_SECTION (a single reference, not a definition),
+      # which is a unique line in the file.
+      # ============================================================
+      - name: Insert PGO Data Into RW_DATA_SECTION
+        run: |
+          set -e
+
+          FILE="include/asm-generic/vmlinux.lds.h"
+
+          echo "============================================================"
+          echo "INSERT PGO_CLANG_DATA usage"
+          echo "============================================================"
+
+          if grep -A2 -B2 'BUG_TABLE.*\\' "$FILE" | grep -q 'PGO_CLANG_DATA'; then
+              echo "[OK] PGO_CLANG_DATA already referenced"
+          else
+              awk '
+              /#define RW_DATA_SECTION/ { in_rw=1 }
+
+              in_rw && /BUG_TABLE/ && !inserted {
+                  print
+                  print "PGO_CLANG_DATA"
+                  inserted=1
+                  next
+              }
+
+              { print }
+              ' "$FILE" > "$FILE.tmp"
+
+              mv "$FILE.tmp" "$FILE"
+          fi
+
+          if ! grep -n -A3 -B3 'PGO_CLANG_DATA' "$FILE" | grep -q 'PGO_CLANG_DATA'; then
+              echo "[ERROR] PGO_CLANG_DATA reference missing"
+              exit 1
+          fi
+
+          echo
+          echo "Final verification: both PGO_CLANG_DATA occurrences"
+          echo "(definition + usage) present:"
+          grep -n 'PGO_CLANG_DATA' "$FILE"
+
+      # ============================================================
+      # 13. kernel/Makefile
+      # ============================================================
+      - name: Modify kernel Makefile
+        run: |
+          set -e
+
+          FILE="kernel/Makefile"
+
+          echo "============================================================"
+          echo "MODIFY kernel/Makefile"
+          echo "============================================================"
+
+          if grep -q 'obj-\$(CONFIG_PGO_CLANG) += pgo/' "$FILE"; then
+              echo "[OK] Already present"
+          else
+              sed -i \
+                '/obj-\$(CONFIG_CFI_CLANG) += cfi.o/a obj-$(CONFIG_PGO_CLANG) += pgo/' \
+                "$FILE"
+          fi
+
+          grep -n 'CONFIG_PGO_CLANG' "$FILE"
+
+      # ============================================================
+      # 14. TOP Makefile
+      # ============================================================
+      - name: Modify Top Makefile
+        run: |
+          set -e
+
+          FILE="Makefile"
+
+          echo "============================================================"
+          echo "MODIFY TOP Makefile"
+          echo "============================================================"
+
+          if ! grep -q '^CFLAGS_PGO_CLANG := -fprofile-generate$' "$FILE"; then
+              printf '\nCFLAGS_PGO_CLANG := -fprofile-generate\n' >> "$FILE"
+              printf 'export CFLAGS_PGO_CLANG\n' >> "$FILE"
+          fi
+
+          if ! grep -q '^ifdef CONFIG_PGO_CLANG$' "$FILE"; then
+              awk '
+              /^ifdef CONFIG_CFI_CLANG/ && !inserted {
+                  print "ifdef CONFIG_PGO_CLANG"
+                  print "# NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented"
+                  print "# builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only"
+                  print "# for the final rebuild that consumes the collected .profdata."
+                  print "KBUILD_CFLAGS  += -mllvm -disable-preinline -fno-if-conversion"
+                  print "endif"
+                  print ""
+                  inserted=1
+              }
+              { print }
+              ' "$FILE" > "$FILE.tmp"
+              mv "$FILE.tmp" "$FILE"
+          fi
+
+          grep -n -A8 -B3 'CONFIG_PGO_CLANG' "$FILE"
+
+      # ============================================================
+      # 15. scripts/Makefile.lib
+      # ============================================================
+      - name: Modify scripts/Makefile.lib
+        run: |
+          set -e
+
+          FILE="scripts/Makefile.lib"
+
+          echo "============================================================"
+          echo "MODIFY scripts/Makefile.lib"
+          echo "============================================================"
+
+          if grep -q 'CFLAGS_PGO_CLANG' "$FILE"; then
+              echo "[OK] PGO flags already present"
+              exit 0
+          fi
+
+          awk '
+          /# Enable gcov profiling flags/ {
+              print
+              print ""
+              print "#"
+              print "# Enable clang'\''s PGO profiling flags for a file or directory depending on"
+              print "# variables PGO_PROFILE_obj.o and PGO_PROFILE."
+              print "#"
+              print "ifeq ($(CONFIG_PGO_CLANG),y)"
+              print "_c_flags += $(if $(patsubst n%,, \\"
+              print "  $(PGO_PROFILE_$(basetarget).o)$(PGO_PROFILE)y), \\"
+              print "  $(CFLAGS_PGO_CLANG))"
+              print "endif"
+              next
+          }
+
+          { print }
+          ' "$FILE" > "$FILE.tmp"
+
+          mv "$FILE.tmp" "$FILE"
+
+          grep -n -A12 -B3 'CFLAGS_PGO_CLANG' "$FILE"
+
+      # ============================================================
+      # 16. VERIFY MODIFIED FILES
+      # ============================================================
+      - name: Verify PGO Integration
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "VERIFY PGO INTEGRATION"
+          echo "============================================================"
+
+          echo
+          echo "PGO files:"
+          find kernel/pgo -type f -maxdepth 1 -print
+
+          echo
+          echo "CC_IS_CLANG:"
+          if grep -Rnw "CC_IS_CLANG" kernel/pgo; then
+              echo "[ERROR] CC_IS_CLANG still present"
+              exit 1
+          else
+              echo "[OK] CC_IS_CLANG removed"
+          fi
+
+          echo
+          echo "CONFIG_PGO_CLANG:"
+          grep -Rnw "CONFIG_PGO_CLANG" \
+            kernel/pgo \
+            arch/Kconfig \
+            arch/arm64/Kconfig \
+            kernel/Makefile \
+            Makefile \
+            scripts/Makefile.lib \
+            include/asm-generic/vmlinux.lds.h || true
+
+          echo
+          echo "PGO linker sections:"
+          grep -n "__llvm_prf_" include/asm-generic/vmlinux.lds.h || true
+
+          echo
+          echo "----------------------------------------------------------"
+          echo "CRITICAL SANITY CHECK: BUG_TABLE macro integrity"
+          echo "----------------------------------------------------------"
+          echo "The full BUG_TABLE definition must end in a closing brace"
+          echo "'}' on its own line, with NO preprocessor directives"
+          echo "embedded inside its backslash-continuation."
+          echo
+          awk '
+          /^#define BUG_TABLE[[:space:]]*\\$/ { show=1 }
+          show { print; if (/^\t\}$/) { show=0; exit } }
+          ' include/asm-generic/vmlinux.lds.h
+
+      # ============================================================
+      # 17. INTENT-TO-ADD NEW FILES
+      # ============================================================
+      - name: Add New PGO Files To Git Diff
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "REGISTER NEW FILES FOR GIT DIFF"
+          echo "============================================================"
+
+          git add -N \
+            kernel/pgo/Kconfig \
+            kernel/pgo/Makefile \
+            kernel/pgo/fs.c \
+            kernel/pgo/instrument.c \
+            kernel/pgo/pgo.h
+
+          git status --short
+
+      # ============================================================
+      # 18. GENERATE REAL PATCH
+      # ============================================================
+      - name: Generate Real PGO Patch
+        run: |
+          set -e
+
+          OUTPUT="$GITHUB_WORKSPACE/0001-Add-Clang-PGO-support-4.14-debugfs.patch"
+
+          echo "============================================================"
+          echo "GENERATE REAL PATCH"
+          echo "============================================================"
+
+          git diff \
+            --binary \
+            --full-index \
+            --no-ext-diff \
+            > "$OUTPUT"
+
+          echo
+          echo "Patch:"
+          ls -lh "$OUTPUT"
+
+          echo
+          echo "Lines:"
+          wc -l "$OUTPUT"
+
+          echo
+          echo "Files:"
+          grep '^diff --git ' "$OUTPUT"
+
+          echo
+          echo "New PGO files:"
+          grep '^diff --git a/kernel/pgo/' "$OUTPUT"
+
+      # ============================================================
+      # 19. VERIFY PATCH FILE COUNT
+      # ============================================================
+      - name: Verify Generated Patch
+        run: |
+          set -e
+
+          PATCH="$GITHUB_WORKSPACE/0001-Add-Clang-PGO-support-4.14-debugfs.patch"
+
+          echo "============================================================"
+          echo "VERIFY GENERATED PATCH"
+          echo "============================================================"
+
+          EXPECTED=13
+
+          ACTUAL=$(grep -c '^diff --git ' "$PATCH")
+
+          echo "Expected files: $EXPECTED"
+          echo "Actual files:   $ACTUAL"
+
+          if [ "$ACTUAL" -ne "$EXPECTED" ]; then
+              echo "[ERROR] Wrong number of files"
+              echo
+              grep '^diff --git ' "$PATCH"
+              exit 1
+          fi
+
+          for FILE in \
+            "kernel/pgo/Kconfig" \
+            "kernel/pgo/Makefile" \
+            "kernel/pgo/fs.c" \
+            "kernel/pgo/instrument.c" \
+            "kernel/pgo/pgo.h" \
+            "arch/Kconfig" \
+            "arch/arm64/Kconfig" \
+            "arch/arm64/configs/vendor/violet-perf_defconfig" \
+            "arch/arm64/kernel/vdso/Makefile" \
+            "include/asm-generic/vmlinux.lds.h" \
+            "kernel/Makefile" \
+            "Makefile" \
+            "scripts/Makefile.lib"
+          do
+              if ! grep -qF "diff --git a/$FILE b/$FILE" "$PATCH"; then
+                  echo "[ERROR] Missing $FILE in generated patch"
+                  exit 1
+              fi
+          done
+
+          echo
+          echo "[OK] All 13 expected files present in generated patch"
+
+      # ============================================================
+      # 20. DRY-RUN VERIFY THE GENERATED PATCH RE-APPLIES CLEANLY
+      #     ON A FRESH CHECKOUT (final proof of correctness)
+      # ============================================================
+      - name: Re-apply Check on Fresh Tree
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "RE-APPLY CHECK ON FRESH CHECKOUT"
+          echo "============================================================"
+
+          PATCH="$GITHUB_WORKSPACE/0001-Add-Clang-PGO-support-4.14-debugfs.patch"
+
+          rm -rf "$RUNNER_TEMP/fresh"
+          mkdir -p "$RUNNER_TEMP/fresh"
+          git worktree add "$RUNNER_TEMP/fresh" HEAD~0 2>/dev/null || \
+            git archive HEAD | (mkdir -p "$RUNNER_TEMP/fresh" && tar -x -C "$RUNNER_TEMP/fresh")
+
+          cd "$RUNNER_TEMP/fresh"
+          git init -q 2>/dev/null || true
+
+          if git apply --check "$PATCH" 2>/tmp/apply-err.log; then
+              echo "[OK] Patch applies cleanly to a fresh tree"
+          else
+              echo "[FAIL] Patch does not apply cleanly"
+              cat /tmp/apply-err.log
+              exit 1
+          fi
+
+      # ============================================================
+      # 21. UPLOAD ARTIFACT
+      # ============================================================
+      - name: Upload Generated Patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: 0001-Add-Clang-PGO-support-4.14-debugfs
+          path: 0001-Add-Clang-PGO-support-4.14-debugfs.patch
