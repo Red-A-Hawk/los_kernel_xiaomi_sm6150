@@ -200,7 +200,6 @@ jobs:
 
           grep -n -A3 -B3 'ARCH_SUPPORTS_PGO_CLANG' "$FILE"
 
-
       # ============================================================
       # 9. VDSO
       # ============================================================
@@ -241,65 +240,65 @@ jobs:
               echo "[OK] PGO linker macro already exists"
           else
               awk '
-          BEGIN {
-              in_bug_table = 0
-              inserted = 0
-          }
+              BEGIN {
+                  in_bug_table = 0
+                  inserted = 0
+              }
 
-          /^#ifdef CONFIG_GENERIC_BUG$/ && !inserted {
-              in_bug_table = 1
-          }
+              /^#ifdef CONFIG_GENERIC_BUG$/ && !inserted {
+                  in_bug_table = 1
+              }
 
-          {
-              print
-          }
+              {
+                  print
+              }
 
-          in_bug_table && /^#endif$/ && !inserted {
-              print ""
-              print "#ifdef CONFIG_PGO_CLANG"
-              print "#define PGO_CLANG_DATA \\"
-              print "  __llvm_prf_data : AT(ADDR(__llvm_prf_data) - LOAD_OFFSET) { \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_data_start) = .; \\"
-              print "    *(__llvm_prf_data) \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_data_end) = .; \\"
-              print "  } \\"
-              print "  __llvm_prf_cnts : AT(ADDR(__llvm_prf_cnts) - LOAD_OFFSET) { \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_cnts_start) = .; \\"
-              print "    *(__llvm_prf_cnts) \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_cnts_end) = .; \\"
-              print "  } \\"
-              print "  __llvm_prf_names : AT(ADDR(__llvm_prf_names) - LOAD_OFFSET) { \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_names_start) = .; \\"
-              print "    *(__llvm_prf_names) \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_names_end) = .; \\"
-              print "  } \\"
-              print "  __llvm_prf_vals : AT(ADDR(__llvm_prf_vals) - LOAD_OFFSET) { \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_vals_start) = .; \\"
-              print "    *(__llvm_prf_vals) \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_vals_end) = .; \\"
-              print "  } \\"
-              print "  __llvm_prf_vnds : AT(ADDR(__llvm_prf_vnds) - LOAD_OFFSET) { \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_vnds_start) = .; \\"
-              print "    *(__llvm_prf_vnds) \\"
-              print "    VMLINUX_SYMBOL(__llvm_prf_vnds_end) = .; \\"
-              print "  }"
-              print "#else"
-              print "#define PGO_CLANG_DATA"
-              print "#endif"
+              in_bug_table && /^#endif$/ && !inserted {
+                  print ""
+                  print "#ifdef CONFIG_PGO_CLANG"
+                  print "#define PGO_CLANG_DATA \\"
+                  print "  __llvm_prf_data : AT(ADDR(__llvm_prf_data) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_data_start) = .; \\"
+                  print "    *(__llvm_prf_data) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_data_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_cnts : AT(ADDR(__llvm_prf_cnts) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_cnts_start) = .; \\"
+                  print "    *(__llvm_prf_cnts) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_cnts_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_names : AT(ADDR(__llvm_prf_names) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_names_start) = .; \\"
+                  print "    *(__llvm_prf_names) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_names_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_vals : AT(ADDR(__llvm_prf_vals) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vals_start) = .; \\"
+                  print "    *(__llvm_prf_vals) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vals_end) = .; \\"
+                  print "  } \\"
+                  print "  __llvm_prf_vnds : AT(ADDR(__llvm_prf_vnds) - LOAD_OFFSET) { \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vnds_start) = .; \\"
+                  print "    *(__llvm_prf_vnds) \\"
+                  print "    VMLINUX_SYMBOL(__llvm_prf_vnds_end) = .; \\"
+                  print "  }"
+                  print "#else"
+                  print "#define PGO_CLANG_DATA"
+                  print "#endif"
 
-              in_bug_table = 0
-              inserted = 1
-          }
-          ' "$FILE" > "$FILE.tmp"
+                  in_bug_table = 0
+                  inserted = 1
+              }
+              ' "$FILE" > "$FILE.tmp"
 
-          mv "$FILE.tmp" "$FILE"
+              mv "$FILE.tmp" "$FILE"
 
-          if ! grep -q '^#define PGO_CLANG_DATA' "$FILE"; then
-              echo "[ERROR] PGO_CLANG_DATA was not inserted"
-              exit 1
-          fi
+              if ! grep -q '^#define PGO_CLANG_DATA' "$FILE"; then
+                  echo "[ERROR] PGO_CLANG_DATA was not inserted"
+                  exit 1
+              fi
 
-          echo "[OK] PGO linker macro inserted"
+              echo "[OK] PGO linker macro inserted"
           fi
 
       # ============================================================
@@ -362,7 +361,7 @@ jobs:
           FILE="kernel/Makefile"
 
           echo "============================================================"
-          echo "MODIFY kernel/Makefile"
+          echo "MODIFY kernel Makefile"
           echo "============================================================"
 
           if grep -q 'obj-\$(CONFIG_PGO_CLANG) += pgo/' "$FILE"; then
@@ -395,19 +394,19 @@ jobs:
 
           if ! grep -q '^ifdef CONFIG_PGO_CLANG$' "$FILE"; then
               awk '
-          /^ifdef CONFIG_CFI_CLANG/ && !inserted {
-              print "ifdef CONFIG_PGO_CLANG"
-              print "# NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented"
-              print "# builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only"
-              print "# for the final rebuild that consumes the collected .profdata."
-              print "KBUILD_CFLAGS  += -mllvm -disable-preinline -fno-if-conversion"
-              print "endif"
-              print ""
-              inserted=1
-          }
-          { print }
-          ' "$FILE" > "$FILE.tmp"
-          mv "$FILE.tmp" "$FILE"
+              /^ifdef CONFIG_CFI_CLANG/ && !inserted {
+                  print "ifdef CONFIG_PGO_CLANG"
+                  print "# NOTE: do not enable together with LTO_CLANG / POLLY_CLANG. Instrumented"
+                  print "# builds should be compiled with PGO_CLANG alone; re-enable LTO/Polly only"
+                  print "# for the final rebuild that consumes the collected .profdata."
+                  print "KBUILD_CFLAGS  += -mllvm -disable-preinline -fno-if-conversion"
+                  print "endif"
+                  print ""
+                  inserted=1
+              }
+              { print }
+              ' "$FILE" > "$FILE.tmp"
+              mv "$FILE.tmp" "$FILE"
           fi
 
           grep -n -A8 -B3 'CONFIG_PGO_CLANG' "$FILE"
@@ -493,7 +492,7 @@ jobs:
           grep -n "__llvm_prf_" include/asm-generic/vmlinux.lds.h || true
 
       # ============================================================
-      # 16A. UPLOAD MODIFIED FILES ONLY
+      # 15A. UPLOAD MODIFIED FILES ONLY
       # ============================================================
       - name: Upload Modified Files Only
         if: always()
@@ -504,7 +503,6 @@ jobs:
             kernel/pgo/
             arch/Kconfig
             arch/arm64/Kconfig
-            arch/arm64/configs/vendor/violet-perf_defconfig
             arch/arm64/kernel/vdso/Makefile
             include/asm-generic/vmlinux.lds.h
             kernel/Makefile
@@ -513,7 +511,7 @@ jobs:
           if-no-files-found: warn
 
       # ============================================================
-      # 17. INTENT-TO-ADD NEW FILES
+      # 16. INTENT-TO-ADD NEW FILES
       # ============================================================
       - name: Add New PGO Files To Git Diff
         run: |
@@ -533,7 +531,7 @@ jobs:
           git status --short
 
       # ============================================================
-      # 18. GENERATE REAL PATCH
+      # 17. GENERATE REAL PATCH
       # ============================================================
       - name: Generate Real PGO Patch
         run: |
@@ -568,7 +566,7 @@ jobs:
           grep '^diff --git a/kernel/pgo/' "$OUTPUT"
 
       # ============================================================
-      # 19. VERIFY PATCH FILE COUNT
+      # 18. VERIFY PATCH FILE COUNT
       # ============================================================
       - name: Verify Generated Patch
         run: |
@@ -580,7 +578,7 @@ jobs:
           echo "VERIFY GENERATED PATCH"
           echo "============================================================"
 
-          EXPECTED=13
+          EXPECTED=12
 
           ACTUAL=$(grep -c '^diff --git ' "$PATCH")
 
@@ -602,7 +600,6 @@ jobs:
             "kernel/pgo/pgo.h" \
             "arch/Kconfig" \
             "arch/arm64/Kconfig" \
-            "arch/arm64/configs/vendor/violet-perf_defconfig" \
             "arch/arm64/kernel/vdso/Makefile" \
             "include/asm-generic/vmlinux.lds.h" \
             "kernel/Makefile" \
@@ -616,10 +613,10 @@ jobs:
           done
 
           echo
-          echo "[OK] All 13 files are present"
+          echo "[OK] All 12 files are present"
 
       # ============================================================
-      # 20. TEST PATCH ON CLEAN BRANCH 16
+      # 19. TEST PATCH ON CLEAN BRANCH 16
       # ============================================================
       - name: Test Patch On Clean Branch
         run: |
@@ -666,7 +663,7 @@ jobs:
           echo "[OK] Clean-tree patch verification passed"
 
       # ============================================================
-      # 21. UPLOAD ARTIFACTS
+      # 20. UPLOAD ARTIFACTS
       # ============================================================
       - name: Upload PGO Patch
         uses: actions/upload-artifact@v4
