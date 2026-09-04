@@ -1,4 +1,4 @@
-name: Extract Real Clang PGO PROCS V1
+name: Extract Real Clang PGO PROCS V1 (patchfinal2)
 
 on:
   workflow_dispatch:
