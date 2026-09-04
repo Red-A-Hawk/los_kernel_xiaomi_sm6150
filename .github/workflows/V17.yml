@@ -624,7 +624,7 @@ jobs:
           rm -f "$LOG"
 
           echo "============================================================"
-          echo "[1] Generate kernel preparation headers"
+          echo "[1] Generate kernel configuration headers"
           echo "============================================================"
 
           make \
@@ -643,8 +643,7 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             CLANG_TRIPLE="$CLANG_TRIPLE" \
-            CONFIG_CC_STACKPROTECTOR_STRONG=n \
-            prepare
+            silentoldconfig
 
 
           echo
