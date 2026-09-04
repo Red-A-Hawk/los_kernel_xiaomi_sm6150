@@ -42,7 +42,7 @@ jobs:
           PATCH="$RUNNER_TEMP/original-pgo.patch"
 
           curl -L \
-            "https://raw.githubusercontent.com/Red-A-Hawk/Patch/kernel_xiaomi_violet/0001-ARM64-Clang-PGO-4.14-RedHawk-final.patch" \
+            "https://raw.githubusercontent.com/Red-A-Hawk/Patch/e22214b40cf651583c9f1595f65d28dd326c8c90/0001-ARM64-Clang-PGO-4.14-RedHawk-final2.patch" \
             -o "$PATCH"
 
           echo "PATCH=$PATCH" >> "$GITHUB_ENV"
