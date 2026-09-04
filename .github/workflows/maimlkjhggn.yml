@@ -1,4 +1,4 @@
-name: Build Real Clang PGO PROCS V1 (finale)
+name: Build Real Clang PGO PROCS V1.1 (finale)
 
 on:
   workflow_dispatch:
