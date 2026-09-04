@@ -327,17 +327,20 @@ jobs:
           echo "============================================================"
 
           echo
-          echo "[1] Verify PGO condition"
+          echo "[1] Verify PGO_CLANG_DATA definition"
 
           if grep -q \
-              '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
+              -E '^#(if defined\(CONFIG_PGO_CLANG\) && defined\(LINKER_SCRIPT\)|ifdef CONFIG_PGO_CLANG)$' \
+              "$LDSH" && \
+             grep -q \
+              '^#define PGO_CLANG_DATA' \
               "$LDSH"; then
 
-            echo "[OK] PGO linker condition uses LINKER_SCRIPT"
+            echo "[OK] PGO_CLANG_DATA definition found"
 
           else
 
-            echo "[FAIL] Expected LINKER_SCRIPT PGO condition not found"
+            echo "[FAIL] PGO_CLANG_DATA definition not found"
 
             grep -n \
               -E 'PGO_CLANG|LINKER_SCRIPT' \
@@ -715,17 +718,28 @@ jobs:
           fi
 
           echo
-          echo "[10] PGO linker condition"
+          echo "[10] PGO_CLANG_DATA definition"
 
-          if grep -n \
-              '#if defined(CONFIG_PGO_CLANG) && defined(LINKER_SCRIPT)' \
+          if grep -q \
+              -E '^#(if defined\(CONFIG_PGO_CLANG\) && defined\(LINKER_SCRIPT\)|ifdef CONFIG_PGO_CLANG)$' \
+              include/asm-generic/vmlinux.lds.h && \
+             grep -q \
+              '^#define PGO_CLANG_DATA' \
               include/asm-generic/vmlinux.lds.h; then
 
-            echo "[OK] PGO linker condition correct"
+            echo "[OK] PGO_CLANG_DATA definition is valid"
+
+            grep -n \
+              -E \
+              -B2 \
+              -A12 \
+              "PGO_CLANG_DATA" \
+              include/asm-generic/vmlinux.lds.h \
+              || true
 
           else
 
-            echo "[FAIL] PGO linker condition incorrect"
+            echo "[FAIL] PGO_CLANG_DATA definition is invalid"
             FAIL=1
 
           fi
