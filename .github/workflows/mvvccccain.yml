@@ -339,30 +339,42 @@ jobs:
           echo "INSERT PGO_CLANG_DATA"
           echo "============================================================"
 
-          if grep -A2 -B2 'BUG_TABLE.*\\' "$FILE" | grep -q 'PGO_CLANG_DATA'; then
+          if awk '
+          /#define RW_DATA_SECTION/ { in_rw=1; next }
+          in_rw && /BUG_TABLE/ { found_bug_table=1; next }
+          in_rw && found_bug_table && /PGO_CLANG_DATA/ { found=1; exit }
+          in_rw && /^}/ { exit }
+          END { exit(found ? 0 : 1) }
+          ' "$FILE"; then
               echo "[OK] PGO_CLANG_DATA already referenced"
               exit 0
           fi
 
           awk '
           /#define RW_DATA_SECTION/ { in_rw=1 }
-
           in_rw && /BUG_TABLE/ && !inserted {
               print
               print "PGO_CLANG_DATA"
               inserted=1
               next
           }
-
           { print }
           ' "$FILE" > "$FILE.tmp"
 
           mv "$FILE.tmp" "$FILE"
 
-          if ! grep -n -A3 -B3 'PGO_CLANG_DATA' "$FILE"; then
+          if ! awk '
+          /#define RW_DATA_SECTION/ { in_rw=1; next }
+          in_rw && /BUG_TABLE/ { found_bug_table=1; next }
+          in_rw && found_bug_table && /PGO_CLANG_DATA/ { found=1; exit }
+          in_rw && /^}/ { exit }
+          END { exit(found ? 0 : 1) }
+          ' "$FILE"; then
               echo "[ERROR] PGO_CLANG_DATA reference missing"
               exit 1
           fi
+
+          echo "[OK] PGO_CLANG_DATA inserted into RW_DATA_SECTION"
 
       # ============================================================
       # 13. kernel/Makefile
