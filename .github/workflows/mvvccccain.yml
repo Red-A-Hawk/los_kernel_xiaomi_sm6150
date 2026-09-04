@@ -200,33 +200,9 @@ jobs:
 
           grep -n -A3 -B3 'ARCH_SUPPORTS_PGO_CLANG' "$FILE"
 
-      # ============================================================
-      # 9. DEFCONFIG
-      # ============================================================
-      - name: Modify Violet Defconfig
-        run: |
-          set -e
-
-          FILE="arch/arm64/configs/vendor/violet-perf_defconfig"
-
-          echo "============================================================"
-          echo "MODIFY DEFCONFIG"
-          echo "============================================================"
-
-          if grep -q '^CONFIG_DEBUG_FS=y$' "$FILE"; then
-              echo "[OK] CONFIG_DEBUG_FS already enabled"
-          elif grep -q '^# CONFIG_DEBUG_FS is not set$' "$FILE"; then
-              sed -i \
-                's/^# CONFIG_DEBUG_FS is not set$/CONFIG_DEBUG_FS=y/' \
-                "$FILE"
-          else
-              echo "CONFIG_DEBUG_FS=y" >> "$FILE"
-          fi
-
-          grep -n 'CONFIG_DEBUG_FS' "$FILE"
 
       # ============================================================
-      # 10. VDSO
+      # 9. VDSO
       # ============================================================
       - name: Modify VDSO Makefile
         run: |
@@ -249,7 +225,7 @@ jobs:
           grep -n -A2 -B2 'PGO_PROFILE' "$FILE"
 
       # ============================================================
-      # 11. LINKER HEADER
+      # 10. LINKER HEADER
       # ============================================================
       - name: Modify vmlinux.lds.h
         run: |
@@ -327,7 +303,7 @@ jobs:
           fi
 
       # ============================================================
-      # 12. INSERT PGO_CLANG_DATA INTO RW_DATA_SECTION
+      # 11. INSERT PGO_CLANG_DATA INTO RW_DATA_SECTION
       # ============================================================
       - name: Insert PGO Data Into RW_DATA_SECTION
         run: |
@@ -377,7 +353,7 @@ jobs:
           echo "[OK] PGO_CLANG_DATA inserted into RW_DATA_SECTION"
 
       # ============================================================
-      # 13. kernel/Makefile
+      # 12. kernel/Makefile
       # ============================================================
       - name: Modify kernel Makefile
         run: |
@@ -400,7 +376,7 @@ jobs:
           grep -n 'CONFIG_PGO_CLANG' "$FILE"
 
       # ============================================================
-      # 14. TOP Makefile
+      # 13. TOP Makefile
       # ============================================================
       - name: Modify Top Makefile
         run: |
@@ -437,7 +413,7 @@ jobs:
           grep -n -A8 -B3 'CONFIG_PGO_CLANG' "$FILE"
 
       # ============================================================
-      # 15. scripts/Makefile.lib
+      # 14. scripts/Makefile.lib
       # ============================================================
       - name: Modify scripts/Makefile.lib
         run: |
@@ -478,7 +454,7 @@ jobs:
           grep -n -A12 -B3 'CFLAGS_PGO_CLANG' "$FILE"
 
       # ============================================================
-      # 16. VERIFY MODIFIED FILES
+      # 15. VERIFY MODIFIED FILES
       # ============================================================
       - name: Verify PGO Integration
         run: |
