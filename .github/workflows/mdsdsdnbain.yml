@@ -987,53 +987,107 @@ jobs:
           echo "[INFO] clang version:"
           clang --version | head -n 1
 
-          echo "[TEST 1] Plain -fstack-protector-strong"
-          if clang -Werror -fstack-protector-strong -c -x c /dev/null -o /tmp/ssp.o; then
-              echo "[PASS] Plain Clang supports -fstack-protector-strong"
-          else
-              echo "[FAIL] Plain Clang rejected -fstack-protector-strong"
-          fi
-          rm -f /tmp/ssp.o
+          echo "[INFO] Preparing kernel environment for exact cc-option reproduction..."
 
-          echo "[TEST 2] With CLANG_TRIPLE"
-          if clang -Werror \
-              --target="${CLANG_TRIPLE%-}" \
-              -fstack-protector-strong \
-              -c -x c /dev/null -o /tmp/ssp.o; then
-              echo "[PASS] --target + -fstack-protector-strong"
-          else
-              echo "[FAIL] --target + -fstack-protector-strong"
-          fi
-          rm -f /tmp/ssp.o
+          make O=out \
+            ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            AS=llvm-as \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            prepare
 
-          echo "[TEST 3] With GCC_TOOLCHAIN"
-          if clang -Werror \
-              --target="${CLANG_TRIPLE%-}" \
-              --gcc-toolchain="$GCC64_PATH" \
-              -fstack-protector-strong \
-              -c -x c /dev/null -o /tmp/ssp.o; then
-              echo "[PASS] --target + --gcc-toolchain + -fstack-protector-strong"
-          else
-              echo "[FAIL] --target + --gcc-toolchain + -fstack-protector-strong"
-          fi
-          rm -f /tmp/ssp.o
+          echo "============================================================"
+          echo "[TEST 5] Exact cc-option environment"
+          echo "============================================================"
 
-          echo "[TEST 4] ARM CPU flags"
-          if clang -Werror \
-              --target="${CLANG_TRIPLE%-}" \
-              --gcc-toolchain="$GCC64_PATH" \
-              -mcpu=cortex-a76+crc+crypto \
-              -mtune=cortex-a76 \
-              -march=armv8.2-a+crc+crypto \
-              -fstack-protector-strong \
-              -c -x c /dev/null -o /tmp/ssp.o; then
-              echo "[PASS] ARM CPU flags + -fstack-protector-strong"
-          else
-              echo "[FAIL] ARM CPU flags + -fstack-protector-strong"
-          fi
-          rm -f /tmp/ssp.o
+          echo "[INFO] CC:"
+          make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | grep '^CC[[:space:]]*=' | head -n 1
 
-          echo "[INFO] Generating Kconfig headers..."
+          echo "[INFO] KBUILD_CPPFLAGS:"
+          make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | grep '^KBUILD_CPPFLAGS[[:space:]]*=' | head -n 1
+
+          echo "[INFO] KBUILD_CFLAGS:"
+          make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | grep '^KBUILD_CFLAGS[[:space:]]*=' | head -n 1
+
+          echo "[INFO] CC_OPTION_CFLAGS:"
+          make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | grep '^CC_OPTION_CFLAGS[[:space:]]*=' | head -n 1
+
+          echo "============================================================"
+          echo "[TEST 6] Exact compiler test with kernel flags"
+          echo "============================================================"
+
+          CC_OPTION_CFLAGS="$(make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | sed -n 's/^CC_OPTION_CFLAGS[[:space:]]*=[[:space:]]*//p')"
+
+          KBUILD_CPPFLAGS="$(make -s O=out ARCH=arm64 LLVM=1 CC=clang \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            CLANG_TRIPLE="$CLANG_TRIPLE" \
+            GCC_TOOLCHAIN="$GCC64_PATH" \
+            -pn 2>/dev/null | sed -n 's/^KBUILD_CPPFLAGS[[:space:]]*=[[:space:]]*//p')"
+
+          echo "[INFO] Running:"
+          echo "clang -Werror $KBUILD_CPPFLAGS $CC_OPTION_CFLAGS -fstack-protector-strong -c -x c /dev/null"
+
+          echo "------------------------------------------------------------"
+
+          clang -Werror \
+            $KBUILD_CPPFLAGS \
+            $CC_OPTION_CFLAGS \
+            -fstack-protector-strong \
+            -c -x c /dev/null \
+            -o /tmp/kernel-cc-option-test.o
+
+          CC_RESULT=$?
+
+          echo "------------------------------------------------------------"
+
+          if [ "$CC_RESULT" -eq 0 ]; then
+              echo "[PASS] Exact cc-option reproduction succeeded"
+          else
+              echo "[FAIL] Exact cc-option reproduction failed"
+          fi
+
+          rm -f /tmp/kernel-cc-option-test.o
+
+          echo "============================================================"
+          echo "[7] Original Kconfig preparation"
+          echo "============================================================"
 
           make O=out \
             ARCH=arm64 \
