@@ -252,7 +252,7 @@ jobs:
                 arch/arm64/Kconfig; then
 
               sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
                 arch/arm64/Kconfig
 
               echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
