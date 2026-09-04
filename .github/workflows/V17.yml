@@ -651,22 +651,42 @@ jobs:
           echo "[2] Direct Clang preprocessing"
           echo "============================================================"
 
+          cd out
+
+          rm -f \
+            arch/arm64/kernel/vmlinux.lds \
+            arch/arm64/kernel/.vmlinux.lds.d \
+            arch/arm64/kernel/.vmlinux.lds.cmd \
+            arch/arm64/kernel/.vmlinux.lds.tmp
+
           clang \
             -E \
-            -P \
-            -I "$GITHUB_WORKSPACE/out/include" \
-            -I "$GITHUB_WORKSPACE/include" \
-            -I "$GITHUB_WORKSPACE/arch/arm64/include" \
-            -I "$GITHUB_WORKSPACE/arch/arm64/include/generated" \
+            -Wp,-MD,arch/arm64/kernel/.vmlinux.lds.d \
+            -nostdinc \
+            -isystem "$CLANG_PATH/lib64/clang/12.0.5/include" \
+            -I../arch/arm64/include \
+            -I./arch/arm64/include/generated \
+            -I../include \
+            -I./include \
+            -I../arch/arm64/include/uapi \
+            -I./arch/arm64/include/generated/uapi \
+            -I../include/uapi \
+            -I./include/generated/uapi \
+            -include ../include/linux/kconfig.h \
             -D__KERNEL__ \
-            -DCONFIG_PGO_CLANG \
-            -DCONFIG_ARCH_SUPPORTS_PGO_CLANG \
-            -DCONFIG_DEBUG_FS \
+            -Qunused-arguments \
+            -mlittle-endian \
+            -DKASAN_SHADOW_SCALE_SHIFT=3 \
+            -DTEXT_OFFSET=0x00080000 \
+            -DLINKER_SCRIPT \
+            -P \
+            -Uarm64 \
             -D__ASSEMBLY__ \
-            -D__LINKER__ \
-            -x c \
-            arch/arm64/kernel/vmlinux.lds.S \
+            -o arch/arm64/kernel/vmlinux.lds \
+            ../arch/arm64/kernel/vmlinux.lds.S \
             > "$LOG" 2>&1
+
+          cd ..
 
 
           echo
@@ -676,7 +696,8 @@ jobs:
 
           if grep -n \
               "__llvm_prf_data\|__llvm_prf_cnts\|__llvm_prf_names\|__llvm_prf_vals\|__llvm_prf_vnds" \
-              "$LOG"; then
+              "$LOG" \
+              out/arch/arm64/kernel/vmlinux.lds; then
             echo "[OK] LLVM PGO sections reached preprocessed linker script"
           else
             echo "[FAIL] LLVM PGO sections missing from preprocessing output"
