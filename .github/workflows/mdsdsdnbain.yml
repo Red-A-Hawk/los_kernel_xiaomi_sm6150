@@ -343,7 +343,7 @@ jobs:
             echo "[FAIL] PGO_CLANG_DATA definition not found"
 
             grep -n \
-              -E 'PGO_CLANG|LINKER_SCRIPT' \
+              -E 'PGO_CLANG_DATA|CONFIG_PGO_CLANG|LINKER_SCRIPT' \
               "$LDSH" || true
 
             exit 1
@@ -534,7 +534,7 @@ jobs:
           grep -n \
             -B3 \
             -A20 \
-            "#if defined(CONFIG_PGO_CLANG)" \
+            -E '#if defined\(CONFIG_PGO_CLANG\)|#ifdef CONFIG_PGO_CLANG|LINKER_SCRIPT' \
             "$LDSH" || true
 
           echo
@@ -728,14 +728,6 @@ jobs:
               include/asm-generic/vmlinux.lds.h; then
 
             echo "[OK] PGO_CLANG_DATA definition is valid"
-
-            grep -n \
-              -E \
-              -B2 \
-              -A12 \
-              "PGO_CLANG_DATA" \
-              include/asm-generic/vmlinux.lds.h \
-              || true
 
           else
 
