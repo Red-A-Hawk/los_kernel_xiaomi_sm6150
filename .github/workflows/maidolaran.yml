@@ -250,23 +250,6 @@ jobs:
 
       # ============================================================
       # 11. LINKER HEADER (FIXED)
-      #
-      # IMPORTANT: "#define BUG_TABLE" appears TWICE in this file:
-      #   1) The full multi-line definition inside "#ifdef CONFIG_GENERIC_BUG"
-      #   2) The empty fallback inside "#else"
-      #
-      # Matching on "^#define BUG_TABLE" alone is ambiguous and matches
-      # occurrence #1 first, which - combined with a getline - inserts
-      # PGO_CLANG_DATA in the MIDDLE of the BUG_TABLE macro's backslash
-      # continuation, corrupting it (this was a real bug in an earlier
-      # version of this script/patch).
-      #
-      # The fix: match the exact, unique 3-line sequence
-      #   #else
-      #   #define BUG_TABLE
-      #   #endif
-      # which only occurs once in the file (the fallback branch), and
-      # insert PGO_CLANG_DATA immediately after it.
       # ============================================================
       - name: Modify vmlinux.lds.h (linker macro definition)
         run: |
@@ -346,10 +329,6 @@ jobs:
 
       # ============================================================
       # 12. INSERT PGO_CLANG_DATA INTO RW_DATA_SECTION
-      #
-      # This step is safe as-is: it matches the USAGE of BUG_TABLE
-      # inside RW_DATA_SECTION (a single reference, not a definition),
-      # which is a unique line in the file.
       # ============================================================
       - name: Insert PGO Data Into RW_DATA_SECTION
         run: |
@@ -544,6 +523,26 @@ jobs:
           ' include/asm-generic/vmlinux.lds.h
 
       # ============================================================
+      # 16A. UPLOAD MODIFIED FILES ONLY (NEW!)
+      # ============================================================
+      - name: Upload Modified Files Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgo-modified-files
+          path: |
+            kernel/pgo/
+            arch/Kconfig
+            arch/arm64/Kconfig
+            arch/arm64/configs/vendor/violet-perf_defconfig
+            arch/arm64/kernel/vdso/Makefile
+            include/asm-generic/vmlinux.lds.h
+            kernel/Makefile
+            Makefile
+            scripts/Makefile.lib
+          if-no-files-found: warn
+
+      # ============================================================
       # 17. INTENT-TO-ADD NEW FILES
       # ============================================================
       - name: Add New PGO Files To Git Diff
@@ -651,7 +650,6 @@ jobs:
 
       # ============================================================
       # 20. DRY-RUN VERIFY THE GENERATED PATCH RE-APPLIES CLEANLY
-      #     ON A FRESH CHECKOUT (final proof of correctness)
       # ============================================================
       - name: Re-apply Check on Fresh Tree
         run: |
@@ -680,7 +678,7 @@ jobs:
           fi
 
       # ============================================================
-      # 21. UPLOAD ARTIFACT
+      # 21. UPLOAD ARTIFACT (FINAL PATCH)
       # ============================================================
       - name: Upload Generated Patch
         uses: actions/upload-artifact@v4
