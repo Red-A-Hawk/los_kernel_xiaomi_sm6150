@@ -1,4 +1,4 @@
-name: Build Real Clang PGO PROCS V1.1 (finale)
+name: Build Real Clang PGO PROCS V1 (finale)
 
 on:
   workflow_dispatch:
@@ -908,6 +908,65 @@ jobs:
           grep -E \
             "CONFIG_(ARCH_SUPPORTS_PGO_CLANG|PGO_CLANG|PROC_FS)=" \
             out/.config
+
+      # ============================================================
+      # 10A. DISABLE CC_STACKPROTECTOR_STRONG (WORKAROUND)
+      #
+      # The top-level Makefile's "prepare-compiler-check" target hard
+      # -fails (exit 1) if CONFIG_CC_STACKPROTECTOR_STRONG (or
+      # _REGULAR) is enabled and `cc-option` reports the matching
+      # flag (-fstack-protector-strong / -fstack-protector) as
+      # unsupported by $(CC). In this CI environment that cc-option
+      # probe fails for this specific clang + old GCC 4.9
+      # cross-toolchain combination, even though the flag itself is
+      # trivially supported by clang 12 in isolation.
+      #
+      # Crucially: this hard failure ONLY triggers when stackp-name
+      # is defined, i.e. only when STRONG or REGULAR is set. If
+      # neither is set, the Makefile falls back to a *non-fatal*
+      # cc-option probe for -fno-stack-protector (see Makefile lines
+      # 781-792). So disabling both here sidesteps the broken check
+      # entirely, at the cost of losing stack-protector hardening
+      # for this particular PGO build.
+      # ============================================================
+      - name: Disable CC_STACKPROTECTOR_STRONG (workaround)
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "DISABLE CC_STACKPROTECTOR_STRONG / REGULAR (WORKAROUND)"
+          echo "============================================================"
+
+          echo
+          echo "Before:"
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            out/.config \
+            || echo "(no CC_STACKPROTECTOR lines present)"
+
+          sed -i \
+            -e '/CONFIG_CC_STACKPROTECTOR_REGULAR/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_STRONG/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_AUTO/d' \
+            -e '/CONFIG_CC_STACKPROTECTOR_NONE/d' \
+            out/.config
+
+          cat >> out/.config << 'CFGEOF'
+# CONFIG_CC_STACKPROTECTOR_REGULAR is not set
+# CONFIG_CC_STACKPROTECTOR_STRONG is not set
+# CONFIG_CC_STACKPROTECTOR_AUTO is not set
+CONFIG_CC_STACKPROTECTOR_NONE=y
+CFGEOF
+
+          echo
+          echo "After:"
+          grep -E \
+            "CONFIG_CC_STACKPROTECTOR" \
+            out/.config
+
+          echo
+          echo "[OK] Stack protector STRONG/REGULAR disabled to avoid"
+          echo "     the broken prepare-compiler-check cc-option probe."
 
       # ============================================================
       # 11. DEBUG PGO LINKER PREPROCESSING
