@@ -473,6 +473,64 @@ jobs:
           echo "[OK] PGO integration verified"
 
       # ============================================================
+      # 9A. UPLOAD PGO PATCHED FILES
+      # ============================================================
+      - name: Upload PGO Patched Files
+        if: always()
+        shell: bash
+        run: |
+          set -e
+
+          cd "$GITHUB_WORKSPACE"
+
+          rm -rf pgo-patched-files
+          mkdir -p pgo-patched-files
+
+          echo "============================================================"
+          echo "Collecting files modified by PGO patch"
+          echo "============================================================"
+
+          git diff --name-only > /tmp/pgo-modified-files.txt
+          git ls-files --others --exclude-standard >> /tmp/pgo-modified-files.txt
+
+          sort -u /tmp/pgo-modified-files.txt | while IFS= read -r FILE; do
+            [ -z "$FILE" ] && continue
+
+            case "$FILE" in
+              toolchains/*)
+                continue
+                ;;
+              pgo-patched-files/*)
+                continue
+                ;;
+            esac
+
+            if test -f "$FILE"; then
+              mkdir -p "pgo-patched-files/$(dirname "$FILE")"
+              cp -p "$FILE" "pgo-patched-files/$FILE"
+              echo "[FILE] $FILE"
+            fi
+          done
+
+          echo
+          echo "============================================================"
+          echo "PGO patched files"
+          echo "============================================================"
+
+          find pgo-patched-files -type f -print | sort
+
+          echo
+          echo "[OK] PGO patched files collected"
+
+      - name: Upload PGO Patched Files Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PGO-Patched-Files
+          path: pgo-patched-files
+          if-no-files-found: warn
+
+      # ============================================================
       # 10. RUN DEFCONFIG
       # ============================================================
       - name: Run Violet Defconfig
