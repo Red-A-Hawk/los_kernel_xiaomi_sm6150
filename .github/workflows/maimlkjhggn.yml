@@ -1,6 +1,6 @@
 name: Build Real Clang PGO PROCS V1.1 (finale)
 
-on:
+"on":
   workflow_dispatch:
 
 jobs:
@@ -252,7 +252,7 @@ jobs:
                 arch/arm64/Kconfig; then
 
               sed -i \
-                '/select ARCH_SUPPORTS_THINLTO/a\	select ARCH_SUPPORTS_PGO_CLANG' \
+                '/select ARCH_SUPPORTS_THINLTO/a\  select ARCH_SUPPORTS_PGO_CLANG' \
                 arch/arm64/Kconfig
 
               echo "[OK] Inserted ARCH_SUPPORTS_PGO_CLANG"
@@ -951,12 +951,12 @@ jobs:
             -e '/CONFIG_CC_STACKPROTECTOR_NONE/d' \
             out/.config
 
-          cat >> out/.config << 'CFGEOF'
-# CONFIG_CC_STACKPROTECTOR_REGULAR is not set
-# CONFIG_CC_STACKPROTECTOR_STRONG is not set
-# CONFIG_CC_STACKPROTECTOR_AUTO is not set
-CONFIG_CC_STACKPROTECTOR_NONE=y
-CFGEOF
+          {
+            echo "# CONFIG_CC_STACKPROTECTOR_REGULAR is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set"
+            echo "# CONFIG_CC_STACKPROTECTOR_AUTO is not set"
+            echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
+          } >> out/.config
 
           echo
           echo "After:"
