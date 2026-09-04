@@ -332,6 +332,53 @@ jobs:
           git status --short
 
       # ============================================================
+      # 7A. FIX UNSUPPORTED CLANG FLAG IN TOP-LEVEL MAKEFILE
+      #
+      # The patch adds "-fno-if-conversion" to KBUILD_CFLAGS whenever
+      # CONFIG_PGO_CLANG=y. That flag is GCC-only; clang has no such
+      # driver option and fails immediately on the very first
+      # compiled file (kernel/bounds.s) with:
+      #   clang-12: error: unknown argument: '-fno-if-conversion'
+      # "-mllvm -disable-preinline" is a real, clang-supported LLVM
+      # backend option and is kept as-is.
+      # ============================================================
+      - name: Fix Unsupported Clang Flag (-fno-if-conversion)
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "FIX UNSUPPORTED CLANG FLAG (-fno-if-conversion)"
+          echo "============================================================"
+
+          echo
+          echo "Before:"
+          grep -n \
+            "disable-preinline" \
+            Makefile \
+            || true
+
+          sed -i \
+            's/-mllvm -disable-preinline -fno-if-conversion/-mllvm -disable-preinline/' \
+            Makefile
+
+          echo
+          echo "After:"
+          grep -n \
+            "disable-preinline" \
+            Makefile
+
+          if grep -q "fno-if-conversion" Makefile; then
+
+            echo "[FAIL] -fno-if-conversion still present in Makefile"
+            exit 1
+
+          else
+
+            echo "[OK] -fno-if-conversion removed"
+
+          fi
+
+      # ============================================================
       # 8. FIX PGO LINKER CONTEXT
       # ============================================================
       - name: Fix PGO Linker Context
