@@ -1,0 +1,100 @@
+name: Compare Manipvlator Stable Since Last Sync
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout loma
+        uses: actions/checkout@v4
+        with:
+          ref: loma
+          fetch-depth: 0
+
+      - name: Fetch manipvlator stable
+        run: |
+          git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
+          git fetch manipvlator stable
+
+      - name: Show current commits
+        run: |
+          echo "========================================"
+          echo "CURRENT STATE"
+          echo "========================================"
+
+          echo "loma:"
+          git rev-parse loma
+
+          echo
+          echo "manipvlator/stable:"
+          git rev-parse manipvlator/stable
+
+          echo
+          echo "Last synced manipvlator commit:"
+          echo "d0aaf0bb8c44592ccfba215b39aa310cbe6ef837"
+
+      - name: Show commits added by manipvlator
+        run: |
+          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
+          STABLE=manipvlator/stable
+
+          echo "========================================"
+          echo "COMMITS AFTER LAST SYNC"
+          echo "========================================"
+
+          git log \
+            --reverse \
+            --date=iso \
+            --pretty=format:'%H | %ad | %an | %s' \
+            "$BASE..$STABLE"
+
+      - name: Count commits
+        run: |
+          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
+          STABLE=manipvlator/stable
+
+          echo "========================================"
+          echo "COMMIT COUNT"
+          echo "========================================"
+
+          git rev-list --count "$BASE..$STABLE"
+
+      - name: Show changed files
+        run: |
+          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
+          STABLE=manipvlator/stable
+
+          echo "========================================"
+          echo "CHANGED FILES"
+          echo "========================================"
+
+          git diff --stat "$BASE..$STABLE"
+
+          echo
+          echo "========================================"
+          echo "FILES"
+          echo "========================================"
+
+          git diff --name-status "$BASE..$STABLE"
+
+      - name: Generate full patch
+        run: |
+          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
+          STABLE=manipvlator/stable
+
+          git diff "$BASE..$STABLE" > manipvlator-stable.patch
+
+          echo "========================================"
+          echo "PATCH CREATED"
+          echo "========================================"
+
+          ls -lh manipvlator-stable.patch
+
+      - name: Upload comparison patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: manipvlator-stable-since-d0aaf0b
+          path: manipvlator-stable.patch
