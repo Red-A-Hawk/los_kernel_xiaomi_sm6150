@@ -52,7 +52,7 @@ steps:
       cd "$GITHUB_WORKSPACE/toolchains"
 
       echo "============================================================"
-      echo "Downloading Clang r547379"
+      echo "Downloading crDroid Clang r547379"
       echo "============================================================"
 
       git clone --depth=1 \
@@ -329,6 +329,14 @@ steps:
 
   # ============================================================
   # 7A. FIX UNSUPPORTED CLANG FLAG IN TOP-LEVEL MAKEFILE
+  #
+  # The patch adds "-fno-if-conversion" to KBUILD_CFLAGS whenever
+  # CONFIG_PGO_CLANG=y. That flag is GCC-only; clang has no such
+  # driver option and fails immediately on the very first
+  # compiled file (kernel/bounds.s) with:
+  #   clang-12: error: unknown argument: '-fno-if-conversion'
+  # "-mllvm -disable-preinline" is a real, clang-supported LLVM
+  # backend option and is kept as-is.
   # ============================================================
   - name: Fix Unsupported Clang Flag (-fno-if-conversion)
     run: |
@@ -1697,10 +1705,14 @@ steps:
       command -v llvm-profdata
 
       if llvm-profdata merge --help >/dev/null 2>&1; then
+
         echo "[OK] llvm-profdata merge supported"
+
       else
+
         echo "[FAIL] llvm-profdata merge failed"
         exit 1
+
       fi
 
       echo
@@ -1848,17 +1860,23 @@ steps:
       echo "============================================================"
 
       if [ ! -f pgo-build-full.log ]; then
+
         echo "[FAIL] pgo-build-full.log not found"
         exit 1
+
       fi
 
       if grep -q \
           -- "-fprofile-generate" \
           pgo-build-full.log; then
+
         echo "[OK] -fprofile-generate found in kernel build"
+
       else
+
         echo "[FAIL] -fprofile-generate not found in kernel build"
         exit 1
+
       fi
 
       echo
@@ -1896,8 +1914,10 @@ steps:
         echo "------------------------------------------------------------"
 
         if [ ! -f "$OBJ" ]; then
+
           echo "[WARN] Object not found"
           continue
+
         fi
 
         echo
@@ -1918,7 +1938,9 @@ steps:
 
         if llvm-readelf -SW "$OBJ" 2>/dev/null | \
             grep -qE 'llvm_prf|profile'; then
+
           FOUND=1
+
         fi
 
       done
@@ -1927,9 +1949,13 @@ steps:
       echo "============================================================"
 
       if [ "$FOUND" -eq 1 ]; then
+
         echo "[OK] LLVM PGO sections confirmed in object files"
+
       else
+
         echo "[WARN] No LLVM PGO sections found in inspected objects"
+
       fi
 
   # ============================================================
@@ -1946,8 +1972,10 @@ steps:
       echo "============================================================"
 
       if [ ! -f out/vmlinux ]; then
+
         echo "[FAIL] out/vmlinux not found"
         exit 1
+
       fi
 
       echo
@@ -1971,10 +1999,14 @@ steps:
 
       if llvm-readelf -SW out/vmlinux | \
           grep -qE 'llvm_prf|profile'; then
+
         echo "[OK] LLVM PGO sections found in vmlinux"
+
       else
+
         echo "[FAIL] No LLVM PGO sections found in vmlinux"
         exit 1
+
       fi
 
   # ============================================================
@@ -1997,7 +2029,7 @@ steps:
         out/.config
 
   # ============================================================
-  # 17A. PACKAGE ANYKERNEL3
+  # 17A. PACKAGE ANYKERNEL3 (FLASHABLE PGO-INSTRUMENTED KERNEL)
   # ============================================================
   - name: Package AnyKernel3 (PGO Instrumented)
     run: |
@@ -2008,10 +2040,12 @@ steps:
       echo "============================================================"
 
       if [ ! -f out/arch/arm64/boot/Image.gz ]; then
+
         echo "[FAIL] out/arch/arm64/boot/Image.gz not found"
         echo "       (PGO build target may not have produced a"
         echo "        flashable boot image - check pgo-build-full.log)"
         exit 1
+
       fi
 
       git clone \
@@ -2113,6 +2147,7 @@ steps:
       echo "PGO flags:"
 
       if [ -f pgo-build-full.log ]; then
+
         echo "-fprofile-generate occurrences:"
 
         grep -o \
@@ -2120,15 +2155,20 @@ steps:
           pgo-build-full.log \
           | wc -l \
           || true
+
       fi
 
       echo
       echo "Short build log:"
 
       if [ -f pgo-build.log ]; then
+
         cat pgo-build.log
+
       else
+
         echo "not available"
+
       fi
 
       echo
@@ -2192,9 +2232,13 @@ steps:
       echo "Final vmlinux:"
 
       if [ -f out/vmlinux ]; then
+
         ls -lh out/vmlinux
+
       else
+
         echo "not built"
+
       fi
 
       echo
