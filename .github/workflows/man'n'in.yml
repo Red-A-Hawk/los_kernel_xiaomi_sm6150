@@ -3,48 +3,33 @@ name: Create xxx-16 Branch
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   create-branch:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout decff209
         uses: actions/checkout@v4
         with:
+          ref: decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba
           fetch-depth: 0
-          token: ${{ secrets.REPO_CREATE_TOKEN }}
 
-      - name: Create xxx-16 from decff209
+      - name: Verify source commit
         run: |
           set -e
 
           COMMIT="decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba"
-          BRANCH="xxx-16"
 
-          echo "Fetching repository..."
-          git fetch origin --prune
-
-          echo
-          echo "Source commit:"
-          git show -s --format='%H | %ad | %an | %s' --date=iso "$COMMIT"
-
-          echo
-          echo "Creating branch $BRANCH from $COMMIT..."
-          git checkout -b "$BRANCH" "$COMMIT"
-
-          echo
-          echo "Verifying branch:"
+          echo "Current commit:"
           git rev-parse HEAD
 
           test "$(git rev-parse HEAD)" = "$COMMIT"
 
-          echo
-          echo "Pushing $BRANCH..."
-          git push origin "$BRANCH"
+      - name: Create and push new branch
+        run: |
+          set -e
 
-          echo
-          echo "Branch created successfully:"
-          git ls-remote --heads origin "$BRANCH"
+          git checkout -b xxx-16
+          git push origin xxx-16
+
+          echo "Branch 'xxx-16' created and pushed successfully."
