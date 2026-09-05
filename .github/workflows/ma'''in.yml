@@ -1,0 +1,187 @@
+name: Inspect Manipvlator History
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout loma
+        uses: actions/checkout@v4
+        with:
+          ref: loma
+          fetch-depth: 0
+
+      - name: Fetch manipvlator branches
+        run: |
+          set -e
+
+          git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
+
+          git fetch manipvlator stable || true
+          git fetch manipvlator new-base || true
+
+      - name: Analyze history
+        run: |
+          set -e
+
+          LOMA="841d02b98a86770709cb4439119e2676b62746f3"
+          LAST_16="d0aaf0bb8c44592ccfba215b39aa310cbe6ef837"
+          OLD_16="decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba"
+          TAG_18="e2e9e9f4690374130673c1bb3f408bb6f922fa42"
+          STABLE="50c7e0031613a7ae2da3819dd0c0b8ed7375d0bd"
+          NEW_BASE="731c918c22e32fff8a0953f792f575b436cdda8a"
+
+          echo "=================================================="
+          echo "CURRENT COMMITS"
+          echo "=================================================="
+
+          for REF in "$LOMA" "$LAST_16" "$OLD_16" "$TAG_18" "$STABLE" "$NEW_BASE"; do
+            echo
+            git show -s \
+              --format='%H%n%ad%n%an%n%s' \
+              --date=iso "$REF" || true
+          done
+
+          echo
+          echo "=================================================="
+          echo "BRANCH TIPS"
+          echo "=================================================="
+
+          git show -s \
+            --format='stable  : %H | %ad | %s' \
+            --date=iso \
+            manipvlator/stable
+
+          git show -s \
+            --format='new-base: %H | %ad | %s' \
+            --date=iso \
+            manipvlator/new-base
+
+          git show -s \
+            --format='loma    : %H | %ad | %s' \
+            --date=iso \
+            loma
+
+          echo
+          echo "=================================================="
+          echo "MERGE BASES"
+          echo "=================================================="
+
+          echo
+          echo "loma <-> stable"
+          git merge-base loma manipvlator/stable
+
+          echo
+          echo "loma <-> new-base"
+          git merge-base loma manipvlator/new-base
+
+          echo
+          echo "stable <-> new-base"
+          git merge-base manipvlator/stable manipvlator/new-base
+
+          echo
+          echo "d0aaf0b <-> stable"
+          git merge-base "$LAST_16" manipvlator/stable
+
+          echo
+          echo "d0aaf0b <-> new-base"
+          git merge-base "$LAST_16" manipvlator/new-base
+
+          echo
+          echo "=================================================="
+          echo "ANCESTRY CHECKS"
+          echo "=================================================="
+
+          check_ancestor() {
+            NAME="$1"
+            BASE="$2"
+            TARGET="$3"
+
+            if git merge-base --is-ancestor "$BASE" "$TARGET"; then
+              echo "$NAME: YES"
+            else
+              echo "$NAME: NO"
+            fi
+          }
+
+          echo
+          check_ancestor "d0aaf0b -> stable" \
+            "$LAST_16" manipvlator/stable
+
+          check_ancestor "d0aaf0b -> new-base" \
+            "$LAST_16" manipvlator/new-base
+
+          check_ancestor "stable -> new-base" \
+            manipvlator/stable manipvlator/new-base
+
+          check_ancestor "new-base -> stable" \
+            manipvlator/new-base manipvlator/stable
+
+          check_ancestor "stable -> loma" \
+            manipvlator/stable loma
+
+          check_ancestor "loma -> stable" \
+            loma manipvlator/stable
+
+          echo
+          echo "=================================================="
+          echo "COMMIT COUNTS"
+          echo "=================================================="
+
+          echo
+          echo "stable..loma"
+          git rev-list --count manipvlator/stable..loma
+
+          echo
+          echo "loma..stable"
+          git rev-list --count loma..manipvlator/stable
+
+          echo
+          echo "new-base..loma"
+          git rev-list --count manipvlator/new-base..loma
+
+          echo
+          echo "loma..new-base"
+          git rev-list --count loma..manipvlator/new-base
+
+          echo
+          echo "d0aaf0b..stable"
+          git rev-list --count "$LAST_16"..manipvlator/stable
+
+          echo
+          echo "d0aaf0b..new-base"
+          git rev-list --count "$LAST_16"..manipvlator/new-base
+
+          echo
+          echo "=================================================="
+          echo "COMMITS UNIQUE TO STABLE"
+          echo "=================================================="
+
+          git log --oneline --decorate --reverse \
+            loma..manipvlator/stable
+
+          echo
+          echo "=================================================="
+          echo "COMMITS UNIQUE TO NEW-BASE"
+          echo "=================================================="
+
+          git log --oneline --decorate --reverse \
+            loma..manipvlator/new-base
+
+          echo
+          echo "=================================================="
+          echo "COMMITS AFTER LAST 16 SYNC"
+          echo "=================================================="
+
+          echo
+          echo "--- STABLE ---"
+          git log --oneline --decorate --reverse \
+            "$LAST_16"..manipvlator/stable
+
+          echo
+          echo "--- NEW-BASE ---"
+          git log --oneline --decorate --reverse \
+            "$LAST_16"..manipvlator/new-base
