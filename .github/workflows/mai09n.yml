@@ -1,0 +1,54 @@
+name: Create Independent xxx-16 Repository
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-repository:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout decff209
+        uses: actions/checkout@v4
+        with:
+          ref: decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba
+          fetch-depth: 0
+
+      - name: Verify source commit
+        run: |
+          set -e
+
+          COMMIT="decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba"
+
+          echo "Current commit:"
+          git rev-parse HEAD
+
+          echo
+          echo "Commit information:"
+          git show -s \
+            --format='%H%n%ad%n%an%n%s' \
+            --date=iso \
+            "$COMMIT"
+
+          test "$(git rev-parse HEAD)" = "$COMMIT"
+
+      - name: Create independent repository
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
+        run: |
+          set -e
+
+          REPO="Red-A-Hawk/xxx-16"
+
+          echo "Creating repository:"
+          echo "$REPO"
+
+          gh repo create "$REPO" \
+            --public \
+            --source=. \
+            --remote=origin-new \
+            --push
+
+          echo
+          echo "Repository created successfully:"
+          gh repo view "$REPO" --json nameWithOwner,url -q '.nameWithOwner + " | " + .url'
