@@ -1,0 +1,124 @@
+name: Inspect Manipvlator Sync Point 2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout loma
+        uses: actions/checkout@v4
+        with:
+          ref: loma
+          fetch-depth: 0
+
+      - name: Fetch manipvlator stable
+        run: |
+          git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
+          git fetch manipvlator stable
+
+      - name: Inspect branches
+        run: |
+          echo "========================================"
+          echo "CURRENT BRANCH"
+          echo "========================================"
+          git branch --show-current
+
+          echo
+          echo "========================================"
+          echo "LOMA"
+          echo "========================================"
+          git rev-parse loma
+
+          echo
+          echo "========================================"
+          echo "MANIPVLATOR/STABLE"
+          echo "========================================"
+          git rev-parse manipvlator/stable
+
+      - name: Inspect known merge
+        run: |
+          MERGE=991616a7f24dcd88f6055827bfde172c83709d9b
+
+          echo "========================================"
+          echo "KNOWN MERGE COMMIT"
+          echo "========================================"
+          git show --no-patch --format=fuller "$MERGE"
+
+          echo
+          echo "========================================"
+          echo "MERGE PARENTS"
+          echo "========================================"
+          git rev-list --parents -n 1 "$MERGE"
+
+          echo
+          echo "========================================"
+          echo "PARENT 1"
+          echo "========================================"
+          PARENT1=$(git rev-list --parents -n 1 "$MERGE" | awk '{print $2}')
+          git show --no-patch --format=fuller "$PARENT1"
+
+          echo
+          echo "========================================"
+          echo "PARENT 2"
+          echo "========================================"
+          PARENT2=$(git rev-list --parents -n 1 "$MERGE" | awk '{print $3}')
+          git show --no-patch --format=fuller "$PARENT2"
+
+      - name: Check merge ancestry
+        run: |
+          MERGE=991616a7f24dcd88f6055827bfde172c83709d9b
+          STABLE=manipvlator/stable
+
+          echo "========================================"
+          echo "IS MERGE ANCESTOR OF MANIPVLATOR/STABLE?"
+          echo "========================================"
+
+          if git merge-base --is-ancestor "$MERGE" "$STABLE"; then
+            echo "YES"
+          else
+            echo "NO"
+          fi
+
+          echo
+          echo "========================================"
+          echo "IS PARENT 1 ANCESTOR OF STABLE?"
+          echo "========================================"
+
+          PARENT1=$(git rev-list --parents -n 1 "$MERGE" | awk '{print $2}')
+
+          if git merge-base --is-ancestor "$PARENT1" "$STABLE"; then
+            echo "YES"
+          else
+            echo "NO"
+          fi
+
+          echo
+          echo "========================================"
+          echo "IS PARENT 2 ANCESTOR OF STABLE?"
+          echo "========================================"
+
+          PARENT2=$(git rev-list --parents -n 1 "$MERGE" | awk '{print $3}')
+
+          if git merge-base --is-ancestor "$PARENT2" "$STABLE"; then
+            echo "YES"
+          else
+            echo "NO"
+          fi
+
+      - name: Find common ancestor
+        run: |
+          COMMON=$(git merge-base loma manipvlator/stable)
+
+          echo "========================================"
+          echo "COMMON ANCESTOR"
+          echo "========================================"
+          echo "$COMMON"
+
+          echo
+          echo "========================================"
+          echo "COMMON ANCESTOR DETAILS"
+          echo "========================================"
+          git show --no-patch --format=fuller "$COMMON"
