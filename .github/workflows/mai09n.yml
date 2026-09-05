@@ -13,6 +13,7 @@ jobs:
         with:
           ref: decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify source commit
         run: |
