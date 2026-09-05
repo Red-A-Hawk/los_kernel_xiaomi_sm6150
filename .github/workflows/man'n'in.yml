@@ -1,0 +1,30 @@
+name: Create xxx-16 Branch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-branch:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create xxx-16 from decff209
+        run: |
+          set -e
+
+          COMMIT="decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba"
+          BRANCH="xxx-16"
+
+          git fetch origin
+
+          git show -s --format='%H | %ad | %an | %s' --date=iso "$COMMIT"
+
+          git checkout -b "$BRANCH" "$COMMIT"
+
+          git push origin "$BRANCH"
