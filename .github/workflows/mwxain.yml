@@ -1,10 +1,10 @@
-name: Check Manipvlator Stable Ancestry
+name: Analyze Manipvlator Stable Changes
 
 on:
   workflow_dispatch:
 
 jobs:
-  check:
+  analyze:
     runs-on: ubuntu-24.04
 
     steps:
@@ -19,58 +19,111 @@ jobs:
           git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
           git fetch manipvlator stable
 
-      - name: Check ancestry
+      - name: Analyze trees
         run: |
-          echo "========================================"
-          echo "ANCESTRY CHECK"
-          echo "========================================"
+          set -e
 
           BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
           STABLE=manipvlator/stable
 
-          echo "loma:"
-          git rev-parse loma
+          echo "========================================"
+          echo "CURRENT STATE"
+          echo "========================================"
 
-          echo "manipvlator/stable:"
-          git rev-parse "$STABLE"
+          echo "BASE:"
+          git show -s --format='%H | %ad | %an | %s' "$BASE"
 
-          echo "Last synced manipvlator commit:"
-          echo "$BASE"
+          echo
+          echo "STABLE:"
+          git show -s --format='%H | %ad | %an | %s' "$STABLE"
 
           echo
           echo "========================================"
-          echo "CHECKING ANCESTRY"
+          echo "TREE IDS"
           echo "========================================"
 
-          if git merge-base --is-ancestor "$BASE" "$STABLE"
-          then
-              echo "RESULT: d0aaf0b IS an ancestor of manipvlator/stable"
-              echo "=> We can safely calculate everything after the last sync."
-          else
-              echo "RESULT: d0aaf0b IS NOT an ancestor of manipvlator/stable"
-              echo "=> stable has a different/re-written history."
-          fi
+          echo "BASE TREE:"
+          git rev-parse "$BASE^{tree}"
+
+          echo "STABLE TREE:"
+          git rev-parse "$STABLE^{tree}"
 
           echo
           echo "========================================"
-          echo "MERGE BASE"
+          echo "TREE COMPARISON"
           echo "========================================"
 
-          MERGE_BASE=$(git merge-base "$BASE" "$STABLE" || true)
+          git diff --name-status "$BASE" "$STABLE" > stable-name-status.txt
 
-          if [ -n "$MERGE_BASE" ]; then
-              echo "Common ancestor:"
-              echo "$MERGE_BASE"
-
-              echo
-              git show -s \
-                --format='Commit: %H%nAuthor: %an%nDate: %ad%nSubject: %s' \
-                "$MERGE_BASE"
-          else
-              echo "No common ancestor found."
-          fi
+          echo "Changed files:"
+          cat stable-name-status.txt
 
           echo
           echo "========================================"
-          echo "DONE"
+          echo "CHANGE STATISTICS"
           echo "========================================"
+
+          git diff --stat "$BASE" "$STABLE"
+
+          echo
+          echo "========================================"
+          echo "ADDED FILES"
+          echo "========================================"
+
+          git diff --name-only --diff-filter=A "$BASE" "$STABLE"
+
+          echo
+          echo "========================================"
+          echo "DELETED FILES"
+          echo "========================================"
+
+          git diff --name-only --diff-filter=D "$BASE" "$STABLE"
+
+          echo
+          echo "========================================"
+          echo "MODIFIED FILES"
+          echo "========================================"
+
+          git diff --name-only --diff-filter=M "$BASE" "$STABLE"
+
+          echo
+          echo "========================================"
+          echo "RENAMED FILES"
+          echo "========================================"
+
+          git diff --name-status --diff-filter=R "$BASE" "$STABLE"
+
+          echo
+          echo "========================================"
+          echo "DIFF"
+          echo "========================================"
+
+          git diff --no-ext-diff "$BASE" "$STABLE" > manipvlator-stable-tree.diff
+
+          echo "Patch created:"
+          ls -lh manipvlator-stable-tree.diff
+
+          echo
+          echo "========================================"
+          echo "DIFF SUMMARY"
+          echo "========================================"
+
+          git diff --numstat "$BASE" "$STABLE" > stable-numstat.txt
+
+          echo "Number of changed files:"
+          wc -l < stable-name-status.txt
+
+          echo "Total additions/deletions:"
+          awk '{add += $1; del += $2} END {
+            print "Additions:", add
+            print "Deletions:", del
+          }' stable-numstat.txt
+
+      - name: Upload analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: manipvlator-stable-tree-analysis
+          path: |
+            stable-name-status.txt
+            stable-numstat.txt
+            manipvlator-stable-tree.diff
