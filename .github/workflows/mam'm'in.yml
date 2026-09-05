@@ -1,22 +1,20 @@
-name: Build Real Clang PGO PROCS V1.5 (finale)
+name: "Build Real Clang PGO PROCS V1.5 (finale)"
 
-"on":
-workflow_dispatch:
+"on": workflow_dispatch:
 
 jobs:
-build-pgo:
-runs-on: ubuntu-22.04
+  build-pgo:
+    runs-on: ubuntu-22.04
 
-steps:
-
-  # ============================================================
-  # 1. CHECKOUT
-  # ============================================================
-  - name: Checkout Kernel
-    uses: actions/checkout@v4
-    with:
-      ref: 16
-      fetch-depth: 1
+    steps:
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
+      - name: Checkout Kernel
+        uses: actions/checkout@v4
+        with:
+          ref: 16
+          fetch-depth: 1
 
   # ============================================================
   # 2. INSTALL DEPENDENCIES
