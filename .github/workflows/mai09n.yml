@@ -33,6 +33,9 @@ jobs:
 
           test "$(git rev-parse HEAD)" = "$COMMIT"
 
+      - name: Create local branch
+        run: git checkout -b 16
+
       - name: Create independent repository
         env:
           GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
