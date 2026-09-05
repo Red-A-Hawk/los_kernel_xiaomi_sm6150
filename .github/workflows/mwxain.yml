@@ -1,11 +1,11 @@
-name: Compare Manipvlator Stable Since Last Sync
+name: Check Manipvlator Stable Ancestry
 
 on:
   workflow_dispatch:
 
 jobs:
-  compare:
-    runs-on: ubuntu-latest
+  check:
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout loma
@@ -19,82 +19,58 @@ jobs:
           git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
           git fetch manipvlator stable
 
-      - name: Show current commits
+      - name: Check ancestry
         run: |
           echo "========================================"
-          echo "CURRENT STATE"
+          echo "ANCESTRY CHECK"
           echo "========================================"
+
+          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
+          STABLE=manipvlator/stable
 
           echo "loma:"
           git rev-parse loma
 
-          echo
           echo "manipvlator/stable:"
-          git rev-parse manipvlator/stable
+          git rev-parse "$STABLE"
 
-          echo
           echo "Last synced manipvlator commit:"
-          echo "d0aaf0bb8c44592ccfba215b39aa310cbe6ef837"
-
-      - name: Show commits added by manipvlator
-        run: |
-          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
-          STABLE=manipvlator/stable
-
-          echo "========================================"
-          echo "COMMITS AFTER LAST SYNC"
-          echo "========================================"
-
-          git log \
-            --reverse \
-            --date=iso \
-            --pretty=format:'%H | %ad | %an | %s' \
-            "$BASE..$STABLE"
-
-      - name: Count commits
-        run: |
-          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
-          STABLE=manipvlator/stable
-
-          echo "========================================"
-          echo "COMMIT COUNT"
-          echo "========================================"
-
-          git rev-list --count "$BASE..$STABLE"
-
-      - name: Show changed files
-        run: |
-          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
-          STABLE=manipvlator/stable
-
-          echo "========================================"
-          echo "CHANGED FILES"
-          echo "========================================"
-
-          git diff --stat "$BASE..$STABLE"
+          echo "$BASE"
 
           echo
           echo "========================================"
-          echo "FILES"
+          echo "CHECKING ANCESTRY"
           echo "========================================"
 
-          git diff --name-status "$BASE..$STABLE"
+          if git merge-base --is-ancestor "$BASE" "$STABLE"
+          then
+              echo "RESULT: d0aaf0b IS an ancestor of manipvlator/stable"
+              echo "=> We can safely calculate everything after the last sync."
+          else
+              echo "RESULT: d0aaf0b IS NOT an ancestor of manipvlator/stable"
+              echo "=> stable has a different/re-written history."
+          fi
 
-      - name: Generate full patch
-        run: |
-          BASE=d0aaf0bb8c44592ccfba215b39aa310cbe6ef837
-          STABLE=manipvlator/stable
-
-          git diff "$BASE..$STABLE" > manipvlator-stable.patch
-
+          echo
           echo "========================================"
-          echo "PATCH CREATED"
+          echo "MERGE BASE"
           echo "========================================"
 
-          ls -lh manipvlator-stable.patch
+          MERGE_BASE=$(git merge-base "$BASE" "$STABLE" || true)
 
-      - name: Upload comparison patch
-        uses: actions/upload-artifact@v4
-        with:
-          name: manipvlator-stable-since-d0aaf0b
-          path: manipvlator-stable.patch
+          if [ -n "$MERGE_BASE" ]; then
+              echo "Common ancestor:"
+              echo "$MERGE_BASE"
+
+              echo
+              git show -s \
+                --format='Commit: %H%nAuthor: %an%nDate: %ad%nSubject: %s' \
+                "$MERGE_BASE"
+          else
+              echo "No common ancestor found."
+          fi
+
+          echo
+          echo "========================================"
+          echo "DONE"
+          echo "========================================"
