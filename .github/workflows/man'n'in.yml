@@ -13,6 +13,7 @@ jobs:
         with:
           ref: decff20960fbe1dda48b9bcf8d60a3cf5e63b9ba
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify source commit
         run: |
@@ -26,10 +27,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$COMMIT"
 
       - name: Create and push new branch
+        env:
+          GH_TOKEN: ${{ secrets.REPO_CREATE_TOKEN }}
         run: |
           set -e
 
           git checkout -b xxx-16
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/Red-A-Hawk/los_kernel_xiaomi_sm6150.git"
           git push origin xxx-16
 
           echo "Branch 'xxx-16' created and pushed successfully."
