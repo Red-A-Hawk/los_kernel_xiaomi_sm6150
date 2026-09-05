@@ -1,0 +1,58 @@
+name: Check Common Ancestor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-common-ancestor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout loma
+        uses: actions/checkout@v4
+        with:
+          ref: loma
+          fetch-depth: 0
+
+      - name: Add manipvlator remote
+        run: |
+          git remote add manipvlator https://github.com/manipvlator/los_kernel_xiaomi_sm6150.git
+          git fetch manipvlator stable
+
+      - name: Show branches
+        run: |
+          echo "=== Current branch ==="
+          git branch --show-current
+
+          echo
+          echo "=== loma ==="
+          git rev-parse loma
+
+          echo
+          echo "=== manipvlator/stable ==="
+          git rev-parse manipvlator/stable
+
+      - name: Find common ancestor
+        run: |
+          echo "=== Common Ancestor ==="
+
+          COMMON=$(git merge-base loma manipvlator/stable)
+
+          echo "Common ancestor:"
+          echo "$COMMON"
+
+          echo
+          echo "=== Common Ancestor Details ==="
+
+          git show --no-patch --format=fuller "$COMMON"
+
+      - name: Show commits after common ancestor
+        run: |
+          COMMON=$(git merge-base loma manipvlator/stable)
+
+          echo "=== Commits unique to loma ==="
+          git log --oneline "$COMMON..loma"
+
+          echo
+          echo "=== Commits unique to manipvlator/stable ==="
+          git log --oneline "$COMMON..manipvlator/stable"
